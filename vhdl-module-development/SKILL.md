@@ -1,6 +1,6 @@
 ---
 name: vhdl-module-development
-description: Use this skill whenever creating, verifying, or iterating on a synthesisable VHDL module targeting Xilinx Vivado / Xsim. Covers the complete pipeline: architecture design -> VHDL authoring -> cycle-accurate Python testbench -> synthesis audit -> Python iteration -> Xsim-compatible SystemVerilog testbench -> CSV debug logging -> VCD post-simulation verification. Trigger on any request involving new VHDL RTL, a Python model of VHDL, a synthesis check, or an Xsim testbench. Also use when the user mentions PLLs, DPLLs, NCOs, clock recovery, phase detectors, fractional-N architectures, PI loop filters, lock detection, DSP48E1 mapping, CDC synchronisers, or any Zynq-7000 / UltraScale fabric design -- even if they do not explicitly say VHDL or testbench.
+description: Use this skill whenever creating, verifying, or iterating on a synthesisable VHDL module targeting Xilinx Vivado / Xsim. Covers the complete pipeline: architecture design -> VHDL authoring -> cycle-accurate Python testbench -> synthesis audit -> Python iteration -> Xsim-compatible SystemVerilog testbench -> VCD post-simulation verification -> CSV debug logging. Trigger on any request involving new VHDL RTL, a Python model of VHDL, a synthesis check, or an Xsim testbench. Also use when the user mentions PLLs, DPLLs, NCOs, clock recovery, phase detectors, fractional-N architectures, PI loop filters, lock detection, DSP48E1 mapping, CDC synchronisers, or any Zynq-7000 / UltraScale fabric design -- even if they do not explicitly say VHDL or testbench.
 ---
 
 # VHDL Module Development Pipeline
@@ -12,7 +12,7 @@ The pipeline has nine stages executed in order. Never skip a stage or reorder th
 **Implementation model:** After Stage 0 (environment setup) and planning are complete, delegate the implementation of Stages 1-8 to a Sonnet agent via the Task tool. Opus handles planning and review; Sonnet handles implementation.
 
 ```
-Environment -> Architecture -> VHDL -> Python TB -> Synthesis audit -> Python iteration -> SV/Xsim TB -> CSV verify -> VCD verify
+Environment -> Architecture -> VHDL -> Python TB -> Synthesis audit -> Python iteration -> SV/Xsim TB -> VCD verify -> CSV verify
 ```
 
 Bugs caught at each stage:
@@ -23,8 +23,8 @@ Bugs caught at each stage:
 - Synthesis audit: constructs Vivado rejects, DSP mapping, timing path depth
 - Python iteration: fixes introduced by synthesis changes, new operating points
 - SV/Xsim TB: final RTL-level gate-check, regression baseline for future changes
+- VCD verify: independent post-simulation verification from raw waveform data, no reliance on SV self-checks -- catches RTL bugs that SV testbench code may mask or share
 - CSV verify: cross-check SV simulation dynamics against Python model predictions cycle-by-cycle
-- VCD verify: independent post-simulation verification from raw waveform data, no reliance on SV self-checks
 
 **For DPLL, PLL, NCO, clock recovery, or fractional-N designs:** read `references/dpll.md` before starting Stage 1. It covers failure modes, phase detector patterns, and verification techniques specific to those architectures.
 
@@ -394,40 +394,15 @@ Apply the same pattern in the Python model: check for validity pulses inside the
 
 ---
 
-## Stage 7 - CSV Debug Logger and Cross-Check
-
-The SV testbench must include a CSV logger that captures key signals at meaningful events. This provides a compact, human-readable trace for debugging and an independent cross-check against the Python model's predictions.
-
-### Why a separate stage
-
-The SV testbench self-checks (Stage 6) verify the RTL against pass/fail thresholds, but they cannot catch subtle dynamics bugs -- wrong convergence rate, unexpected oscillation patterns, or off-by-one pipeline latency. The CSV trace exposes the actual signal trajectory so it can be compared directly against the Python model's output.
-
-### What to log
-
-Log one row per meaningful event, not every sys_clk cycle. Choose the event that captures the module's control loop or data pipeline rate (e.g. `output_valid` for a filter, `phase_err_valid` for a PLL, state transitions for a state machine).
-
-For the CSV logger skeleton and capture window timing pattern, see the "CSV debug logger" section in `references/xsim.md`.
-
-### Cross-checking against the Python model
-
-After simulation, write a Python script that:
-
-1. Reads the CSV and the Python model's logged output
-2. Aligns them by event count (not wall time -- Xsim time resolution differs from Python's)
-3. Compares each signal column within a tolerance (exact match for integers, epsilon for reals)
-4. Reports the first divergence point with both expected and actual values
-
-A divergence at event N means the VHDL and Python model disagree from that cycle onward. The most common causes: missed pipeline register in the Python model, wrong reset value, or a commit-order bug in clock().
-
----
-
-## Stage 8 - VCD Post-Simulation Verification
+## Stage 7 - VCD Post-Simulation Verification
 
 The VCD verifier provides an independent verification path that does not rely on the SV testbench's own pass/fail reporting. If the SV testbench has a bug in its checker logic, the VCD verifier catches it.
 
+**VCD verification comes before CSV cross-check** because VCD is generated by the simulator engine itself -- it is ground truth for what the signals actually did, independent of any testbench code. The CSV logger, by contrast, is SV testbench code that can have its own timing bugs (wrong delta cycle, missed events, sampling races). When debugging, VCD eliminates the testbench as a variable. A VCD verifier that independently recomputes expected values (e.g. CRC from raw bit streams) will pinpoint RTL bugs that CSV cross-checking may miss or misattribute to testbench issues.
+
 ### Why VCD verification matters
 
-The SV testbench (Stage 6) and CSV logger (Stage 7) are both authored alongside the VHDL -- they share assumptions and can share bugs. The VCD verifier is a separate Python program that reads raw waveform data and applies its own verification logic. Three independent verification paths (Python model, SV self-checks, VCD verifier) make it very unlikely that a bug survives in all three.
+The SV testbench (Stage 6) and CSV logger (Stage 8) are both authored alongside the VHDL -- they share assumptions and can share bugs. The VCD verifier is a separate Python program that reads raw waveform data and applies its own verification logic. Three independent verification paths (Python model, SV self-checks, VCD verifier) make it very unlikely that a bug survives in all three.
 
 ### Architecture
 
@@ -448,7 +423,36 @@ xsim my_module_sim -tclbatch _run_vcd.tcl
 python my_module_vcd_verify.py my_module_verify.vcd
 ```
 
-This gives three independent pass/fail signals: SV self-checks, CSV cross-check, and VCD verification. All three must pass before declaring the design verified.
+This gives three independent pass/fail signals: SV self-checks, VCD verification, and CSV cross-check. All three must pass before declaring the design verified.
+
+---
+
+## Stage 8 - CSV Debug Logger and Cross-Check
+
+The SV testbench must include a CSV logger that captures key signals at meaningful events. This provides a compact, human-readable trace for debugging and a cross-check against the Python model's predictions.
+
+### Why a separate stage
+
+The SV testbench self-checks (Stage 6) verify the RTL against pass/fail thresholds, but they cannot catch subtle dynamics bugs -- wrong convergence rate, unexpected oscillation patterns, or off-by-one pipeline latency. The CSV trace exposes the actual signal trajectory so it can be compared directly against the Python model's output.
+
+**Note:** CSV data is generated by SV testbench code (`$fwrite` calls), so it inherits any testbench timing bugs. VCD verification (Stage 7) should pass before relying on CSV data for cross-checking.
+
+### What to log
+
+Log one row per meaningful event, not every sys_clk cycle. Choose the event that captures the module's control loop or data pipeline rate (e.g. `output_valid` for a filter, `phase_err_valid` for a PLL, state transitions for a state machine).
+
+For the CSV logger skeleton and capture window timing pattern, see the "CSV debug logger" section in `references/xsim.md`.
+
+### Cross-checking against the Python model
+
+After simulation, write a Python script that:
+
+1. Reads the CSV and the Python model's logged output
+2. Aligns them by event count (not wall time -- Xsim time resolution differs from Python's)
+3. Compares each signal column within a tolerance (exact match for integers, epsilon for reals)
+4. Reports the first divergence point with both expected and actual values
+
+A divergence at event N means the VHDL and Python model disagree from that cycle onward. The most common causes: missed pipeline register in the Python model, wrong reset value, or a commit-order bug in clock().
 
 ---
 
