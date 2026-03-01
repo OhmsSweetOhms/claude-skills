@@ -128,6 +128,8 @@ def main() -> int:
                         help="FPGA part (for stage 9)")
     parser.add_argument("--settings", type=str, default=None,
                         help="Path to Vivado settings64.sh")
+    parser.add_argument("--clean", action="store_true",
+                        help="Clean build artifacts before running pipeline")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -136,6 +138,19 @@ def main() -> int:
     print_header("SOCKS Pipeline Orchestrator")
     print(f"\n  Project: {project_dir}")
     print(f"  Stages: {', '.join(str(s) for s in stages)}")
+
+    if args.clean:
+        clean_script = os.path.join(SCRIPT_DIR, "clean.py")
+        if os.path.isfile(clean_script):
+            print(f"\n  Cleaning build artifacts...")
+            rc = subprocess.run(
+                [sys.executable, clean_script, "--project-dir", project_dir],
+                cwd=project_dir,
+            ).returncode
+            if rc != 0:
+                print(f"  WARNING: Clean exited with code {rc}")
+        else:
+            print(f"  WARNING: clean.py not found at {clean_script}")
 
     results = {}
 

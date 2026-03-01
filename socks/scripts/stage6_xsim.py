@@ -224,6 +224,16 @@ def main() -> int:
         vhdl_files = args.vhdl or find_vhdl_files(project_dir)
         sv_files = args.sv or find_sv_files(project_dir)
 
+        # Order VHDL files: compile top-level entity last so dependencies
+        # are already in the library. Match --top against filenames.
+        if args.top and vhdl_files:
+            top_base = args.top.lower()
+            top_files = [f for f in vhdl_files
+                         if top_base in os.path.basename(f).lower()]
+            other_files = [f for f in vhdl_files
+                           if top_base not in os.path.basename(f).lower()]
+            vhdl_files = other_files + top_files
+
         print(f"\n  VHDL files ({len(vhdl_files)}):")
         for f in vhdl_files:
             print(f"    {os.path.basename(f)}")
