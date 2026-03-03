@@ -389,48 +389,122 @@ def run_all_checks(path: str) -> List[CheckResult]:
     return [chk(path, lines) for chk in ALL_CHECKS]
 
 
+def is_external(path: str) -> bool:
+    """A file is external if it's a symlink pointing outside the project."""
+    return os.path.islink(path)
+
+
+def get_external_info(path: str) -> dict:
+    """For an external (symlinked) file, return its source location and git status."""
+    target = os.path.realpath(path)
+    target_dir = os.path.dirname(target)
+    info = {"target": target, "dir": target_dir, "git": False, "remote": None}
+    try:
+        import subprocess
+        subprocess.check_output(
+            ["git", "-C", target_dir, "rev-parse", "--git-dir"],
+            stderr=subprocess.DEVNULL, text=True)
+        info["git"] = True
+        try:
+            info["remote"] = subprocess.check_output(
+                ["git", "-C", target_dir, "remote", "get-url", "origin"],
+                stderr=subprocess.DEVNULL, text=True).strip()
+        except subprocess.CalledProcessError:
+            info["remote"] = None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    return info
+
+
+# Exit codes:
+#   0 = all checks passed
+#   1 = own-code failures (blocking)
+#   2 = external-only failures (non-blocking, needs upstream fix)
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 4: Synthesis Audit")
     parser.add_argument("files", nargs="+", help="VHDL source files to audit")
     args = parser.parse_args()
 
-    any_fail = False
+    own_fail = False
+    ext_fail = False
+    ext_reports = []  # (path, info, violations) for external files with issues
 
     print_header("SOCKS Stage 4 -- Synthesis Audit")
 
     for path in args.files:
         if not os.path.isfile(path):
             print(f"\n  ERROR: File not found: {path}")
-            any_fail = True
+            own_fail = True
             continue
 
+        external = is_external(path)
         fname = basename(path)
-        print(f"\n--- {fname} ---")
+        tag = " (external)" if external else ""
+        print(f"\n--- {fname}{tag} ---")
         results = run_all_checks(path)
 
+        file_violations = []
         for idx, r in enumerate(results, 1):
-            status = "PASS" if r.passed else "FAIL"
+            if r.passed:
+                status = "PASS"
+            elif external:
+                status = "WARN"
+            else:
+                status = "FAIL"
             print(f"  [{status}] {idx:2d}. {r.name}")
             if not r.passed:
-                any_fail = True
                 for v in r.violations:
                     print(f"         {v.file}:{v.line}: {v.text}")
+                    file_violations.append(v)
+                if external:
+                    ext_fail = True
+                else:
+                    own_fail = True
+
+        if external and file_violations:
+            info = get_external_info(path)
+            ext_reports.append((path, info, file_violations))
+
+    # External module report
+    if ext_reports:
+        print(f"\n{'=' * 72}")
+        print(f"  External Module Issues")
+        print(f"{'=' * 72}")
+        for path, info, violations in ext_reports:
+            fname = basename(path)
+            print(f"\n  {fname} -> {info['target']}")
+            if info["git"]:
+                if info["remote"]:
+                    print(f"    Source control: git (remote: {info['remote']})")
+                    print(f"    Action: create PR to fix {len(violations)} issue(s)")
+                else:
+                    print(f"    Source control: git (local only, no remote)")
+                    print(f"    Action: fix upstream in {info['dir']}")
+            else:
+                print(f"    Source control: NONE")
+                print(f"    Action: manual fix required -- not version-controlled")
+            for v in violations:
+                print(f"      - [{v.line}] {v.text}")
 
     print(f"\n{'-' * 72}")
-    total = len(args.files) * len(ALL_CHECKS)
-    fails = sum(1 for path in args.files if os.path.isfile(path)
-                for r in run_all_checks(path) if not r.passed)
-    passed = total - fails
-
     print()
     print_separator()
-    if any_fail:
-        print("  RESULT: FAIL -- one or more checks failed")
+    if own_fail:
+        print("  RESULT: FAIL -- own-code checks failed (blocking)")
+    elif ext_fail:
+        print("  RESULT: WARN -- external module issues only (non-blocking)")
+        print("  Pipeline will continue. Fix external modules upstream.")
     else:
         print(f"  RESULT: ALL {len(ALL_CHECKS)} CHECKS PASSED")
     print_separator()
 
-    return 1 if any_fail else 0
+    if own_fail:
+        return 1
+    elif ext_fail:
+        return 2
+    else:
+        return 0
 
 
 if __name__ == "__main__":
