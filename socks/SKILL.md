@@ -39,6 +39,19 @@ C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit
 
 ---
 
+## Verification Loop (Stages 5-9)
+
+Stages 5 through 9 form a **verification loop**. The Python model (5) is the spec. The C driver (6) provides DPI-C helpers for the SV testbench. Xsim (7) must match the model. VCD (8) confirms the waveform. CSV cross-check (9) compares sim vs model numerically. All outputs must be consistent.
+
+**Orchestrator behaviour:**
+- If any stage in 5-9 fails, the loop **restarts from stage 5** (up to 2 retries)
+- Requesting any loop stage auto-expands to include its prerequisites: `--stages 8` becomes `5,6,7,8`
+- Stage 7 auto-enables `--vcd` when stage 8 is in the pipeline
+
+**Fix-and-retry:** When the loop restarts, Claude fixes the root cause (model bug, RTL bug, or TB bug), then the entire loop re-runs to confirm consistency. The Python model is always the reference — when VHDL and Python disagree, fix the VHDL.
+
+---
+
 ## Failure Recovery
 
 When a stage fails, don't restart from Stage 0. Go back to the **producing stage**, fix the issue, then carry the fix forward through all downstream stages.
@@ -47,17 +60,14 @@ When a stage fails, don't restart from Stage 0. Go back to the **producing stage
 |---|---|---|
 | 2 VHDL | 1 if design error, 2 if coding error | Architecture mistakes need block diagram update |
 | 3 Linter | 2 → 3 | Fix style/warnings in VHDL, re-lint |
-| 4 Audit | 2 → 3 → 4 | Fix VHDL, re-lint, re-audit |
-| 5 Python TB | 5 if model bug, 2 → 3 → 4 → 5 if RTL bug | Model is the spec; RTL must match |
+| 4 Audit | 2 → 3 → 4 (own code only; external module warnings are non-blocking) | Fix VHDL, re-lint, re-audit |
+| 5-9 Verify Loop | Always restart from 5 | Loop ensures Python model, C driver, Xsim, VCD, and CSV all agree |
 | 6 C Driver | 6 if driver bug, 2 → 3 → 4 if register map wrong | Register map flows from VHDL |
-| 7 SV/Xsim TB | 7 if TB bug, 6 → 7 if DPI-C issue, 2 → 3 → ... if RTL bug | Root-cause determines re-entry |
-| 8 VCD Verify | 7 → 8 if stimulus issue, 2 → 3 → ... if RTL bug | Independent check catches what SV self-checks miss |
-| 9 CSV Cross-Check | 5 + 7 (align model and sim) | Divergence means model or RTL is wrong |
-| 10 Vivado Synth | 2 → 3 → 4 if timing/resource issue | RTL restructuring needed |
+| 9 Vivado Synth | 2 → 3 → 4 if timing/resource issue | RTL restructuring needed |
 | 11 Bash Audit | 11 (fix scripts in place) | No upstream impact |
 | 12 CLAUDE.md | 12 (fix docs in place) | No upstream impact |
 
-**Carry-forward rule:** every fix must propagate through all downstream stages. Fix VHDL → re-lint → re-audit → re-run Python TB → update C driver if register map changed → re-run SV TB → etc.
+**Carry-forward rule:** every fix must propagate through all downstream stages. Fix VHDL → re-lint → re-audit → re-run verify loop → update C driver if register map changed → etc.
 
 ---
 

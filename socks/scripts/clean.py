@@ -61,6 +61,9 @@ REPORT_GLOBS = [
     "sim/*_drc.txt",
 ]
 
+# Directories to never descend into or remove
+KEEP_DIRS = {".git", "logs", "docs"}
+
 # Files to never remove
 KEEP_FILES = {
     "synth_check.tcl",
@@ -78,8 +81,9 @@ def find_artifacts(project_dir, include_reports=False):
         for d in dirs:
             if d in ARTIFACT_DIRS:
                 dirs_to_remove.append(os.path.join(root, d))
-        # Don't descend into artifact dirs
-        dirs[:] = [d for d in dirs if d not in ARTIFACT_DIRS and d != ".git"]
+        # Don't descend into artifact dirs or protected dirs
+        dirs[:] = [d for d in dirs if d not in ARTIFACT_DIRS
+                   and d not in KEEP_DIRS]
 
     # Find artifact files
     patterns = ARTIFACT_GLOBS[:]
@@ -90,8 +94,13 @@ def find_artifacts(project_dir, include_reports=False):
         matches = glob.glob(os.path.join(project_dir, pattern), recursive=True)
         for match in matches:
             basename = os.path.basename(match)
-            if basename not in KEEP_FILES and os.path.isfile(match):
-                files_to_remove.append(match)
+            if basename in KEEP_FILES or not os.path.isfile(match):
+                continue
+            # Skip files inside protected directories
+            rel = os.path.relpath(match, project_dir)
+            if any(rel.startswith(kd + os.sep) for kd in KEEP_DIRS):
+                continue
+            files_to_remove.append(match)
 
     return sorted(set(dirs_to_remove)), sorted(set(files_to_remove))
 
