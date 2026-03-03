@@ -1,6 +1,6 @@
 # Bare-Metal C Driver Patterns
 
-Read this file before Stage 10.5 (bare-metal driver generation). These patterns were proven in the USART_AXI project and apply to any AXI-Lite memory-mapped peripheral on Zynq-7000.
+Read this file before Stage 5 (bare-metal C driver). These patterns were proven in the USART_AXI project and apply to any AXI-Lite memory-mapped peripheral on Zynq-7000.
 
 ---
 
@@ -134,6 +134,45 @@ int mod_set_baud(const mod_driver_t *dev, uint32_t sys_clk_hz, uint32_t baud_rat
     return 0;
 }
 ```
+
+---
+
+## DPLL / NCO parameter computation
+
+When the peripheral includes a DPLL for clock recovery, the driver should compute NCO frequency word and loop filter gains at runtime from `sys_clk_hz` and `bit_rate_hz`, rather than using hardcoded defaults.
+
+```c
+int mod_set_dpll(const mod_driver_t *dev, uint32_t sys_clk_hz,
+                  uint32_t bit_rate_hz)
+{
+    if (bit_rate_hz == 0 || bit_rate_hz > sys_clk_hz / 2)
+        return -1;
+
+    /* freq_word = round(bit_rate_hz * 2^32 / sys_clk_hz) */
+    uint64_t num = ((uint64_t)bit_rate_hz << 32) + sys_clk_hz / 2;
+    uint32_t freq_word = (uint32_t)(num / sys_clk_hz);
+
+    /* KP = round(0.10 * freq_word / 32768) = round(freq_word / 327680) */
+    uint32_t kp = (freq_word + 163840U) / 327680U;
+    if (kp == 0) kp = 1;
+    if (kp > 0x7FFF) kp = 0x7FFF;
+
+    /* KI = KP / 16, minimum 1 */
+    uint32_t ki = kp / 16;
+    if (ki == 0) ki = 1;
+
+    mod_write(dev, MOD_REG_DPLL_FREQ_SEL, freq_word);
+    mod_write(dev, MOD_REG_DPLL_REF_STEP, freq_word);  /* ref = out for 1:1 */
+    mod_write(dev, MOD_REG_DPLL_KP, kp);
+    mod_write(dev, MOD_REG_DPLL_KI, ki);
+    mod_write(dev, MOD_REG_DPLL_UPDATE, 1);  /* latch + clear integrator */
+    return 0;
+}
+```
+
+The `0.10` gain factor and `KP/16` ratio for KI come from the dpll_v5 gain table — they produce stable lock across 500 kHz to 10 MHz at 100 MHz sys_clk. Keep a `_raw()` variant that takes explicit register values for special cases (asymmetric ref_step, custom loop bandwidth).
+
+When the same formulas are needed in the SV testbench, use DPI-C to call the C implementation rather than re-deriving in SystemVerilog (see `references/xsim.md`, DPI-C section).
 
 ---
 

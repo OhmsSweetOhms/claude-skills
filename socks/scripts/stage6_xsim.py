@@ -64,6 +64,14 @@ def find_sv_files(project_dir):
     return sorted(glob.glob(os.path.join(project_dir, "*.sv")))
 
 
+def find_dpi_c_files(project_dir):
+    """Find DPI-C source files in tb/ directory."""
+    tb_dir = os.path.join(project_dir, "tb")
+    if os.path.isdir(tb_dir):
+        return sorted(glob.glob(os.path.join(tb_dir, "*.c")))
+    return []
+
+
 def run_tool(settings_path, tool_cmd, work_dir, label):
     """Run an Xsim tool with settings64.sh sourced. Returns (success, stdout+stderr)."""
     full_cmd = f"source {settings_path} && cd {work_dir} && {tool_cmd}"
@@ -248,7 +256,21 @@ def main() -> int:
 
         print(f"\n  Compiling...")
 
-        # Compile VHDL files
+        # Two-pass VHDL compilation to handle dependency order.
+        # Alphabetical sorting doesn't guarantee that dependencies compile
+        # before the files that instantiate them (e.g. sdlc_axi.vhd sorts
+        # before sdlc_v1.vhd). Pass 1 populates the library silently;
+        # pass 2 resolves all forward references and reports errors.
+        if len(vhdl_files) > 1:
+            # Pass 1: silent -- populate library, ignore failures
+            for vhd in vhdl_files:
+                abs_path = os.path.abspath(vhd)
+                full_cmd = (f"source {settings_path} && cd {work_dir} && "
+                            f'xvhdl --2008 "{abs_path}"')
+                subprocess.run(["bash", "-c", full_cmd],
+                               capture_output=True, text=True, timeout=300)
+
+        # Pass 2 (or single pass if only one file): report results
         for vhd in vhdl_files:
             abs_path = os.path.abspath(vhd)
             fname = os.path.basename(vhd)
@@ -284,11 +306,34 @@ def main() -> int:
             print_separator()
             return 1
 
+        # Compile DPI-C files (if any)
+        dpi_c_files = find_dpi_c_files(project_dir)
+        has_dpi = len(dpi_c_files) > 0
+        if has_dpi:
+            print(f"\n  DPI-C files ({len(dpi_c_files)}):")
+            for f in dpi_c_files:
+                print(f"    {os.path.basename(f)}")
+            abs_c_paths = " ".join(f'"{os.path.abspath(f)}"' for f in dpi_c_files)
+            ok, _ = run_tool(
+                settings_path,
+                f"xsc {abs_c_paths}",
+                work_dir,
+                "xsc (DPI-C compile)",
+            )
+            if not ok:
+                all_passed = False
+                print(f"\n  DPI-C compilation failed -- stopping")
+                print_separator()
+                return 1
+
         # Elaborate
         print(f"\n  Elaborating...")
+        elab_cmd = f"xelab -debug typical {args.top} -s {sim_name}"
+        if has_dpi:
+            elab_cmd += " -sv_lib dpi"
         ok, _ = run_tool(
             settings_path,
-            f"xelab -debug typical {args.top} -s {sim_name}",
+            elab_cmd,
             work_dir,
             f"xelab {args.top} -> {sim_name}",
         )

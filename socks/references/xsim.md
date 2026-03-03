@@ -183,6 +183,69 @@ python scripts/stage6_xsim.py --project-dir . --top module_tb --vcd
 python scripts/stage6_xsim.py --project-dir . --clean
 ```
 
-### Compile order (for reference)
+### Compile order
 
-The script compiles in this order: VHDL sources (xvhdl --2008) -> SV testbenches (xvlog -sv) -> elaborate (xelab) -> simulate (xsim). Each step sources `settings64.sh` internally.
+The script compiles in this order:
+
+1. **VHDL** (`xvhdl --2008`) — two-pass when multiple files
+2. **SV** (`xvlog -sv`)
+3. **DPI-C** (`xsc`) — if `tb/*.c` files exist
+4. **Elaborate** (`xelab`, with `-sv_lib dpi` if DPI-C present)
+5. **Simulate** (`xsim`)
+
+Each step sources `settings64.sh` internally.
+
+**Two-pass VHDL compilation:** Entity names don't sort alphabetically by dependency (e.g. `sdlc_axi.vhd` sorts before `sdlc_v1.vhd` that it instantiates). Pass 1 compiles all files silently to populate the library; pass 2 recompiles with error reporting. This resolves forward references without requiring manual file ordering. The two-pass approach only activates when there are multiple VHDL files.
+
+---
+
+## DPI-C integration
+
+When the SV testbench needs to call C functions (e.g. to share parameter computation logic with the bare-metal driver), place `.c` files in `tb/`. The build script auto-discovers them.
+
+### C side (`tb/module_dpi.c`)
+
+```c
+#include <stdint.h>
+
+void calc_params(
+    unsigned int  sys_clk_hz,
+    unsigned int  bit_rate_hz,
+    unsigned int *divisor,
+    unsigned int *freq_word)
+{
+    *divisor   = sys_clk_hz / bit_rate_hz - 1;
+    uint64_t num = ((uint64_t)bit_rate_hz << 32) + sys_clk_hz / 2;
+    *freq_word = (unsigned int)(num / sys_clk_hz);
+}
+```
+
+No special headers needed — Xsim's `xsc` compiler handles the DPI linkage.
+
+### SV side
+
+```systemverilog
+import "DPI-C" function void calc_params(
+    input  int unsigned sys_clk_hz,
+    input  int unsigned bit_rate_hz,
+    output int unsigned divisor,
+    output int unsigned freq_word
+);
+
+// Usage in initial block or task:
+int unsigned div_val, fw_val;
+calc_params(100_000_000, 1_000_000, div_val, fw_val);
+```
+
+### Build flow
+
+`stage6_xsim.py` handles everything automatically:
+- Discovers `tb/*.c` files
+- Compiles them with `xsc` after SV compilation
+- Adds `-sv_lib dpi` to the `xelab` elaboration command
+
+No manual flags needed — just put the `.c` file in `tb/` and add the `import "DPI-C"` declaration in SV.
+
+### When to use DPI-C
+
+Use DPI-C when the SV testbench and bare-metal C driver share non-trivial computation (DPLL parameter calculation, CRC tables, protocol encoding). This keeps the formulas in one place — the C driver is the single source of truth, and the TB calls the same code. Avoids the risk of SV and C diverging silently.
