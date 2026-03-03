@@ -4,9 +4,9 @@ Stage 9: Vivado Synthesis -- Generate TCL scripts, invoke Vivado in batch
 mode, and parse utilization/timing/DRC reports.
 
 Usage:
-    python scripts/stage9_synth.py --top my_module --part xc7z020clg484-1 \\
+    python scripts/synth.py --top my_module --part xc7z020clg484-1 \\
         --src-dir src/ --out-dir sim/
-    python scripts/stage9_synth.py --top my_module --part xc7z020clg484-1 \\
+    python scripts/synth.py --top my_module --part xc7z020clg484-1 \\
         --src-dir src/ --out-dir sim/ --clock-period 10.0 --async-ports rxd
 
 Exit code 0 if synthesis succeeds and timing is met, 1 otherwise.
@@ -181,7 +181,7 @@ def main() -> int:
     settings_path = args.settings or find_vivado_settings()
     if settings_path is None:
         print("\n  ERROR: Could not find Vivado settings64.sh")
-        print("  Use --settings or run stage0_env.py first")
+        print("  Use --settings or run env.py first")
         print_separator()
         return 1
 

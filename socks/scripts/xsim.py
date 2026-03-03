@@ -7,26 +7,26 @@ and optional VCD/Tcl batch mode. Replaces all manual bash -c calls.
 
 Usage:
     # Compile + simulate (auto-discover files)
-    python scripts/stage6_xsim.py --project-dir . --top module_tb
+    python scripts/xsim.py --project-dir . --top module_tb
 
     # Compile only
-    python scripts/stage6_xsim.py --project-dir . --top module_tb --compile-only
+    python scripts/xsim.py --project-dir . --top module_tb --compile-only
 
     # Simulate only (already compiled)
-    python scripts/stage6_xsim.py --project-dir . --top module_tb --sim-only
+    python scripts/xsim.py --project-dir . --top module_tb --sim-only
 
     # With VCD generation
-    python scripts/stage6_xsim.py --project-dir . --top module_tb --vcd
+    python scripts/xsim.py --project-dir . --top module_tb --vcd
 
     # With custom Tcl batch file
-    python scripts/stage6_xsim.py --project-dir . --top module_tb --tcl sim/_run_vcd.tcl
+    python scripts/xsim.py --project-dir . --top module_tb --tcl sim/_run_vcd.tcl
 
     # Explicit file lists
-    python scripts/stage6_xsim.py --top module_tb \\
+    python scripts/xsim.py --top module_tb \\
         --vhdl src/a.vhd src/b.vhd --sv tb/module_tb.sv
 
     # Clean artifacts first
-    python scripts/stage6_xsim.py --project-dir . --clean
+    python scripts/xsim.py --project-dir . --clean
 
 Exit code 0 if all steps succeed and simulation reports no FAIL, 1 otherwise.
 """
@@ -215,7 +215,7 @@ def main() -> int:
     settings_path = args.settings or find_vivado_settings()
     if settings_path is None:
         print("\n  ERROR: Could not find Vivado settings64.sh")
-        print("  Use --settings or run stage0_env.py first")
+        print("  Use --settings or run env.py first")
         print_separator()
         return 1
 

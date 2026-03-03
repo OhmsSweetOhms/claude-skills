@@ -6,8 +6,8 @@ Searches for Vivado's settings64.sh, sources it, and verifies that all
 required EDA tools (xvhdl, xvlog, xelab, xsim, vivado) are on PATH.
 
 Usage:
-    python scripts/stage0_env.py
-    python scripts/stage0_env.py --settings /tools/Xilinx/Vivado/2023.2/settings64.sh
+    python scripts/env.py
+    python scripts/env.py --settings /tools/Xilinx/Vivado/2023.2/settings64.sh
 
 Exit code 0 if all tools found, 1 otherwise.
 """

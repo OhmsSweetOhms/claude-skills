@@ -164,23 +164,23 @@ Start capture BEFORE the event you want to debug. Enable CSV before the wait, di
 
 ## Build and simulate
 
-Use `scripts/stage6_xsim.py` for all compilation and simulation. It handles Vivado settings sourcing, compile order, elaboration, and simulation automatically.
+Use `scripts/xsim.py` for all compilation and simulation. It handles Vivado settings sourcing, compile order, elaboration, and simulation automatically.
 
 ```bash
 # Full build + simulate (auto-discovers src/*.vhd and tb/*.sv)
-python scripts/stage6_xsim.py --project-dir . --top module_tb
+python scripts/xsim.py --project-dir . --top module_tb
 
 # Compile only
-python scripts/stage6_xsim.py --project-dir . --top module_tb --compile-only
+python scripts/xsim.py --project-dir . --top module_tb --compile-only
 
 # Simulate only (already compiled)
-python scripts/stage6_xsim.py --project-dir . --top module_tb --sim-only
+python scripts/xsim.py --project-dir . --top module_tb --sim-only
 
 # With VCD generation
-python scripts/stage6_xsim.py --project-dir . --top module_tb --vcd
+python scripts/xsim.py --project-dir . --top module_tb --vcd
 
 # Clean artifacts
-python scripts/stage6_xsim.py --project-dir . --clean
+python scripts/xsim.py --project-dir . --clean
 ```
 
 ### Compile order
@@ -239,7 +239,7 @@ calc_params(100_000_000, 1_000_000, div_val, fw_val);
 
 ### Build flow
 
-`stage6_xsim.py` handles everything automatically:
+`xsim.py` handles everything automatically:
 - Discovers `tb/*.c` files
 - Compiles them with `xsc` after SV compilation
 - Adds `-sv_lib dpi` to the `xelab` elaboration command

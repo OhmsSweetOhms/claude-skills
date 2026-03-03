@@ -6,8 +6,8 @@ Reads two CSV files (simulation and Python model), aligns by event count,
 and compares each signal column within a tolerance.
 
 Usage:
-    python scripts/stage8_csv_crosscheck.py sim.csv model.csv
-    python scripts/stage8_csv_crosscheck.py sim.csv model.csv --tolerance 1 --skip-cols cycle,time_ns
+    python scripts/csv_crosscheck.py sim.csv model.csv
+    python scripts/csv_crosscheck.py sim.csv model.csv --tolerance 1 --skip-cols cycle,time_ns
 
 Exit code 0 if all values match within tolerance, 1 on first divergence.
 """

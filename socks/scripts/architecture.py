@@ -6,8 +6,8 @@ Extracts generic widths, estimates DSP48E1 usage from multiply operations,
 and flags potential timing issues.
 
 Usage:
-    python scripts/stage1_architecture.py src/*.vhd
-    python scripts/stage1_architecture.py --top my_module src/my_module.vhd
+    python scripts/architecture.py src/*.vhd
+    python scripts/architecture.py --top my_module src/my_module.vhd
 
 Exit code 0 always (advisory output only).
 """

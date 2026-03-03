@@ -6,8 +6,8 @@ Checks each VHDL source file for common synthesis hazards and coding
 standard violations.
 
 Usage:
-    python scripts/stage4_audit.py src/*.vhd
-    python scripts/stage4_audit.py --files src/module_a.vhd src/module_b.vhd
+    python scripts/audit.py src/*.vhd
+    python scripts/audit.py --files src/module_a.vhd src/module_b.vhd
 
 Exit code 0 if all checks pass, 1 if any fail.
 """

@@ -36,15 +36,15 @@ from socks_lib import print_header, print_separator, pass_str, fail_str
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 AUTOMATED_STAGES = {
-    0: ("stage0_env.py", "Environment Setup"),
-    1: ("stage1_architecture.py", "Architecture Analysis"),
-    4: ("stage4_audit.py", "Synthesis Audit"),
-    5: ("stage5_python_rerun.py", "Python Testbench Re-run"),
-    6: ("stage6_xsim.py", "Xsim Build & Simulate"),
-    7: ("stage7_vcd_verify.py", "VCD Verification"),
-    8: ("stage8_csv_crosscheck.py", "CSV Cross-Check"),
-    9: ("stage9_synth.py", "Vivado Synthesis"),
-    11: ("stage11_bash_audit.py", "Bash Audit"),
+    0: ("env.py", "Environment Setup"),
+    1: ("architecture.py", "Architecture Analysis"),
+    4: ("audit.py", "Synthesis Audit"),
+    5: ("python_rerun.py", "Python Testbench Re-run"),
+    6: ("xsim.py", "Xsim Build & Simulate"),
+    7: ("vcd_verify.py", "VCD Verification"),
+    8: ("csv_crosscheck.py", "CSV Cross-Check"),
+    9: ("synth.py", "Vivado Synthesis"),
+    11: ("bash_audit.py", "Bash Audit"),
 }
 
 GUIDANCE_STAGES = {

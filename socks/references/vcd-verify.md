@@ -1,6 +1,6 @@
 # VCD Post-Simulation Verifier
 
-Read this file before Stage 8 (VCD verification). Use `socks/scripts/stage7_vcd_verify.py` for the automated version, or write a project-specific verifier following this architecture.
+Read this file before Stage 8 (VCD verification). Use `socks/scripts/vcd_verify.py` for the automated version, or write a project-specific verifier following this architecture.
 
 ## Three-layer architecture
 
@@ -150,15 +150,15 @@ Typical checks to implement per segment:
 
 ## Integration with the build pipeline
 
-Use `scripts/stage6_xsim.py` for simulation, then `scripts/stage7_vcd_verify.py` for verification:
+Use `scripts/xsim.py` for simulation, then `scripts/vcd_verify.py` for verification:
 
 ```bash
 # Normal simulation
-python scripts/stage6_xsim.py --project-dir . --top module_tb
+python scripts/xsim.py --project-dir . --top module_tb
 
 # Simulation with VCD capture
-python scripts/stage6_xsim.py --project-dir . --top module_tb --vcd
+python scripts/xsim.py --project-dir . --top module_tb --vcd
 
 # VCD verification (after simulation)
-python scripts/stage7_vcd_verify.py module_verify.vcd --signal-map signals.json
+python scripts/vcd_verify.py module_verify.vcd --signal-map signals.json
 ```

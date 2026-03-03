@@ -4,8 +4,8 @@ Stage 5: Python Testbench Re-run -- Run the project's Python testbench
 after audit fixes and verify it still passes.
 
 Usage:
-    python scripts/stage5_python_rerun.py tb/module_tb.py
-    python scripts/stage5_python_rerun.py --project-dir /path/to/project tb/module_tb.py
+    python scripts/python_rerun.py tb/module_tb.py
+    python scripts/python_rerun.py --project-dir /path/to/project tb/module_tb.py
 
 Exit code 0 if the testbench passes, 1 if it fails or errors.
 """

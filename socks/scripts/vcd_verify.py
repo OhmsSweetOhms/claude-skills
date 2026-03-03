@@ -8,8 +8,8 @@ from socks_lib and implement their own verification logic using the
 SignalTracker pattern from references/vcd-verify.md.
 
 Usage:
-    python scripts/stage7_vcd_verify.py module_verify.vcd --signal-map map.json
-    python scripts/stage7_vcd_verify.py module_verify.vcd --list-signals
+    python scripts/vcd_verify.py module_verify.vcd --signal-map map.json
+    python scripts/vcd_verify.py module_verify.vcd --list-signals
 
 Exit code 0 if all checks pass, 1 if any fail.
 """

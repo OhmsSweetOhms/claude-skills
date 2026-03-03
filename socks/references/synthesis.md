@@ -6,7 +6,7 @@ Read this file before Stage 4 (synthesis audit) and Stage 10 (Vivado synthesis).
 
 The audit script checks VHDL source files for 12 common synthesis hazards. It takes file paths as arguments and prints per-file per-check PASS/FAIL. Exit code 0 if all pass, 1 if any fail.
 
-Use `socks/scripts/stage4_audit.py` for the automated version. The 12 checks are:
+Use `socks/scripts/audit.py` for the automated version. The 12 checks are:
 
 1. No `2**N` integer overflow (N >= 32)
 2. Saturation constants use bit-vector aggregates (no `to_signed(2**N, ...)`)
@@ -82,12 +82,12 @@ report_timing -nworst 5 -file ${proj_dir}/my_module_timing_paths.txt
 
 ### Running synthesis
 
-Use `scripts/stage9_synth.py` which generates TCL, invokes Vivado, and parses reports:
+Use `scripts/synth.py` which generates TCL, invokes Vivado, and parses reports:
 
 ```bash
-python scripts/stage9_synth.py --top my_module --part xc7z020clg484-1 \
+python scripts/synth.py --top my_module --part xc7z020clg484-1 \
     --src-dir src/ --out-dir sim/
-python scripts/stage9_synth.py --top my_module --part xc7z020clg484-1 \
+python scripts/synth.py --top my_module --part xc7z020clg484-1 \
     --src-dir src/ --out-dir sim/ --clock-period 10.0 --async-ports rxd
 ```
 

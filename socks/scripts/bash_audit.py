@@ -8,8 +8,8 @@ for patterns that indicate direct tool invocations outside the SOCKS
 pipeline. These are pipeline gaps that need to be addressed.
 
 Usage:
-    python scripts/stage11_bash_audit.py --project-dir .
-    python scripts/stage11_bash_audit.py --project-dir /path/to/project
+    python scripts/bash_audit.py --project-dir .
+    python scripts/bash_audit.py --project-dir /path/to/project
 
 Exit code 0 if no raw tool calls found, 1 if gaps detected.
 """
@@ -41,11 +41,11 @@ class Finding:
 # Patterns that indicate raw EDA tool calls (must be at start of a command,
 # not inside filenames like xvhdl.pb or directory names like xsim.dir)
 RAW_TOOL_PATTERNS = [
-    (r'(?:^|\s|&&|\|\||;)xvhdl\b', "Raw xvhdl call (use stage6_xsim.py)"),
-    (r'(?:^|\s|&&|\|\||;)xvlog\b', "Raw xvlog call (use stage6_xsim.py)"),
-    (r'(?:^|\s|&&|\|\||;)xelab\b', "Raw xelab call (use stage6_xsim.py)"),
-    (r'(?:^|\s|&&|\|\||;)xsim\b', "Raw xsim call (use stage6_xsim.py)"),
-    (r'(?:^|\s|&&|\|\||;)vivado\s+-mode\s+batch\b', "Raw vivado batch call (use stage9_synth.py)"),
+    (r'(?:^|\s|&&|\|\||;)xvhdl\b', "Raw xvhdl call (use xsim.py)"),
+    (r'(?:^|\s|&&|\|\||;)xvlog\b', "Raw xvlog call (use xsim.py)"),
+    (r'(?:^|\s|&&|\|\||;)xelab\b', "Raw xelab call (use xsim.py)"),
+    (r'(?:^|\s|&&|\|\||;)xsim\b', "Raw xsim call (use xsim.py)"),
+    (r'(?:^|\s|&&|\|\||;)vivado\s+-mode\s+batch\b', "Raw vivado batch call (use synth.py)"),
 ]
 
 # Patterns for shell anti-patterns
@@ -134,14 +134,14 @@ def check_shell_script_summary(project_dir, all_findings):
             findings.append(Finding(
                 rel_path, 0,
                 f"Shell script '{basename}' contains raw tool calls",
-                "Consider replacing with stage6_xsim.py or wrapping in a Python script",
+                "Consider replacing with xsim.py or wrapping in a Python script",
             ))
 
     return findings
 
 
 def check_tcl_scripts(project_dir):
-    """Check TCL scripts for patterns that stage9_synth.py should generate."""
+    """Check TCL scripts for patterns that synth.py should generate."""
     findings = []
 
     for tcl_file in glob.glob(os.path.join(project_dir, "**", "*.tcl"), recursive=True):
@@ -157,14 +157,14 @@ def check_tcl_scripts(project_dir):
         except (IOError, OSError):
             continue
 
-        # Check if this is a synthesis TCL that stage9_synth.py should generate
+        # Check if this is a synthesis TCL that synth.py should generate
         if "synth_design" in content and "report_utilization" in content:
             # Check if it's using hardcoded paths or project names
             if re.search(r'add_files\s+\$\{proj_dir\}/\w+\.vhd', content):
-                # Has hardcoded file names -- stage9_synth.py handles this
+                # Has hardcoded file names -- synth.py handles this
                 pass  # Not necessarily a finding -- user may want static TCL
 
-        # Check for run commands that should use stage6_xsim.py
+        # Check for run commands that should use xsim.py
         if re.search(r'\brun\s+-all\b', content):
             fname = os.path.basename(tcl_file)
             if fname.startswith("_run"):
@@ -228,15 +228,15 @@ def main() -> int:
     # SOCKS script coverage summary
     print(f"\n  SOCKS script coverage:")
     coverage = [
-        ("Stage 0:  Environment", "stage0_env.py", True),
-        ("Stage 1:  Architecture", "stage1_architecture.py", True),
-        ("Stage 4:  Synthesis audit", "stage4_audit.py", True),
-        ("Stage 5:  Python re-run", "stage5_python_rerun.py", True),
-        ("Stage 6:  Xsim build/sim", "stage6_xsim.py", True),
-        ("Stage 7:  VCD verify", "stage7_vcd_verify.py", True),
-        ("Stage 8:  CSV cross-check", "stage8_csv_crosscheck.py", True),
-        ("Stage 9:  Vivado synth", "stage9_synth.py", True),
-        ("Stage 11: Bash audit", "stage11_bash_audit.py", True),
+        ("Environment", "env.py", True),
+        ("Architecture", "architecture.py", True),
+        ("Synthesis audit", "audit.py", True),
+        ("Python re-run", "python_rerun.py", True),
+        ("Xsim build/sim", "xsim.py", True),
+        ("VCD verify", "vcd_verify.py", True),
+        ("CSV cross-check", "csv_crosscheck.py", True),
+        ("Vivado synth", "synth.py", True),
+        ("Bash audit", "bash_audit.py", True),
     ]
     for label, script, covered in coverage:
         print_result(f"{label} -> {script}", covered)

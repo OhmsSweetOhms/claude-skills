@@ -20,18 +20,18 @@ C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit
 
 | Stage | Name | Script / Action | Reference to Read |
 |-------|------|----------------|-------------------|
-| 0 | Environment Setup | `scripts/stage0_env.py` | -- |
-| 1 | Architecture | `scripts/stage1_architecture.py` | `references/vhdl.md` (saturation, DSP widths) |
+| 0 | Environment Setup | `scripts/env.py` | -- |
+| 1 | Architecture | `scripts/architecture.py` | `references/architecture-diagrams.md`, `references/vhdl.md` (saturation, DSP widths) |
 | 2 | VHDL Authoring | *Claude writes code* | `references/vhdl.md` |
 | 3 | VHDL Linter | `node <linter>/dist/lib/cli/cli.js` | `references/linter.md` |
-| 4 | Synthesis Audit | `scripts/stage4_audit.py` | `references/synthesis.md` |
+| 4 | Synthesis Audit | `scripts/audit.py` | `references/synthesis.md` |
 | 5 | Python Testbench | *Claude writes code* | `references/python-testbench.md` |
 | 6 | Bare-Metal C Driver | *Claude writes code* | `references/baremetal.md` |
-| 7 | SV/Xsim Testbench | *Claude writes code* + `scripts/stage6_xsim.py` | `references/xsim.md` |
-| 8 | VCD Verification | `scripts/stage7_vcd_verify.py` | `references/vcd-verify.md` |
-| 9 | CSV Cross-Check | `scripts/stage8_csv_crosscheck.py` | -- |
-| 10 | Vivado Synthesis | `scripts/stage9_synth.py` | `references/synthesis.md` |
-| 11 | Bash Audit | `scripts/stage11_bash_audit.py` | -- |
+| 7 | SV/Xsim Testbench | *Claude writes code* + `scripts/xsim.py` | `references/xsim.md` |
+| 8 | VCD Verification | `scripts/vcd_verify.py` | `references/vcd-verify.md` |
+| 9 | CSV Cross-Check | `scripts/csv_crosscheck.py` | -- |
+| 10 | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
+| 11 | Bash Audit | `scripts/bash_audit.py` | -- |
 | 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md` |
 
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
@@ -93,20 +93,18 @@ project_name/
 
 ### Stage 0 -- Environment Setup
 
-Run `scripts/stage0_env.py` to discover Vivado and verify tools.
+Run `scripts/env.py` to discover Vivado and verify tools.
 
 ### Stage 1 -- Architecture
 
-Before writing VHDL, produce two deliverables:
+Before writing VHDL, produce three deliverables:
 
-**1. Block diagram** — ASCII art showing:
-- All modules/entities and their hierarchy
-- Clock domains with frequencies (label every domain boundary)
-- Data flow between modules with signal names and bit widths
-- Baseband / serial rates at every port (tx_clk, tx_out, sample_en, etc.)
-- A **rate summary table** at the bottom listing every clock/tick/bit-rate and how it's derived
+**1. Architecture diagrams** — Read `references/architecture-diagrams.md`. Write two Mermaid diagrams into `ARCHITECTURE.md` and render to PNG:
+- **Data Flow** — modules/entities as subgraphs reflecting VHDL hierarchy, signal names on every edge, solid arrows for TX path, dashed for RX, loopback/external connections shown explicitly
+- **Clocking** — sys_clk (PS FCLK_CLK0) fan-out to every rate-generating process, with derivation formulas and concrete numeric examples
+- **Rate Summary table** — every clock/tick/bit-rate with its derivation and affected signals
 
-This diagram catches clock/rate mismatches before they become VHDL bugs. Every frequency in the design must appear with its derivation (e.g. "100 MHz / 100 = 1 MHz tick" or "freq_word × sys_clk / 2^32 = 1 MHz NCO").
+These diagrams catch hierarchy, connectivity, and clock/rate mismatches before they become VHDL bugs. Every frequency in the design must appear with its derivation (e.g. "100 MHz / 100 = 1 MHz tick" or "freq_word × sys_clk / 2^32 = 1 MHz NCO").
 
 **2. Resource analysis** — answer: What are the widest intermediates? Do any overflow VHDL integer range? How many DSP48E1 does each multiply need? What is the critical path depth?
 
@@ -122,7 +120,7 @@ Read `references/linter.md`. Run the VHDL linter on `src/` to catch style, conve
 
 ### Stage 4 -- Synthesis Audit
 
-Run `scripts/stage4_audit.py src/*.vhd`. 12 static checks. All must pass before proceeding. The audit catches synthesis hazards after VHDL and linting are clean — no time wasted testing code that won't synthesise.
+Run `scripts/audit.py src/*.vhd`. 12 static checks. All must pass before proceeding. The audit catches synthesis hazards after VHDL and linting are clean — no time wasted testing code that won't synthesise.
 
 ### Stage 5 -- Python Testbench
 
@@ -136,7 +134,7 @@ The C driver is written before the SV testbench because DPI-C lets the TB call t
 
 ### Stage 7 -- SV/Xsim Testbench
 
-Read `references/xsim.md`. Check all 7 Xsim rules (X1-X7). Use monitor ports for signal access. `always @(negedge clk)` for reference drivers. Never `2.0 ** 32`. After writing the SV testbench, compile and simulate via `scripts/stage6_xsim.py` -- no raw bash calls needed.
+Read `references/xsim.md`. Check all 7 Xsim rules (X1-X7). Use monitor ports for signal access. `always @(negedge clk)` for reference drivers. Never `2.0 ** 32`. After writing the SV testbench, compile and simulate via `scripts/xsim.py` -- no raw bash calls needed.
 
 **DPI-C:** If the TB shares computation with the C driver (DPLL params, CRC tables, protocol encoding), place a `.c` file in `tb/`. The build script auto-discovers it, compiles with `xsc`, and links via `-sv_lib dpi`. See `references/xsim.md` for the pattern.
 
@@ -150,11 +148,11 @@ Compare SV simulation CSV against Python model output. Align by event count. Rep
 
 ### Stage 10 -- Vivado Synthesis
 
-Run `scripts/stage9_synth.py`. Generates TCL, invokes Vivado batch mode, parses utilization/timing/DRC reports. All timing checks must show MET.
+Run `scripts/synth.py`. Generates TCL, invokes Vivado batch mode, parses utilization/timing/DRC reports. All timing checks must show MET.
 
 ### Stage 11 -- Bash Audit
 
-Run `scripts/stage11_bash_audit.py --project-dir .`. Scans all project shell scripts, Tcl files, and Makefiles for raw EDA tool calls (xvhdl, xvlog, xelab, xsim, vivado) that should be routed through SOCKS Python scripts instead. Also checks for `source settings64.sh` patterns, process substitution, and unsourced tool invocations. All checks must pass -- any raw tool call is a pipeline gap that needs a script.
+Run `scripts/bash_audit.py --project-dir .`. Scans all project shell scripts, Tcl files, and Makefiles for raw EDA tool calls (xvhdl, xvlog, xelab, xsim, vivado) that should be routed through SOCKS Python scripts instead. Also checks for `source settings64.sh` patterns, process substitution, and unsourced tool invocations. All checks must pass -- any raw tool call is a pipeline gap that needs a script.
 
 ### Stage 12 -- CLAUDE.md
 
