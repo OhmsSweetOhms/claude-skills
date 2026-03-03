@@ -1,6 +1,6 @@
 # Python Testbench Model Skeleton
 
-Read this file before Stage 4 (cycle-accurate Python testbench).
+Read this file before Stage 5 (cycle-accurate Python testbench).
 
 ## Model structure
 

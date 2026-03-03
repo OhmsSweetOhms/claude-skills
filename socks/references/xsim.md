@@ -1,6 +1,6 @@
 # Xsim Compatibility Rules and Patterns
 
-Read this file before Stage 6 (SystemVerilog testbench for Xsim).
+Read this file before Stage 7 (SystemVerilog testbench for Xsim).
 
 ## Compatibility rules
 

@@ -1,6 +1,6 @@
 # Bare-Metal C Driver Patterns
 
-Read this file before Stage 5 (bare-metal C driver). These patterns were proven in the USART_AXI project and apply to any AXI-Lite memory-mapped peripheral on Zynq-7000.
+Read this file before Stage 6 (bare-metal C driver). These patterns were proven in the USART_AXI project and apply to any AXI-Lite memory-mapped peripheral on Zynq-7000.
 
 ---
 

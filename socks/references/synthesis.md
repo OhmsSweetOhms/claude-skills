@@ -1,6 +1,6 @@
 # Synthesis Audit Script and Checklist
 
-Read this file before Stage 3 (synthesis audit) and Stage 9 (Vivado synthesis).
+Read this file before Stage 4 (synthesis audit) and Stage 10 (Vivado synthesis).
 
 ## Audit script structure
 

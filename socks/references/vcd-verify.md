@@ -1,6 +1,6 @@
 # VCD Post-Simulation Verifier
 
-Read this file before Stage 7 (VCD verification). Use `socks/scripts/stage7_vcd_verify.py` for the automated version, or write a project-specific verifier following this architecture.
+Read this file before Stage 8 (VCD verification). Use `socks/scripts/stage7_vcd_verify.py` for the automated version, or write a project-specific verifier following this architecture.
 
 ## Three-layer architecture
 
