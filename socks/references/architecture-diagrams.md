@@ -1,6 +1,6 @@
 # Architecture Diagrams (Mermaid)
 
-Stage 1 produces two Mermaid diagrams — **Data Flow** and **Clocking** — plus a **Rate Summary** table. Write them into `ARCHITECTURE.md` and render to PNG with `mmdc`. These diagrams catch hierarchy, connectivity, and clock/rate mismatches before any VHDL is written.
+Stage 1 produces two Mermaid diagrams — **Data Flow** and **Clocking** — plus a **Rate Summary** table. Write them into `docs/ARCHITECTURE.md` and render to PNG with `mmdc`. These diagrams catch hierarchy, connectivity, and clock/rate mismatches before any VHDL is written.
 
 ## Prerequisites
 
@@ -13,15 +13,17 @@ mmdc --help
 
 ```
 project_name/
-├── ARCHITECTURE.md              # Mermaid source (two ```mermaid blocks)
-├── ARCHITECTURE_dataflow.png    # Rendered data flow diagram
-└── ARCHITECTURE_clocking.png    # Rendered clocking diagram
+└── docs/
+    ├── ARCHITECTURE.md              # Mermaid source (two ```mermaid blocks)
+    ├── ARCHITECTURE_dataflow.png    # Rendered data flow diagram
+    └── ARCHITECTURE_clocking.png    # Rendered clocking diagram
 ```
 
 ## Rendering
 
 `mmdc` numbers output files when the input contains multiple diagrams:
 ```bash
+cd docs
 mmdc -i ARCHITECTURE.md -o arch.png -w 1400 -e png -b white
 mv arch-1.png ARCHITECTURE_dataflow.png
 mv arch-2.png ARCHITECTURE_clocking.png

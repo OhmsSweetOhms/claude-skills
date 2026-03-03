@@ -20,8 +20,12 @@ Available stages:
     8   CSV cross-check (sim vs model)
     9   Vivado synthesis (TCL generation + batch run)
     11  Bash audit (scan for raw tool calls in project files)
+    13  SOCKS self-audit (skill consistency check)
 
 Stages 2, 3, 10, 12 are guidance-only (Claude writes code/docs manually).
+
+The self-audit (stage 13) always runs as the final stage when --stages all.
+It also runs as a post-check after every orchestrator invocation.
 """
 
 import argparse
@@ -45,6 +49,7 @@ AUTOMATED_STAGES = {
     8: ("csv_crosscheck.py", "CSV Cross-Check"),
     9: ("synth.py", "Vivado Synthesis"),
     11: ("bash_audit.py", "Bash Audit"),
+    13: ("self_audit.py", "SOCKS Self-Audit"),
 }
 
 GUIDANCE_STAGES = {
@@ -270,6 +275,19 @@ def main() -> int:
     else:
         print(f"  RESULT: {fail_str()} -- pipeline failed")
     print_separator()
+
+    # Post-run: always run SOCKS self-audit (unless it was already a requested stage)
+    if 13 not in stages:
+        print(f"\n  Running post-pipeline SOCKS self-audit...")
+        self_audit_path = os.path.join(SCRIPT_DIR, "self_audit.py")
+        if os.path.isfile(self_audit_path):
+            sa_rc = subprocess.run(
+                [sys.executable, self_audit_path],
+                cwd=project_dir,
+            ).returncode
+            if sa_rc != 0:
+                print(f"\n  WARNING: SOCKS self-audit found issues")
+                all_passed = False
 
     return 0 if all_passed else 1
 

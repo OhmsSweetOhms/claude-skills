@@ -7,11 +7,11 @@ description: "System-On-a-Chip Kit for Synthesis. Use this skill for any FPGA/So
 
 ## Pipeline Overview
 
-The pipeline has 13 stages (0-12) executed in order. Each stage catches a class of bugs the next cannot.
+The pipeline has 14 stages (0-13) executed in order. Each stage catches a class of bugs the next cannot.
 
 ```
 Env -> Architecture -> VHDL -> Linter -> Audit -> Python TB ->
-C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit -> CLAUDE.md
+C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit -> CLAUDE.md -> Self-Audit
 ```
 
 ---
@@ -33,6 +33,7 @@ C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit
 | 10 | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
 | 11 | Bash Audit | `scripts/bash_audit.py` | -- |
 | 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md` |
+| 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
 
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
 
@@ -99,7 +100,7 @@ Run `scripts/env.py` to discover Vivado and verify tools.
 
 Before writing VHDL, produce three deliverables:
 
-**1. Architecture diagrams** — Read `references/architecture-diagrams.md`. Write two Mermaid diagrams into `ARCHITECTURE.md` and render to PNG:
+**1. Architecture diagrams** — Read `references/architecture-diagrams.md`. Write two Mermaid diagrams into `docs/ARCHITECTURE.md` and render to PNG:
 - **Data Flow** — modules/entities as subgraphs reflecting VHDL hierarchy, signal names on every edge, solid arrows for TX path, dashed for RX, loopback/external connections shown explicitly
 - **Clocking** — sys_clk (PS FCLK_CLK0) fan-out to every rate-generating process, with derivation formulas and concrete numeric examples
 - **Rate Summary table** — every clock/tick/bit-rate with its derivation and affected signals
@@ -157,6 +158,10 @@ Run `scripts/bash_audit.py --project-dir .`. Scans all project shell scripts, Tc
 ### Stage 12 -- CLAUDE.md
 
 Create project documentation with: What This Is, Architecture, Files table, Build & Test, Synthesis Results (from Stage 10 reports), Vivado version, Conventions. This is last because it documents everything including the C driver from Stage 6.
+
+### Stage 13 -- SOCKS Self-Audit
+
+Run `scripts/self_audit.py`. Validates internal consistency of the SOCKS skill itself: checks that all scripts referenced in SKILL.md exist, all reference files exist, no stale stage-numbered filenames remain, no absolute/user-specific paths leaked in, and the orchestrator dispatch table matches actual script files. This stage also runs automatically as a post-check after every orchestrator invocation, even for single-stage runs.
 
 ---
 
