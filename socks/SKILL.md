@@ -7,11 +7,31 @@ description: "System-On-a-Chip Kit for Synthesis. Use this skill for any FPGA/So
 
 ## Pipeline Overview
 
-The pipeline has 14 stages (0-13) executed in order. Each stage catches a class of bugs the next cannot.
+The pipeline has 14 stages (0-13). Each stage catches a class of bugs the next cannot.
 
 ```
-Env -> Architecture -> VHDL -> Linter -> Audit -> Python TB ->
-C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit -> CLAUDE.md -> Self-Audit
+Stage 0:  Environment Setup                              AUTOMATED
+Stage 1:  Architecture (RTL + TB) -> Plan Mode approval  BOTH
+          +-------------------------------------------------------+
+          |  DESIGN LOOP (2-9) -- model-driven                    |
+          |                                                       |
+          |  Stage 2:  Write/Modify RTL                GUIDANCE   |
+          |  Stage 3:  VHDL Linter                     GUIDANCE   |
+          |  Stage 4:  Synthesis Audit                 AUTOMATED  |
+          |  Stage 5:  Python Testbench                BOTH       |
+          |  Stage 6:  Bare-Metal C Driver             GUIDANCE   |
+          |  Stage 7:  SV/Xsim Testbench              BOTH       |
+          |  Stage 8:  VCD Verification                AUTOMATED  |
+          |  Stage 9:  CSV Cross-Check                 AUTOMATED  |
+          |                                                       |
+          |  Claude decides re-entry on failure.                  |
+          |  Exits when: architecture met + all agree.            |
+          |  If stuck (same fix tried twice) -> ask user.         |
+          +-------------------------------------------------------+
+Stage 10: Vivado Synthesis                               AUTOMATED
+Stage 11: Bash Audit                                     AUTOMATED
+Stage 12: CLAUDE.md Documentation                        GUIDANCE
+Stage 13: SOCKS Self-Audit                               AUTOMATED
 ```
 
 ---
@@ -21,13 +41,13 @@ C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit
 | Stage | Name | Script / Action | Reference to Read |
 |-------|------|----------------|-------------------|
 | 0 | Environment Setup | `scripts/env.py` | -- |
-| 1 | Architecture | `scripts/architecture.py` | `references/architecture-diagrams.md`, `references/vhdl.md` (saturation, DSP widths) |
-| 2 | VHDL Authoring | *Claude writes code* | `references/vhdl.md` |
+| 1 | Architecture | `scripts/architecture.py` + guidance | `references/architecture-diagrams.md`, `references/vhdl.md` (saturation, DSP widths) |
+| 2 | Write/Modify RTL | *Claude writes code* | `references/vhdl.md` |
 | 3 | VHDL Linter | `node <linter>/dist/lib/cli/cli.js` | `references/linter.md` |
 | 4 | Synthesis Audit | `scripts/audit.py` | `references/synthesis.md` |
-| 5 | Python Testbench | *Claude writes code* | `references/python-testbench.md` |
+| 5 | Python Testbench | `scripts/python_rerun.py` + *Claude writes code* | `references/python-testbench.md` |
 | 6 | Bare-Metal C Driver | *Claude writes code* | `references/baremetal.md` |
-| 7 | SV/Xsim Testbench | *Claude writes code* + `scripts/xsim.py` | `references/xsim.md` |
+| 7 | SV/Xsim Testbench | `scripts/xsim.py` + *Claude writes code* | `references/xsim.md` |
 | 8 | VCD Verification | `scripts/vcd_verify.py` | `references/vcd-verify.md` |
 | 9 | CSV Cross-Check | `scripts/csv_crosscheck.py` | -- |
 | 10 | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
@@ -39,35 +59,40 @@ C Driver -> SV/Xsim TB -> VCD verify -> CSV verify -> Vivado synth -> Bash audit
 
 ---
 
-## Verification Loop (Stages 5-9)
+## Design Loop (Stages 2-9)
 
-Stages 5 through 9 form a **verification loop**. The Python model (5) is the spec. The C driver (6) provides DPI-C helpers for the SV testbench. Xsim (7) must match the model. VCD (8) confirms the waveform. CSV cross-check (9) compares sim vs model numerically. All outputs must be consistent.
+Stages 2-9 form the **design loop**. Stage 1 establishes the architecture and plan mode approval -- this is the spec. Claude iterates through 2-9 until the RTL meets the architecture and all verification outputs agree (Python TB, Xsim, VCD, CSV).
 
-**Orchestrator behaviour:**
-- If any stage in 5-9 fails, the loop **restarts from stage 5** (up to 2 retries)
-- Requesting any loop stage auto-expands to include its prerequisites: `--stages 8` becomes `5,6,7,8`
-- Stage 7 auto-enables `--vcd` when stage 8 is in the pipeline
+**Re-entry on failure:** Claude reasons about the root cause and re-enters at the appropriate stage:
 
-**Fix-and-retry:** When the loop restarts, Claude fixes the root cause (model bug, RTL bug, or TB bug), then the entire loop re-runs to confirm consistency. The Python model is always the reference — when VHDL and Python disagree, fix the VHDL.
+- **RTL bug** -> Stage 2 (modify RTL) -> 3 -> 4 -> ...
+- **Python model bug** -> Stage 5 -> 7 -> 8 -> 9
+- **SV testbench bug** -> Stage 7 -> 8 -> 9
+- **Register map change** -> Stage 2 -> ... -> 6 (update C driver) -> 7 -> ...
+- **C driver bug** -> Stage 6 -> 7 -> ...
+
+**Propagation:** When the user asks to update a single sim stage, ask if they want to update all downstream stages too.
+
+**Circular logic detection:** If you have tried a fix and ended up back at the same failure, or tried two different approaches and reverted to where you started -- stop and ask the user. Do not keep iterating on the same problem.
+
+**Exit criteria:** The design loop exits when the architecture from Stage 1 is met and all verification stages (5, 7, 8, 9) pass with consistent results.
 
 ---
 
 ## Failure Recovery
 
-When a stage fails, don't restart from Stage 0. Go back to the **producing stage**, fix the issue, then carry the fix forward through all downstream stages.
+On failure, reason about the root cause. The producing stage is where you re-enter.
 
-| Failing Stage | Re-entry | Rationale |
-|---|---|---|
-| 2 VHDL | 1 if design error, 2 if coding error | Architecture mistakes need block diagram update |
-| 3 Linter | 2 → 3 | Fix style/warnings in VHDL, re-lint |
-| 4 Audit | 2 → 3 → 4 (own code only; external module warnings are non-blocking) | Fix VHDL, re-lint, re-audit |
-| 5-9 Verify Loop | Always restart from 5 | Loop ensures Python model, C driver, Xsim, VCD, and CSV all agree |
-| 6 C Driver | 6 if driver bug, 2 → 3 → 4 if register map wrong | Register map flows from VHDL |
-| 9 Vivado Synth | 2 → 3 → 4 if timing/resource issue | RTL restructuring needed |
-| 11 Bash Audit | 11 (fix scripts in place) | No upstream impact |
-| 12 CLAUDE.md | 12 (fix docs in place) | No upstream impact |
+- **Architecture errors** (bad plan) -> revisit Stage 1 with the user
+- **The Python model is the reference** -- when VHDL and Python disagree, fix the VHDL, except when the Python model can be shown to misrepresent VHDL timing mechanisms
+- **External module audit warnings** are non-blocking (exit code 2)
+- **Stages 10-13 failures** do not loop back into 2-9:
+  - Stage 10 timing/resource failure -> may need RTL restructuring (revisit Stage 2 with user)
+  - Stage 11 -> fix scripts in place
+  - Stage 12 -> fix docs in place
+  - Stage 13 -> fix skill consistency issues
 
-**Carry-forward rule:** every fix must propagate through all downstream stages. Fix VHDL → re-lint → re-audit → re-run verify loop → update C driver if register map changed → etc.
+**Carry-forward rule:** every fix must propagate through all downstream stages. Fix VHDL -> re-lint -> re-audit -> re-run Python TB -> update C driver if register map changed -> re-run Xsim -> VCD -> CSV.
 
 ---
 
@@ -76,11 +101,17 @@ When a stage fails, don't restart from Stage 0. Go back to the **producing stage
 Run stages individually or as a pipeline:
 
 ```bash
-python scripts/socks.py --project-dir . --stages all
-python scripts/socks.py --project-dir . --stages 0,4,10
+python scripts/socks.py --project-dir . --stages automated
+python scripts/socks.py --project-dir . --stages 0,4,7
 python scripts/socks.py --project-dir . --stages 4 --files src/*.vhd
 python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z020clg484-1
 ```
+
+**Stage keywords:**
+- `--stages automated` -- all stages with scripts (default): 0, 1, 4, 5, 7, 8, 9, 10, 11, 13
+- `--stages 5,7,8` -- specific stages, comma-separated (no auto-expansion)
+
+Guidance-only stages (2, 3, 6, 12) are driven by Claude reading SKILL.md, not by the orchestrator.
 
 ---
 
@@ -108,22 +139,22 @@ Run `scripts/env.py` to discover Vivado and verify tools.
 
 ### Stage 1 -- Architecture
 
-Before writing VHDL, produce three deliverables:
+Before writing VHDL, produce three deliverables. This stage covers both RTL and testbench architecture, and ends with **plan mode approval** before proceeding.
 
-**1. Architecture diagrams** — Read `references/architecture-diagrams.md`. Write two Mermaid diagrams into `docs/ARCHITECTURE.md` and render to PNG:
-- **Data Flow** — modules/entities as subgraphs reflecting VHDL hierarchy, signal names on every edge, solid arrows for TX path, dashed for RX, loopback/external connections shown explicitly
-- **Clocking** — sys_clk (PS FCLK_CLK0) fan-out to every rate-generating process, with derivation formulas and concrete numeric examples
-- **Rate Summary table** — every clock/tick/bit-rate with its derivation and affected signals
+**1. Architecture diagrams** -- Read `references/architecture-diagrams.md`. Write two Mermaid diagrams into `docs/ARCHITECTURE.md` and render to PNG:
+- **Data Flow** -- modules/entities as subgraphs reflecting VHDL hierarchy, signal names on every edge, solid arrows for TX path, dashed for RX, loopback/external connections shown explicitly
+- **Clocking** -- sys_clk (PS FCLK_CLK0) fan-out to every rate-generating process, with derivation formulas and concrete numeric examples
+- **Rate Summary table** -- every clock/tick/bit-rate with its derivation and affected signals
 
-These diagrams catch hierarchy, connectivity, and clock/rate mismatches before they become VHDL bugs. Every frequency in the design must appear with its derivation (e.g. "100 MHz / 100 = 1 MHz tick" or "freq_word × sys_clk / 2^32 = 1 MHz NCO").
+These diagrams catch hierarchy, connectivity, and clock/rate mismatches before they become VHDL bugs. Every frequency in the design must appear with its derivation (e.g. "100 MHz / 100 = 1 MHz tick" or "freq_word x sys_clk / 2^32 = 1 MHz NCO").
 
-**2. Resource analysis** — answer: What are the widest intermediates? Do any overflow VHDL integer range? How many DSP48E1 does each multiply need? What is the critical path depth?
+**2. Resource analysis** -- answer: What are the widest intermediates? Do any overflow VHDL integer range? How many DSP48E1 does each multiply need? What is the critical path depth?
 
 Read `references/vhdl.md` for saturation constant patterns and multiply width rules.
 
-### Stage 2 -- VHDL Authoring
+### Stage 2 -- Write/Modify RTL
 
-Read `references/vhdl.md` before writing any VHDL. Key rules: architecture `rtl`, reset inside `rising_edge(clk)`, named processes `p_*`, state prefix `ST_*`, monitor ports `mon_*`, no `abs()` on signed, no `2**N` constants, no component declarations.
+Read `references/vhdl.md` before writing any VHDL. This stage is entered on both initial creation and design loop iteration. Key rules: architecture `rtl`, reset inside `rising_edge(clk)`, named processes `p_*`, state prefix `ST_*`, monitor ports `mon_*`, no `abs()` on signed, no `2**N` constants, no component declarations.
 
 ### Stage 3 -- VHDL Linter
 
@@ -131,7 +162,7 @@ Read `references/linter.md`. Run the VHDL linter on `src/` to catch style, conve
 
 ### Stage 4 -- Synthesis Audit
 
-Run `scripts/audit.py src/*.vhd`. 12 static checks. All must pass before proceeding. The audit catches synthesis hazards after VHDL and linting are clean — no time wasted testing code that won't synthesise.
+Run `scripts/audit.py src/*.vhd`. 12 static checks. All must pass before proceeding. The audit catches synthesis hazards after VHDL and linting are clean -- no time wasted testing code that won't synthesise.
 
 ### Stage 5 -- Python Testbench
 
@@ -145,7 +176,7 @@ The C driver is written before the SV testbench because DPI-C lets the TB call t
 
 ### Stage 7 -- SV/Xsim Testbench
 
-Read `references/xsim.md`. Check all 7 Xsim rules (X1-X7). Use monitor ports for signal access. `always @(negedge clk)` for reference drivers. Never `2.0 ** 32`. After writing the SV testbench, compile and simulate via `scripts/xsim.py` -- no raw bash calls needed.
+Read `references/xsim.md`. Check all 7 Xsim rules (X1-X7). Use monitor ports for signal access. `always @(negedge clk)` for reference drivers. Never `2.0 ** 32`. After writing the SV testbench, compile and simulate via `scripts/xsim.py` -- no raw bash calls needed. Stage 7 always enables `--vcd` unconditionally.
 
 **DPI-C:** If the TB shares computation with the C driver (DPLL params, CRC tables, protocol encoding), place a `.c` file in `tb/`. The build script auto-discovers it, compiles with `xsc`, and links via `-sv_lib dpi`. See `references/xsim.md` for the pattern.
 

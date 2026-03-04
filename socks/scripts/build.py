@@ -72,8 +72,8 @@ def main() -> int:
         stages = "0,1,4,5,6,7,8,11"
         print(f"\n  Step 2: Pipeline without synthesis (stages {stages})")
     else:
-        stages = "all"
-        print(f"\n  Step 2: Full pipeline (all stages)")
+        stages = "automated"
+        print(f"\n  Step 2: Full pipeline (automated stages)")
 
     socks_cmd = [
         sys.executable, os.path.join(SCRIPT_DIR, "socks.py"),

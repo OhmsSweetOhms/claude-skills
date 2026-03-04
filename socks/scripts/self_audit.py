@@ -153,7 +153,7 @@ def check_absolute_paths(verbose=False):
 
 
 def check_orchestrator_consistency(verbose=False):
-    """Check that socks.py AUTOMATED_STAGES matches actual script files."""
+    """Check that socks.py STAGES dict matches actual script files."""
     socks_py = os.path.join(SKILL_DIR, "scripts", "socks.py")
     if not os.path.isfile(socks_py):
         return [("scripts/socks.py", "File not found")]
@@ -162,7 +162,7 @@ def check_orchestrator_consistency(verbose=False):
     with open(socks_py, "r") as f:
         content = f.read()
 
-    # Extract script filenames from AUTOMATED_STAGES dict
+    # Extract script filenames from STAGES dict
     refs = re.findall(r'\"([a-zA-Z0-9_]+\.py)\"', content)
     for ref in refs:
         if ref == "socks.py" or ref == "clean.py":

@@ -5,27 +5,33 @@ socks.py -- SOCKS Pipeline Orchestrator
 Runs pipeline stages in sequence or individually.
 
 Usage:
-    python scripts/socks.py --project-dir . --stages all
+    python scripts/socks.py --project-dir . --stages automated
     python scripts/socks.py --project-dir . --stages 0,4,7
     python scripts/socks.py --project-dir . --stages 4 --files src/*.vhd
-    python scripts/socks.py --project-dir . --stages 0  # env check only
+
+Stage keywords:
+    automated   All stages with scripts (default)
+    0,4,7       Specific stages (comma-separated, no auto-expansion)
 
 Available stages:
-    0   Environment setup (Vivado/Xsim discovery)
-    1   Architecture analysis (VHDL entity parsing, DSP estimates)
-    4   Synthesis audit (12 static VHDL checks)
-    5   Python testbench re-run
-    7   Xsim build & simulate (compile + elaborate + run)
-    8   VCD post-simulation verification
-    9   CSV cross-check (sim vs model)
-    10  Vivado synthesis (TCL generation + batch run)
-    11  Bash audit (scan for raw tool calls in project files)
-    13  SOCKS self-audit (skill consistency check)
+    0   Environment setup (script)
+    1   Architecture analysis (script + guidance)
+    2   Write/Modify RTL (guidance only)
+    3   VHDL Linter (guidance only)
+    4   Synthesis audit (script)
+    5   Python testbench (script + guidance)
+    6   Bare-Metal C driver (guidance only)
+    7   SV/Xsim testbench (script + guidance)
+    8   VCD verification (script)
+    9   CSV cross-check (script)
+    10  Vivado synthesis (script)
+    11  Bash audit (script)
+    12  CLAUDE.md documentation (guidance only)
+    13  SOCKS self-audit (script)
 
-Stages 2, 3, 6, 12 are guidance-only (Claude writes code/docs manually).
-
-The self-audit (stage 13) always runs as the final stage when --stages all.
-It also runs as a post-check after every orchestrator invocation.
+Stages 2-9 form the design loop. Claude decides re-entry on failure.
+Guidance-only stages (2, 3, 6, 12) are driven by Claude reading SKILL.md,
+not by this orchestrator.
 """
 
 import argparse
@@ -33,6 +39,7 @@ import glob
 import os
 import subprocess
 import sys
+from collections import namedtuple
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,11 +50,38 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Collected during the run, written to logs/ at the end
 _transition_log = []
 
+# ---------------------------------------------------------------------------
+# Unified stage definitions
+# ---------------------------------------------------------------------------
+
+StageDef = namedtuple("StageDef", ["label", "script", "guidance"], defaults=[None, None])
+
+STAGES = {
+    0:  StageDef("Environment Setup",       script="env.py"),
+    1:  StageDef("Architecture Analysis",    script="architecture.py",
+                 guidance="RTL + TB architecture, Mermaid diagrams, rate analysis (read references/architecture-diagrams.md). Enter plan mode for user approval before proceeding."),
+    2:  StageDef("Write/Modify RTL",         guidance="read references/vhdl.md"),
+    3:  StageDef("VHDL Linter",              guidance="read references/linter.md"),
+    4:  StageDef("Synthesis Audit",          script="audit.py"),
+    5:  StageDef("Python Testbench",         script="python_rerun.py",
+                 guidance="Write/update cycle-accurate Python model (read references/python-testbench.md)"),
+    6:  StageDef("Bare-Metal C Driver",      guidance="read references/baremetal.md"),
+    7:  StageDef("SV/Xsim Testbench",        script="xsim.py",
+                 guidance="Write/update SV testbench (read references/xsim.md)"),
+    8:  StageDef("VCD Verification",         script="vcd_verify.py"),
+    9:  StageDef("CSV Cross-Check",          script="csv_crosscheck.py"),
+    10: StageDef("Vivado Synthesis",         script="synth.py"),
+    11: StageDef("Bash Audit",               script="bash_audit.py"),
+    12: StageDef("CLAUDE.md Documentation",  guidance="read references/project-structure.md"),
+    13: StageDef("SOCKS Self-Audit",         script="self_audit.py"),
+}
+
+DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
+
 
 def log_transition(stage_num, reason, extra_args, project_dir):
     """Log what stage is about to run, why, and what it receives."""
-    label = (AUTOMATED_STAGES.get(stage_num, (None, None))[1] or
-             GUIDANCE_STAGES.get(stage_num, f"Stage {stage_num}"))
+    label = STAGES[stage_num].label if stage_num in STAGES else f"Stage {stage_num}"
     # Build display args
     display_args = []
     if extra_args:
@@ -74,77 +108,20 @@ def log_transition(stage_num, reason, extra_args, project_dir):
     else:
         print(f"      Args:   (none)")
 
-AUTOMATED_STAGES = {
-    0: ("env.py", "Environment Setup"),
-    1: ("architecture.py", "Architecture Analysis"),
-    4: ("audit.py", "Synthesis Audit"),
-    5: ("python_rerun.py", "Python Testbench Re-run"),
-    7: ("xsim.py", "Xsim Build & Simulate"),
-    8: ("vcd_verify.py", "VCD Verification"),
-    9: ("csv_crosscheck.py", "CSV Cross-Check"),
-    10: ("synth.py", "Vivado Synthesis"),
-    11: ("bash_audit.py", "Bash Audit"),
-    13: ("self_audit.py", "SOCKS Self-Audit"),
-}
-
-GUIDANCE_STAGES = {
-    2: "VHDL Authoring (read references/vhdl.md)",
-    3: "VHDL Linter (read references/linter.md)",
-    6: "Bare-Metal C Driver (read references/baremetal.md)",
-    12: "CLAUDE.md Documentation (read references/project-structure.md)",
-}
-
-# Verification loop: stages 5-9 form a consistency group.
-# Python model (5) is the spec. C driver (6) provides DPI-C helpers.
-# Xsim (7) must match the model. VCD (8) confirms the waveform.
-# CSV cross-check (9) compares sim vs model numerically.
-# If any stage fails, the loop restarts from stage 5.
-VERIFY_LOOP = [5, 6, 7, 8, 9]
-VERIFY_MAX_RETRIES = 2  # max times the loop can restart before giving up
-
 
 def parse_stages(stages_str):
-    """Parse stage specification: 'all', or comma-separated numbers.
+    """Parse stage specification.
 
-    If any stage in the verification loop (5-8) is requested, auto-expand
-    to include all prerequisite loop stages. E.g. requesting stage 7
-    expands to 5,6,7. Requesting stage 8 expands to 5,6,7,8.
+    Keywords:
+        automated  - all stages with scripts (default)
+
+    Otherwise: comma-separated stage numbers (no auto-expansion).
     """
-    if stages_str.strip().lower() == "all":
-        return sorted(AUTOMATED_STAGES.keys())
-
-    stages = []
-    for part in stages_str.split(","):
-        part = part.strip()
-        if part:
-            stages.append(int(part))
-
-    # Auto-expand: if any verify loop stage is present, ensure all
-    # prerequisite loop stages are included before it
-    requested_loop = [s for s in stages if s in VERIFY_LOOP]
-    if requested_loop:
-        max_loop = max(requested_loop)
-        needed = [s for s in VERIFY_LOOP if s <= max_loop]
-        expanded = []
-        insert_done = False
-        for s in stages:
-            if s in VERIFY_LOOP and not insert_done:
-                # Insert the full prerequisite chain here
-                for n in needed:
-                    if n not in expanded:
-                        expanded.append(n)
-                insert_done = True
-            elif s not in VERIFY_LOOP:
-                expanded.append(s)
-        # Deduplicate while preserving order
-        seen = set()
-        stages = []
-        for s in expanded:
-            if s not in seen:
-                seen.add(s)
-                stages.append(s)
-
-    return stages
+    keyword = stages_str.strip().lower()
+    if keyword == "automated":
+        return sorted(k for k, v in STAGES.items() if v.script)
+    # Comma-separated numbers -- no auto-expansion
+    return [int(p.strip()) for p in stages_str.split(",") if p.strip()]
 
 
 def find_vhdl_files(project_dir):
@@ -166,17 +143,23 @@ def find_python_tb(project_dir):
 
 
 def run_stage(stage_num, project_dir, extra_args=None):
-    """Run an automated stage script. Returns exit code."""
-    if stage_num not in AUTOMATED_STAGES:
-        if stage_num in GUIDANCE_STAGES:
-            print(f"\n  Stage {stage_num}: {GUIDANCE_STAGES[stage_num]}")
-            print(f"  (Guidance-only -- no automated script)")
-            return 0
+    """Run a pipeline stage. Returns exit code.
+
+    Guidance-only stages (no script) print their label and return 0.
+    """
+    if stage_num not in STAGES:
         print(f"\n  ERROR: Unknown stage {stage_num}")
         return 1
 
-    script_name, description = AUTOMATED_STAGES[stage_num]
-    script_path = os.path.join(SCRIPT_DIR, script_name)
+    stage = STAGES[stage_num]
+
+    # Guidance-only stage with no script
+    if not stage.script:
+        print(f"\n  Stage {stage_num}: {stage.label}")
+        print(f"  (Guidance-only -- no automated script)")
+        return 0
+
+    script_path = os.path.join(SCRIPT_DIR, stage.script)
 
     if not os.path.isfile(script_path):
         print(f"\n  ERROR: Script not found: {script_path}")
@@ -197,8 +180,8 @@ def main() -> int:
         epilog=__doc__)
     parser.add_argument("--project-dir", type=str, default=".",
                         help="Project root directory (default: current dir)")
-    parser.add_argument("--stages", type=str, default="all",
-                        help="Stages to run: 'all' or comma-separated (e.g. '0,4,9')")
+    parser.add_argument("--stages", type=str, default="automated",
+                        help="Stages to run: 'automated' or comma-separated (e.g. '0,4,9')")
     parser.add_argument("--files", type=str, nargs="*", default=None,
                         help="Specific files to pass to stage scripts")
     parser.add_argument("--top", type=str, default=None,
@@ -218,12 +201,6 @@ def main() -> int:
     print(f"\n  Project: {project_dir}")
     print(f"  Stages: {', '.join(str(s) for s in stages)}")
 
-    # Show verify loop expansion if it happened
-    requested_loop = [s for s in stages if s in VERIFY_LOOP]
-    if requested_loop:
-        print(f"  Verify loop: stages {', '.join(str(s) for s in VERIFY_LOOP[:VERIFY_LOOP.index(max(requested_loop))+1])}"
-              f" (all must pass together)")
-
     if args.clean:
         clean_script = os.path.join(SCRIPT_DIR, "clean.py")
         if os.path.isfile(clean_script):
@@ -239,7 +216,6 @@ def main() -> int:
 
     results = {}
     warnings = set()  # stages that passed with warnings (e.g. audit external)
-    verify_retries = 0
 
     def build_stage_args(stage):
         """Build extra_args and reason for a stage. Returns (extra_args, reason, skip)."""
@@ -280,14 +256,13 @@ def main() -> int:
         elif stage == 7:
             extra_args = ["--project-dir", project_dir]
             reason = "Compile VHDL+SV, elaborate, simulate"
-            if args.top:
-                extra_args.extend(["--top", args.top])
-                reason += f" (top={args.top})"
+            # Don't pass --top: let xsim.py auto-detect the TB module
+            # from the SV filename (e.g. sdlc_axi_tb.sv -> sdlc_axi_tb)
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            if 8 in stages:
-                extra_args.append("--vcd")
-                reason += " + VCD (stage 8 downstream)"
+            # Always enable VCD generation
+            extra_args.append("--vcd")
+            reason += " + VCD"
 
         elif stage == 8:
             vcd_candidates = glob.glob(os.path.join(project_dir, "sim", "*.vcd"))
@@ -348,9 +323,7 @@ def main() -> int:
 
         return extra_args, reason, skip
 
-    idx = 0
-    while idx < len(stages):
-        stage = stages[idx]
+    for stage in stages:
         extra_args, reason, skip = build_stage_args(stage)
 
         if skip is not None:
@@ -360,12 +333,7 @@ def main() -> int:
             if skip != 0:
                 print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
                 break
-            idx += 1
             continue
-
-        # On verify loop retry, annotate the reason
-        if stage in VERIFY_LOOP and verify_retries > 0:
-            reason = f"[RETRY {verify_retries}] {reason}"
 
         log_transition(stage, reason, extra_args, project_dir)
 
@@ -380,34 +348,8 @@ def main() -> int:
             results[stage] = rc
 
         if results[stage] != 0:
-            # Verification loop failure: restart from stage 5
-            if stage in VERIFY_LOOP and verify_retries < VERIFY_MAX_RETRIES:
-                verify_retries += 1
-                failed_label = AUTOMATED_STAGES.get(stage, (None, f"Stage {stage}"))[1]
-                print(f"\n  {bold('<<< VERIFY LOOP RESTART')} "
-                      f"(attempt {verify_retries}/{VERIFY_MAX_RETRIES}) >>>")
-                print(f"      Stage {stage} ({failed_label}) failed")
-                print(f"      Restarting from stage 5 (Python model is the spec)")
-                print(f"      Fix the issue, then all verify stages re-run")
-                # Rewind to stage 5 in the stage list
-                try:
-                    idx = stages.index(5)
-                except ValueError:
-                    print(f"      ERROR: stage 5 not in pipeline, cannot restart")
-                    break
-                # Clear results for all verify loop stages so they re-run clean
-                for vs in VERIFY_LOOP:
-                    results.pop(vs, None)
-                continue
-            else:
-                if stage in VERIFY_LOOP and verify_retries >= VERIFY_MAX_RETRIES:
-                    print(f"\n  Verify loop exhausted {VERIFY_MAX_RETRIES} retries"
-                          f" -- stopping pipeline")
-                else:
-                    print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
-                break
-
-        idx += 1
+            print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
+            break
 
     # Summary
     print()
@@ -415,8 +357,7 @@ def main() -> int:
     for stage in stages:
         if stage in results:
             status = pass_str() if results[stage] == 0 else fail_str()
-            label = (AUTOMATED_STAGES.get(stage, (None, None))[1] or
-                     GUIDANCE_STAGES.get(stage, f"Stage {stage}"))
+            label = STAGES[stage].label if stage in STAGES else f"Stage {stage}"
             print(f"  [{status}] Stage {stage:2d}: {label}")
 
     all_passed = all(rc == 0 for rc in results.values())
@@ -442,7 +383,7 @@ def main() -> int:
                 all_passed = False
 
     # Write logs
-    write_pipeline_logs(project_dir, stages, results, warnings, verify_retries)
+    write_pipeline_logs(project_dir, stages, results, warnings)
 
     return 0 if all_passed else 1
 
@@ -461,7 +402,7 @@ def _classify_stage(stage, results, warnings, skipped_stages):
     return "X", "FAIL"
 
 
-def write_pipeline_logs(project_dir, stages, results, warnings, verify_retries):
+def write_pipeline_logs(project_dir, stages, results, warnings):
     """Write transition log and run chart to project logs/ directory."""
     logs_dir = os.path.join(project_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
@@ -471,7 +412,7 @@ def write_pipeline_logs(project_dir, stages, results, warnings, verify_retries):
     logged_stages = {e["stage"]: e for e in _transition_log}
 
     # Figure out which stages were skipped (logged a transition but
-    # the reason indicates a skip — no artifacts, no --top, etc.)
+    # the reason indicates a skip -- no artifacts, no --top, etc.)
     skipped_stages = set()
     for stage in stages:
         entry = logged_stages.get(stage)
@@ -489,8 +430,6 @@ def write_pipeline_logs(project_dir, stages, results, warnings, verify_retries):
         f.write(f"SOCKS Pipeline Run — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Project: {project_dir}\n")
         f.write(f"Stages:  {', '.join(str(s) for s in stages)}\n")
-        if verify_retries > 0:
-            f.write(f"Verify loop retries: {verify_retries}\n")
         f.write(f"\n{'='*72}\n\n")
 
         for entry in _transition_log:
@@ -510,7 +449,7 @@ def write_pipeline_logs(project_dir, stages, results, warnings, verify_retries):
                 f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Project: {os.path.basename(project_dir)}\n\n")
 
-        cS, cN, cR, cD = 7, 22, 12, 44  # column widths
+        cS, cN, cR, cD = 7, 26, 12, 44  # column widths
         border = f"+{'-'*(cS+2)}+{'-'*(cN+2)}+{'-'*(cR+2)}+{'-'*(cD+2)}+"
         header = (f"| {'Stage':^{cS}} | {'Name':<{cN}} "
                   f"| {'Result':^{cR}} | {'Reason / Args':<{cD}} |")
@@ -521,11 +460,7 @@ def write_pipeline_logs(project_dir, stages, results, warnings, verify_retries):
 
         for i, stage in enumerate(stages):
             entry = logged_stages.get(stage)
-            label = AUTOMATED_STAGES.get(stage, (None, None))[1]
-            if not label:
-                # Guidance stages: strip the "(read ...)" suffix for the chart
-                g = GUIDANCE_STAGES.get(stage, f"Stage {stage}")
-                label = g.split(" (read ")[0] if " (read " in g else g
+            label = STAGES[stage].label if stage in STAGES else f"Stage {stage}"
 
             sym, status = _classify_stage(stage, results, warnings,
                                           skipped_stages)
@@ -561,8 +496,6 @@ def write_pipeline_logs(project_dir, stages, results, warnings, verify_retries):
 
         f.write(f"\nRESULT: {n_pass} passed, {n_warn} warned, "
                 f"{n_skip} skipped, {n_fail} failed\n")
-        if verify_retries > 0:
-            f.write(f"Verify loop restarted {verify_retries} time(s)\n")
         f.write(f"\nLegend:  * PASS    ! WARN (external)    "
                 f"o SKIP    X FAIL\n")
 
