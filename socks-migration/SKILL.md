@@ -1,12 +1,12 @@
 # SOCKS Migration
 
-Migrate an existing FPGA/SoC project to SOCKS directory structure.
+Migrate existing FPGA/SoC projects to SOCKS directory structure.
 
 ## When to Use
 
 - User says "convert to SOCKS", "migrate to SOCKS", "restructure this project"
-- User has an existing VHDL project with flat layout or non-standard directories
-- User wants to bring an external project into the SOCKS standard
+- User has existing VHDL projects with flat layout or non-standard directories
+- User wants to bring one or more projects into the SOCKS standard
 
 ## Target Structure
 
@@ -25,188 +25,123 @@ project/
 └── .gitignore         # SOCKS standard ignores
 ```
 
-## Migration Procedure
+## Workflow
 
-### Phase 0: Fingerprint Scan
+### Step 1: Inventory (main conversation)
 
-**Before touching anything**, invoke the `/fingerprint` skill on the project
-directory. External projects may contain PII, secrets, API keys, hostnames,
-or other sensitive material that should be scrubbed before committing to your
-repo. Fix any findings before proceeding.
+Scan the project tree to understand what needs migrating:
 
-### Phase 1: Detect Current Layout & Assess Completeness
+```bash
+git ls-files | sort          # tracked files
+git status --short           # untracked/modified
+ls -la *.vhd *.sv *.py *.sh *.tcl 2>/dev/null   # root-level files
+```
 
-Before moving anything, inventory the project:
+For multiple projects, scan the parent directory:
+```bash
+find /path/to/parent -maxdepth 3 -name ".git" -type d | sort
+```
 
-1. Run `git ls-files | sort` to see tracked files
-2. Run `git status --short` to see untracked files
-3. Identify where each file category currently lives:
-   - VHDL sources (`.vhd`)
-   - Testbenches (`.py`, `.sv`, `.c` DPI)
-   - Synthesis TCL (`.tcl` with `synth_design`)
-   - Simulation scripts (`.sh`, `.tcl` with `xsim`/`open_vcd`)
-   - Vivado reports (`*_utilization.txt`, `*_timing*.txt`, `*_drc.txt`)
-   - Documentation (`.md`, `.png`)
-   - C drivers (`.c`, `.h` with register defines)
-   - Build artifacts (`.pb`, `.wdb`, `.vcd`, `.log`, `.jou`, `xsim.dir/`)
+### Step 2: Investigate (Explore agents, read-only)
 
-4. **Assess migration completeness.** Compare the current layout against the
-   target structure. If most files are already in the right directories, skip
-   Phases 2-3 and jump to Phase 4 (path references) or whichever phase has
-   remaining work. Report what's already done vs what remains before proceeding.
-   A partially-migrated project only needs the gaps filled, not a full re-run.
+Launch one background Explore agent per project to assess migration needs.
+Agents read files and report back -- they do NOT move files, run git, or
+edit anything.
 
-### Phase 2: Create Directory Structure
+Each agent should:
+1. List all tracked files and their current locations
+2. Compare against SOCKS target structure
+3. Identify which files need to move where
+4. Read build scripts and find path references that will break
+5. Check for absolute paths, hardcoded directory assumptions
+6. Flag any files that are already in the right place
+7. Report whether the project is already fully migrated (skip it)
 
+**Agent prompt template:**
+```
+Assess SOCKS migration needs for /path/to/project. Read-only -- do NOT
+edit or move anything.
+
+1. Run `git ls-files | sort` and `git status --short`
+2. Classify each file: VHDL source, testbench, sim script, synth TCL,
+   documentation, build artifact, C driver
+3. For each file, state: current location → target SOCKS location
+4. Read build/sim scripts and list every path reference that would break
+   after the move (e.g. `xvhdl file.vhd` needs `xvhdl ../../src/file.vhd`)
+5. Check Python scripts for hardcoded paths to sim/, build/, etc.
+6. Report: files to move, paths to fix, files already correct, skip if done
+```
+
+### Step 3: Review and present plan (main conversation)
+
+Collect agent results and present a consolidated migration plan:
+
+**For each project, show:**
+- Files to move (grouped: src, tb, build/sim, build/synth, docs)
+- Path references that need updating (file:line, old → new)
+- Files already in place (no action needed)
+- Projects that are already fully migrated (skip)
+
+Get user approval before proceeding.
+
+### Step 4: Apply migrations (main conversation)
+
+Do all file moves, path fixes, and git operations directly. This is
+where Bash, Edit, and git permissions are needed.
+
+#### 4a. Create directories
 ```bash
 mkdir -p src tb build/sim build/synth build/logs build/artifacts docs
-# Also: mkdir -p sw  (if project has C drivers)
 ```
 
-### Phase 3: Move Files
-
-**Order matters.** Move tracked files with `git mv`, artifacts with `mv`.
-
-**User may defer git operations.** Ask before running `git mv`, `git rm`,
-or `git rm --cached`. Some users prefer to handle git staging themselves
-or do it all at once after the layout is finalised. If deferred, note
-which git operations are still needed and move on to content fixes.
-
-#### 3a. VHDL sources → src/
+#### 4b. Move tracked files with `git mv`
 ```bash
-git mv *.vhd src/                    # or from wherever they are
+git mv *.vhd src/
+git mv *_tb.py *_tb.sv *_audit.py *_vcd_verify.py *_csv_verify.py tb/
+git mv run_*.sh build/sim/
+git mv synth_check.tcl synth_timing.tcl build/synth/
+git mv README.md ARCHITECTURE*.md ARCHITECTURE*.png docs/
 ```
 
-#### 3b. Testbenches → tb/
+#### 4c. Move gitignored artifacts with `mv`
 ```bash
-git mv *_tb.py *_tb.sv *_audit.py *_vcd_verify.py *_dpi.c tb/
-git mv *signal_map*.json tb/         # if present
+mv *.vcd *.wdb *.log *.pb *.jou *.csv xsim.dir/ build/sim/ 2>/dev/null
+mv xsim_*.backup.* build/sim/ 2>/dev/null
 ```
 
-#### 3c. Simulation scripts → build/sim/
+#### 4d. Update path references in hand-written scripts
+
+**Shell scripts** (build/sim/run_*.sh):
 ```bash
-git mv run_*.sh build/sim/           # or sim/run_*.sh
-git mv dump_signals.tcl build/sim/   # VCD signal selection
-git mv _run_vcd.tcl build/sim/       # VCD runner (if present)
+# Add at top, after set -e:
+SIM_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJ_DIR="$(cd "${SIM_DIR}/../.." && pwd)"
+SRC_DIR="${PROJ_DIR}/src"
+TB_DIR="${PROJ_DIR}/tb"
+cd "${SIM_DIR}"
+
+# Update compile commands:
+xvhdl "${SRC_DIR}/file.vhd"
+xvlog -sv "${TB_DIR}/file_tb.sv"
 ```
 
-#### 3d. Synthesis TCL → build/synth/
-```bash
-git mv synth_check.tcl build/synth/
-git mv synth_timing.tcl build/synth/
-git mv synth.tcl build/synth/        # if present
-```
-
-#### 3e. Tracked reports → build/synth/
-Some projects track synthesis reports. Move them:
-```bash
-git mv *_utilization.txt *_timing*.txt *_drc.txt build/synth/
-git mv *.rpt clockInfo.txt build/synth/
-```
-
-#### 3f. C drivers → sw/
-```bash
-git mv *.c *.h sw/                   # if they are drivers, not DPI
-```
-
-#### 3g. Documentation → docs/
-```bash
-git mv ARCHITECTURE*.md ARCHITECTURE*.png README.md docs/
-```
-
-#### 3h. Move gitignored artifacts
-```bash
-# Simulation artifacts
-mv sim/*.vcd sim/*.wdb sim/*.csv sim/*.log sim/*.pb sim/*.jou build/sim/
-mv sim/xsim.dir sim/xsim_work sim/.Xil build/sim/
-
-# Synthesis reports (gitignored copies)
-mv build/*_utilization.txt build/*_timing*.txt build/*_drc.txt build/synth/
-mv build/*.log build/*.jou build/synth/
-
-# Pipeline logs
-mv logs/* build/logs/
-```
-
-#### 3i. Clean up empty old directories
-```bash
-rmdir sim logs 2>/dev/null
-```
-
-### Phase 4: Update Path References (hand-written scripts only)
-
-**This is where things break.** Scripts in `build/sim/` and `build/synth/`
-are now 2 directory levels below the project root instead of 1.
-
-**Skip generated/artifact files.** TCL scripts generated by the SOCKS pipeline
-(e.g. `synth.tcl`, `synth_check.tcl`, `synth_timing.tcl`) and Vivado reports
-(`*.rpt`, `clockInfo.txt`, `*_utilization.txt`, `*_timing*.txt`) are rebuilt
-by the pipeline on next run. Do not waste time fixing paths or PII in these
-files — they will be regenerated with correct paths automatically.
-
-Only fix path references in **hand-written, tracked** scripts and source files.
-
-#### TCL scripts (hand-written)
-
-Old pattern (1 level deep):
+**TCL scripts** (hand-written only, skip pipeline-generated):
 ```tcl
-set script_dir [file dirname [file normalize [info script]]]
-set proj_dir   [file dirname $script_dir]
-```
-
-New pattern (2 levels deep):
-```tcl
+# 2-level depth to project root:
 set script_dir [file dirname [file normalize [info script]]]
 set proj_dir   [file dirname [file dirname $script_dir]]
 ```
 
-Or if using `[pwd]`:
-```tcl
-# Old: ../src/  → New: ../../src/
-```
-
-**Check every hand-written TCL file for:**
-- `../src/` → `../../src/`
-- `$proj_dir/src/` (verify proj_dir resolves to project root)
-- Absolute paths in report output (replace with `$script_dir/` or `[pwd]/`)
-
-#### Shell scripts (simulation)
-
-Old pattern:
-```bash
-PROJ_DIR="$(cd "${SIM_DIR}/.." && pwd)"
-```
-
-New pattern:
-```bash
-PROJ_DIR="$(cd "${SIM_DIR}/../.." && pwd)"
-```
-
-**Check for:**
-- `PROJ_DIR` definition
-- Any references to `../tb/`, `../src/` → `../../tb/`, `../../src/`
-
-#### Python scripts (testbench, audit, VCD verify)
-
-Common patterns to find and fix:
+**Python scripts** (tb/*.py):
 ```python
-# Old
-Path(__file__).parent.parent / "sim" / "file.vcd"
-os.path.join(os.path.dirname(__file__), '..', 'sim', 'file.csv')
+# Old: Path(__file__).parent / "file.vhd"
+# New: Path(__file__).parent.parent / "src" / "file.vhd"
 
-# New
-Path(__file__).parent.parent / "build" / "sim" / "file.vcd"
-os.path.join(os.path.dirname(__file__), '..', 'build', 'sim', 'file.csv')
+# Old: os.path.join(os.path.dirname(__file__), "sim", "file.csv")
+# New: os.path.join(os.path.dirname(__file__), "..", "build", "sim", "file.csv")
 ```
 
-**Search for these patterns:**
-```bash
-grep -rn 'sim/' tb/                  # Python TB paths
-grep -rn '"sim"' tb/                 # os.path.join segments
-grep -rn '../src/' build/            # TCL/shell relative paths
-```
-
-### Phase 5: Generate .gitignore
+#### 4e. Update .gitignore
 
 Use the SOCKS template:
 
@@ -252,84 +187,92 @@ tb/*.png
 .claude/
 ```
 
-### Phase 6: Generate Missing Docs
+#### 4f. Update CLAUDE.md
 
-If `docs/` is empty or missing key files:
+- Add SOCKS layout tree diagram
+- Update all file paths in deliverables table
+- Update build commands (`run_*.sh` → `build/sim/run_*.sh`)
+- Update compile order section with new paths
 
-1. **ARCHITECTURE.md** — Create with two Mermaid diagrams (Data Flow + Clocking)
-   plus Rate Summary table. See SOCKS `references/architecture-diagrams.md`.
-
-2. **Render PNGs** — `mmdc -i ARCHITECTURE.md -o arch.png -w 1600 -b white`
-   then split into `ARCHITECTURE_dataflow.png` and `ARCHITECTURE_clocking.png`.
-
-3. **README.md** — Feature spec, entity interface, build & test, synthesis results.
-
-### Phase 7: Validate
+#### 4g. Commit
 
 ```bash
-# Python TB still passes?
-python3 tb/*_tb.py
-
-# Git status looks right? Tracked files in correct locations?
-git ls-files | sort
-git status --short
-
-# No stale references?
-grep -rn 'sim/' tb/ build/ CLAUDE.md docs/  # should only show build/sim/
+git add -A
+git commit -m "Migrate to SOCKS directory layout: src/, tb/, build/, docs/"
 ```
 
-### Phase 8: Update CLAUDE.md
+### Step 5: Validate with SOCKS pipeline (main conversation)
 
-Update all path references in CLAUDE.md:
-- Files table: `sim/` → `build/sim/`, `build/` → `build/synth/`
-- Build commands: `cd sim` → `cd build/sim`, `cd build` → `cd build/synth`
-- Report paths: `sim/*.txt` → `build/synth/*.txt`
-- Convention line: describe the SOCKS layout
+After committing, run the SOCKS build pipeline to verify the migration
+didn't break anything. This is the definitive test — if the pipeline
+passes, the migration is correct.
 
----
+#### 5a. Clean run
+
+```bash
+python3 scripts/build.py --project-dir /path/to/project --top <entity> --skip-synth
+```
+
+Use `--skip-synth` for a quick validation (Python TB + Xsim sim +
+audits). Use the full pipeline (no `--skip-synth`) if you also want
+to verify synthesis paths.
+
+The `scripts/` path refers to the SOCKS skill scripts directory
+(`~/.claude/skills/socks/scripts/`). The build script resolves paths
+from `--project-dir`.
+
+#### 5b. Check pipeline logs
+
+The pipeline writes logs to `build/logs/`:
+- `pipeline_<timestamp>.log` — per-stage transition log with reasons
+- `pipeline_<timestamp>.chart` — visual run chart with pass/fail/skip
+
+```bash
+cat build/logs/pipeline_*.chart    # quick visual check
+```
+
+**What to look for:**
+- All stages should show `* PASS` or `o SKIP` (acceptable)
+- `X FAIL` on any stage means the migration broke something
+- Common post-migration failures:
+  - Stage 4 (audit): path not found → fix `VHD_PATH` in audit script
+  - Stage 5 (python rerun): import error → fix relative imports in TB
+  - Stage 6 (xsim): compile error → fix paths in `run_*.sh`
+  - Stage 7 (VCD verify): file not found → fix VCD path in verify script
+
+#### 5c. Fix and re-run
+
+If any stage fails:
+1. Read the log to identify the broken path reference
+2. Fix it in the main conversation
+3. Amend the migration commit
+4. Re-run the pipeline to confirm all green
+
+Only report the migration as complete when the pipeline chart shows
+all stages passing.
 
 ## Common Pitfalls
 
 ### 1. TCL `../src/` depth
-The #1 breakage. Every TCL script that uses relative paths to `src/` needs
-updating when moving from 1-deep to 2-deep.
+The #1 breakage. Scripts moving from 1-deep to 2-deep need `../../src/`.
 
-### 2. Python TB csv_path
-Python TBs that write CSV files (for stage 8 cross-check) to `sim/` need
-the path updated to `build/sim/`.
+### 2. Python TB paths to sim output
+Python TBs that read CSV/VCD from `sim/` need updating to `build/sim/`.
 
 ### 3. Absolute paths in TCL
-Some TCL scripts use absolute paths for source files or report output.
 Replace with `$script_dir` or `$proj_dir` relative paths.
 
-### 4. Duplicate synth TCLs
-Some projects have copies of synth TCLs in both `sim/` and `build/`.
-After migration, decide which copy is canonical. The `build/synth/` copy
-is the canonical one; `build/sim/` may have a copy for convenience.
+### 4. Generated files are not worth fixing
+Pipeline-generated TCL scripts and Vivado reports are regenerated on
+next build. Do not fix paths in these — focus on hand-written scripts.
 
-### 5. VCD verify script
-The VCD verify script in `tb/` looks for VCD in `sim/`. Must update to
-`build/sim/`.
+### 5. git mv vs mv
+Only `git mv` for tracked files. Gitignored artifacts use plain `mv`.
 
-### 6. .gitignore pattern coverage
-The wildcard patterns (`*.log`, `*_timing.txt`, etc.) catch files in any
-directory, including `build/sim/` and `build/synth/`. But `build/logs/`
-and `build/artifacts/` need explicit full-directory ignores since they
-may contain files that don't match any pattern.
+### 6. Already-migrated projects
+Agents should identify these in Step 2. Skip them entirely — do not
+re-migrate or touch files that are already in the right place.
 
-### 7. git mv vs mv
-Only use `git mv` for tracked files. Gitignored artifacts should use plain
-`mv`. Using `git mv` on gitignored files creates unnecessary staging noise.
-
-### 8. Generated files are not worth fixing
-Pipeline-generated TCL scripts (`synth.tcl`, `synth_check.tcl`,
-`synth_timing.tcl`) and Vivado reports (`*.rpt`, `clockInfo.txt`,
-`*_utilization.txt`) are regenerated on next build. Do not fix paths or
-scrub PII in these — they will be overwritten. Focus effort on hand-written,
-tracked scripts only.
-
-### 9. Ask before git operations
-Users may want to defer or batch git staging (`git mv`, `git rm --cached`,
-`git add`). Always ask before running git commands that modify the index.
-If deferred, summarise the pending git operations so the user can run them
-later.
+### 7. Partial migrations
+Some projects may be half-migrated (e.g. src/ exists but build/ is
+flat). Agents should identify exactly what's done vs remaining.
