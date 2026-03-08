@@ -21,6 +21,7 @@ Stage 1 approval
       ▼
   ┌─────────────────────────────────┐
   │  2: Write/Modify RTL            │
+  │     /regmap if reg map changed  │
   │  3: VHDL Linter                 │
   │  4: Synthesis Audit             │
   │  5: Python Testbench            │
@@ -49,7 +50,7 @@ Reason about the root cause. Re-enter at the producing stage:
 | RTL bug | Stage 2 | 3 → 4 → 5 → 6 (if reg map changed) → 7 → 8 → 9 |
 | Python model bug | Stage 5 | 7 → 8 → 9 |
 | SV testbench bug | Stage 7 | 8 → 9 |
-| Register map change | Stage 2 | 3 → 4 → 5 → 6 → 7 → 8 → 9 |
+| Register map change | Stage 2 | **`/regmap`** → 3 → 4 → 5 → 6 → 7 → 8 → 9 |
 | C driver bug | Stage 6 | 7 → 8 → 9 |
 
 **Carry-forward rule:** Every fix must propagate through all downstream stages.
@@ -99,6 +100,14 @@ Key rules:
 - No component declarations
 
 Read the full file before modifying it. Never edit VHDL based on a summary.
+
+**Register map checkpoint:** If this Stage 2 pass adds, removes, or modifies
+any register (address, bit field, access type, or reset value), invoke the
+`/regmap` skill immediately after the VHDL edit and before proceeding to
+Stage 3. The `/regmap` skill will diff all layers (Python TB, SV TB, C driver,
+docs) against the updated VHDL and report what needs updating. Fix all
+mismatches before continuing -- this prevents the most common class of
+propagation bugs in the design loop.
 
 ### Stage 3 -- VHDL Linter
 

@@ -2,6 +2,14 @@
 
 Read this file before Stage 7 (SystemVerilog testbench for Xsim).
 
+## File header and path conventions
+
+- `Author      : OhmsSweetOhms` (never use real names or "Claude Code")
+- `$dumpfile()` and `csv_open()` must use relative filenames only (e.g. `"module_sim.vcd"`, not absolute paths)
+- All file I/O paths in testbenches must be relative to the project directory
+
+---
+
 ## Compatibility rules
 
 Check every testbench against all seven rules before declaring it Xsim-ready.

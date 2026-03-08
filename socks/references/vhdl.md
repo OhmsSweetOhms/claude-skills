@@ -8,6 +8,7 @@ Read this file before writing any VHDL (Stage 2). These rules target Xilinx Zynq
 
 Every VHDL file must have a header comment block containing:
 
+- `Author      : OhmsSweetOhms` (never use real names or "Claude Code")
 - Module name, target device, tool version
 - List of generics with valid ranges
 - List of ports with direction and description
@@ -15,6 +16,7 @@ Every VHDL file must have a header comment block containing:
 - Gain/parameter formulae (if applicable)
 - Integration notes (clock constraints, ASYNC_REG attributes, timing)
 - Change log from previous version
+- All paths in headers and comments must be relative (never absolute)
 
 ---
 

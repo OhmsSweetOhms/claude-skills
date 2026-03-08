@@ -124,32 +124,58 @@ def check_stale_stage_numbers(verbose=False):
 
 
 def check_absolute_paths(verbose=False):
-    """Check for absolute paths or user-specific paths in skill files."""
-    errors = []
-    patterns = [
-        (r'/home/\w+/', "Absolute home path"),
-        (r'/media/\w+/', "Absolute media path"),
-        (r'/Users/\w+/', "Absolute macOS user path"),
-    ]
+    """Check for PII, secrets, and absolute paths in skill files using fingerprint engine."""
+    engine_path = os.path.join(
+        os.path.expanduser("~"), ".claude", "hooks", "fingerprint_engine.py"
+    )
 
-    for root, _, files in os.walk(SKILL_DIR):
-        if ".git" in root:
-            continue
-        for fname in files:
-            if not (fname.endswith(".md") or fname.endswith(".py") or fname.endswith(".yml")):
+    # Fall back to simple regex check if engine not installed
+    if not os.path.isfile(engine_path):
+        errors = []
+        patterns = [
+            (r'/home/\w+/', "Absolute home path"),
+            (r'/media/\w+/', "Absolute media path"),
+            (r'/Users/\w+/', "Absolute macOS user path"),
+        ]
+        for root, _, files in os.walk(SKILL_DIR):
+            if ".git" in root:
                 continue
-            fpath = os.path.join(root, fname)
-            rel = os.path.relpath(fpath, SKILL_DIR)
-            with open(fpath, "r") as f:
-                for lineno, line in enumerate(f, 1):
-                    for pat, desc in patterns:
-                        if re.search(pat, line):
-                            errors.append((f"{rel}:{lineno}", f"{desc}: {line.strip()[:80]}"))
+            for fname in files:
+                if not (fname.endswith(".md") or fname.endswith(".py") or fname.endswith(".yml")):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, SKILL_DIR)
+                with open(fpath, "r") as f:
+                    for lineno, line in enumerate(f, 1):
+                        for pat, desc in patterns:
+                            if re.search(pat, line):
+                                errors.append((f"{rel}:{lineno}", f"{desc}: {line.strip()[:80]}"))
+        if verbose and not errors:
+            print("    No absolute/user paths found (basic check -- engine not installed)")
+        return errors
 
-    if verbose and not errors:
-        print("    No absolute/user paths found")
+    # Use fingerprint engine for comprehensive scan
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fingerprint_engine", engine_path)
+        engine = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(engine)
 
-    return errors
+        findings = engine.scan_single_repo(SKILL_DIR)
+        errors = []
+        for f in findings:
+            detail = f.replace("BLOCKED: ", "")
+            errors.append(("fingerprint", detail))
+
+        if verbose and not errors:
+            print("    No PII, secrets, or absolute paths found (fingerprint engine)")
+
+        return errors
+
+    except Exception as e:
+        if verbose:
+            print(f"    Fingerprint engine error: {e} -- falling back to basic check")
+        return []
 
 
 def check_orchestrator_consistency(verbose=False):
@@ -191,7 +217,7 @@ def main() -> int:
         ("SKILL.md reference file references", check_skill_md_reference_refs),
         ("Reference → script cross-references", check_reference_script_refs),
         ("Stale stage-numbered names", check_stale_stage_numbers),
-        ("Absolute / user-specific paths", check_absolute_paths),
+        ("PII / secrets / absolute paths", check_absolute_paths),
         ("Orchestrator dispatch consistency", check_orchestrator_consistency),
     ]
 

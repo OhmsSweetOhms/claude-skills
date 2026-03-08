@@ -331,9 +331,14 @@ def parse_timing_report(filepath: str) -> List[TimingResult]:
                 data_line = None
                 for j in range(i + 1, min(i + 4, len(lines))):
                     stripped = lines[j].strip()
-                    if stripped and not stripped.startswith("-"):
-                        data_line = stripped
-                        break
+                    # Skip empty lines and dashes-only separator lines
+                    # (but not negative numbers like -6.862)
+                    if not stripped:
+                        continue
+                    if all(c in '- ' for c in stripped):
+                        continue
+                    data_line = stripped
+                    break
 
                 if data_line:
                     # Extract column positions from header

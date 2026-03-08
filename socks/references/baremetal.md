@@ -4,6 +4,14 @@ Read this file before Stage 6 (bare-metal C driver). These patterns were proven 
 
 ---
 
+## File header conventions
+
+- `Author: OhmsSweetOhms` in the file comment block (never use real names)
+- All `#include` paths must be relative (no absolute paths)
+- No hardcoded base addresses in source — use `XPAR_*_BASEADDR` macros from `xparameters.h`
+
+---
+
 ## Register map header conventions
 
 ```c

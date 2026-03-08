@@ -43,9 +43,9 @@ ARTIFACT_GLOBS = [
     # VCD waveforms
     "**/*.vcd",
     # Simulation CSVs
-    "sim/*.csv",
+    "build/sim/*.csv",
     # Auto-generated Tcl run scripts
-    "sim/_run*.tcl",
+    "build/sim/_run*.tcl",
     # Python bytecode
     "**/*.pyc",
     # Testbench plots
@@ -54,15 +54,15 @@ ARTIFACT_GLOBS = [
 
 # Synthesis report patterns (only removed with --all)
 REPORT_GLOBS = [
-    "sim/*_utilization.txt",
-    "sim/*_timing.txt",
-    "sim/*_timing_constrained.txt",
-    "sim/*_timing_paths.txt",
-    "sim/*_drc.txt",
+    "build/synth/*_utilization.txt",
+    "build/synth/*_timing.txt",
+    "build/synth/*_timing_constrained.txt",
+    "build/synth/*_timing_paths.txt",
+    "build/synth/*_drc.txt",
 ]
 
 # Directories to never descend into or remove
-KEEP_DIRS = {".git", "logs", "docs"}
+KEEP_DIRS = {".git", "build/logs", "docs"}
 
 # Files to never remove
 KEEP_FILES = {

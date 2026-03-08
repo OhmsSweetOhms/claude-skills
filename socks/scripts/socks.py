@@ -265,11 +265,11 @@ def main() -> int:
             reason += " + VCD"
 
         elif stage == 8:
-            vcd_candidates = glob.glob(os.path.join(project_dir, "sim", "*.vcd"))
-            signal_maps = glob.glob(os.path.join(project_dir, "sim", "*signal*map*.json")) + \
+            vcd_candidates = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
+            signal_maps = glob.glob(os.path.join(project_dir, "build", "sim", "*signal*map*.json")) + \
                           glob.glob(os.path.join(project_dir, "tb", "*signal*map*.json"))
             if not vcd_candidates:
-                return [], "No VCD file in sim/", 0
+                return [], "No VCD file in build/sim/", 0
             if not signal_maps:
                 return [], "No signal map JSON found", 0
             vcd_file = sorted(vcd_candidates)[-1]
@@ -278,13 +278,13 @@ def main() -> int:
             reason = f"Verify waveform: {os.path.basename(vcd_file)} with {os.path.relpath(map_file, project_dir)}"
 
         elif stage == 9:
-            sim_csvs = glob.glob(os.path.join(project_dir, "sim", "*_sim.csv"))
+            sim_csvs = glob.glob(os.path.join(project_dir, "build", "sim", "*_sim.csv"))
             model_csvs = glob.glob(os.path.join(project_dir, "tb", "*_model.csv")) + \
-                         glob.glob(os.path.join(project_dir, "sim", "*_model.csv"))
+                         glob.glob(os.path.join(project_dir, "build", "sim", "*_model.csv"))
             if not sim_csvs or not model_csvs:
                 missing = []
                 if not sim_csvs:
-                    missing.append("sim/*_sim.csv")
+                    missing.append("build/sim/*_sim.csv")
                 if not model_csvs:
                     missing.append("tb/*_model.csv")
                 return [], f"Missing: {', '.join(missing)}", 0
@@ -299,7 +299,7 @@ def main() -> int:
             src_dir = os.path.join(project_dir, "src")
             if not os.path.isdir(src_dir):
                 src_dir = project_dir
-            out_dir = os.path.join(project_dir, "sim")
+            out_dir = os.path.join(project_dir, "build", "synth")
             os.makedirs(out_dir, exist_ok=True)
             extra_args = [
                 "--top", args.top,
@@ -403,8 +403,8 @@ def _classify_stage(stage, results, warnings, skipped_stages):
 
 
 def write_pipeline_logs(project_dir, stages, results, warnings):
-    """Write transition log and run chart to project logs/ directory."""
-    logs_dir = os.path.join(project_dir, "logs")
+    """Write transition log and run chart to project build/logs/ directory."""
+    logs_dir = os.path.join(project_dir, "build", "logs")
     os.makedirs(logs_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

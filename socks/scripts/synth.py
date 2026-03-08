@@ -5,9 +5,9 @@ mode, and parse utilization/timing/DRC reports.
 
 Usage:
     python scripts/synth.py --top my_module --part xc7z020clg484-1 \\
-        --src-dir src/ --out-dir sim/
+        --src-dir src/ --out-dir build/synth/
     python scripts/synth.py --top my_module --part xc7z020clg484-1 \\
-        --src-dir src/ --out-dir sim/ --clock-period 10.0 --async-ports rxd
+        --src-dir src/ --out-dir build/synth/ --clock-period 10.0 --async-ports rxd
 
 Exit code 0 if synthesis succeeds and timing is met, 1 otherwise.
 """

@@ -19,7 +19,7 @@ Usage:
     python scripts/xsim.py --project-dir . --top module_tb --vcd
 
     # With custom Tcl batch file
-    python scripts/xsim.py --project-dir . --top module_tb --tcl sim/_run_vcd.tcl
+    python scripts/xsim.py --project-dir . --top module_tb --tcl build/sim/_run_vcd.tcl
 
     # Explicit file lists
     python scripts/xsim.py --top module_tb \\
@@ -187,7 +187,7 @@ def main() -> int:
     print_header("SOCKS Stage 6 -- Xsim Build & Simulate")
 
     # Work directory
-    work_dir = args.work_dir or os.path.join(project_dir, "sim")
+    work_dir = args.work_dir or os.path.join(project_dir, "build", "sim")
     os.makedirs(work_dir, exist_ok=True)
 
     # Clean mode
@@ -383,9 +383,10 @@ def main() -> int:
 
     # Check simulation output for PASS/FAIL
     sim_upper = sim_output.upper()
-    has_fail = "FAIL" in sim_upper and "ALL PASS" not in sim_upper
+    has_fail = ("FAIL" in sim_upper and "ALL PASS" not in sim_upper and
+                "SIMULATION PASSED" not in sim_upper and "0 FAIL" not in sim_upper)
     has_pass = ("ALL PASS" in sim_upper or "ALL TESTS PASSED" in sim_upper or
-                "TEST PASSED" in sim_upper)
+                "TEST PASSED" in sim_upper or "SIMULATION PASSED" in sim_upper)
 
     if has_fail:
         all_passed = False

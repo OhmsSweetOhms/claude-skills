@@ -1,0 +1,7 @@
+# SOCKS skill allowlist for fingerprint scanner
+# These patterns appear in code examples and reference documentation
+
+# X6 rule: 2^32 literal (4294967296) matches phone number regex
+4294967296
+# 2^31 literal used in synthesis checks
+2147483648
