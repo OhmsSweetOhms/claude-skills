@@ -54,24 +54,38 @@ For a parent directory containing multiple repos:
    └── loose-file.md  (not in any repo)
    ```
 
-3. **Let the user pick** which repos to scrub.
+3. **For repos with findings**, launch background Explore agents (one per
+   repo) to read the flagged files and classify each finding:
+   - What the PII is (absolute path, username, hostname, report file)
+   - Where exactly it is (file, line, surrounding context)
+   - Suggested fix (relative path, gitignore, filter-repo)
+   - Whether it's a false positive
 
-4. **For each selected repo**, spawn a subagent to:
-   - List findings with suggested fixes
-   - Mark Vivado build artifacts for `.gitignore`
-   - Apply fixes the user approves
+   Agents are read-only -- they research and report back, nothing more.
+
+4. **Main conversation reviews agent results** and presents a fix plan
+   to the user. Group fixes by category:
+   - Working tree fixes (path replacements, gitignore updates)
+   - Files to remove from tracking (`git rm --cached`)
+   - History scrub operations (mailmap, replace-text, invert-paths)
+
+5. **Apply fixes in the main conversation** after user approval:
+   - Fix absolute paths in working tree files
+   - Add Vivado reports to `.gitignore`
+   - Commit clean working tree
+   - Run `git-filter-repo` for history scrub
    - Re-scan to verify CLEAN
 
 ### Suggested fix categories
 
 | Finding Type | Suggested Fix |
 |-------------|---------------|
-| Username/hostname in Vivado reports | Add report files to `.gitignore` |
-| Username in TCL scripts | Replace absolute paths with `[pwd]` or `$::env(HOME)` |
-| Username in SV/Python paths | Replace with relative paths or `Path(__file__).parent` |
+| Username/hostname in Vivado reports | Add report files to `.gitignore`, remove from tracking |
+| Username in TCL scripts | Replace absolute paths with `[file dirname [file normalize [info script]]]` |
+| Username in Python paths | Replace with `Path(__file__).parent` or relative paths |
+| Username in shell scripts | Use `SIM_DIR="$(cd "$(dirname "$0")" && pwd)"` pattern |
 | Author/copyright real name | Replace with `OhmsSweetOhms` |
-| Phone number (large integers) | Check if false positive (VHDL constants, math) |
-| Email in third-party code | Add to `.fingerprint-allowlist` |
+| Email in third-party code | Skip -- 3rd-party dirs are auto-excluded |
 
 ## What It Checks
 
@@ -86,13 +100,17 @@ For a parent directory containing multiple repos:
 **Personal Identifiers (all blocked):**
 - Auto-detected: `$USER`, hostname, git config name/email, home dir
 - Additional patterns from `~/.claude/hooks/fingerprint-identity.txt`
-- Email addresses, phone numbers, street addresses
+- Email addresses, street addresses
 - IP addresses (non-private), MAC addresses
 
 **Fingerprint Material (all blocked):**
-- Absolute paths containing usernames (`/home/user/`, `/Users/user/`)
+- Absolute paths containing usernames (`/home/user/`, `/Users/user/`, `/media/user/`)
 - Machine hostnames in file content
 - Author/copyright lines with real names (must use OhmsSweetOhms)
+
+**Disabled rules:**
+- Phone numbers -- removed because VHDL/HDL numeric constants (e.g. `4294967296`,
+  `2147483648`) triggered massive false positives across every FPGA project
 
 ## Output
 
@@ -105,6 +123,17 @@ Exit code 0 = clean, exit code 2 = findings that must be fixed.
 
 All findings are logged to `~/.claude/hooks/fingerprint.log`.
 
+## 3rd-Party Code
+
+The scanner automatically skips directories named: `tools`, `vendor`,
+`third_party`, `thirdparty`, `extern`, `external`, `node_modules`,
+`.venv`, `venv`. Repos under these directories are excluded from
+`--scan-tree` results. This prevents false positives from code you
+don't control (IDE plugins, library sources, etc.).
+
+The `THIRD_PARTY_DIRS` set is defined in `fingerprint_engine.py` and
+used by `find_git_repos()` to prune the directory walk.
+
 ## Configuration
 
 **Identity file** (`~/.claude/hooks/fingerprint-identity.txt`):
@@ -112,8 +141,14 @@ Additional identity strings to block, one per line. Variations, typos,
 nicknames, aliases. Auto-detected values don't need to be listed.
 
 **Project allowlist** (`.fingerprint-allowlist` in project root):
-One regex per line. Lines matching these patterns are skipped.
-Use for intentional test fixtures or example values only.
+One regex per line. Patterns are matched against **line content** (not
+filenames). Lines matching any pattern are skipped. Use for intentional
+test fixtures or example values only.
+
+**Known limitation:** The `.fingerprint-allowlist` file itself is not
+excluded from scanning. Avoid putting literal scannable values (long
+digit sequences, email addresses) in the allowlist -- use regex
+character classes or anchored patterns instead.
 
 ## Git History Scrubbing
 
@@ -130,59 +165,73 @@ curl -sL https://raw.githubusercontent.com/newren/git-filter-repo/main/git-filte
 
 ### Workflow
 
-1. **Commit or stash all working changes first** -- filter-repo refuses
-   to run on a dirty tree.
+1. **Fix PII in working tree first** -- replace absolute paths, fix
+   TCL scripts, update Python files. Then commit so the tree is clean.
 
-2. **Scan history for PII** -- check every blob in every commit:
+2. **Check author/committer:**
    ```bash
-   for commit in $(git log --format="%H" --all); do
-       git show $commit --name-only --format="" | while read f; do
-           count=$(git show "$commit:$f" 2>/dev/null \
-               | grep -cE 'IDENTITY_PATTERNS_HERE' 2>/dev/null)
-           [ "$count" -gt 0 ] && echo "$commit  $count  $f"
-       done
-   done
+   git log --format="%an <%ae>" --all | sort -u
    ```
-   Also check author/committer: `git log --format="%an <%ae>" --all | sort -u`
 
 3. **Create config files** in `/tmp/`:
 
    **mailmap** (author rewrite):
    ```
-   New Name <new@email> Old Name <old@email>
+   OhmsSweetOhms <noreply@OhmsSweetOhms> old-name <old@email.com>
    ```
 
    **replacements.txt** (content rewrite, `literal==>replacement`):
    ```
-   /home/username/path/to/file==>relative/path
+   /home/username/project/path==>.
+   /media/username/drive/path==>.
    old-hostname==>build-host
    ```
 
-4. **Run filter-repo** with all three operations in one pass:
+4. **Run filter-repo** with all operations in one pass:
    ```bash
    python3 /tmp/git-filter-repo --force \
        --mailmap /tmp/mailmap \
        --replace-text /tmp/replacements.txt \
        --path secret-file.rpt --path another.rpt --invert-paths
    ```
-   - `--mailmap`: rewrites author/committer
+   - `--mailmap`: rewrites author/committer in all commits
    - `--replace-text`: rewrites file content (literal or regex)
    - `--path ... --invert-paths`: deletes files from all history
 
-5. **Verify** -- re-run the history scan from step 2 to confirm zero matches.
-   Also check `git log --format="%an <%ae>" --all | sort -u`.
+5. **Verify:**
+   ```bash
+   git log --format="%an <%ae>" --all | sort -u
+   python3 ~/.claude/skills/fingerprint/fingerprint_scan.py --scan-dir .
+   ```
 
-6. **Run `/fingerprint`** on the working tree to confirm it's still clean.
+### Batch scrubbing multiple repos
+
+When cleaning many repos at once, create a shared mailmap and
+replacements file, then loop:
+
+```bash
+echo "OhmsSweetOhms <noreply@OhmsSweetOhms> old-name <old@email>" > /tmp/mailmap
+echo "/home/user/path==>./" > /tmp/replacements
+
+for repo in repo1 repo2 repo3; do
+    cd "$repo"
+    python3 /tmp/git-filter-repo --force \
+        --mailmap /tmp/mailmap \
+        --replace-text /tmp/replacements
+    cd ..
+done
+```
 
 ### Common PII sources in FPGA projects
 
 | Source | Contains | Fix |
 |--------|----------|-----|
 | Vivado `.rpt` files | hostname, absolute paths, username | `--invert-paths` (delete from history) |
-| TCL scripts (`synth.tcl`) | absolute paths to source files | `--replace-text` with relative paths |
-| Symlinks in git | target paths with `/home/user/` | Content replacement won't help; these are fine if `.gitignore`d or local-only |
-| Git author/committer | real name, personal email | `--mailmap` |
 | Vivado `clockInfo.txt` | hostname | `--invert-paths` |
+| TCL scripts (`synth.tcl`) | absolute paths to source files | `--replace-text` or fix in working tree |
+| Python test scripts | hardcoded absolute paths | Fix in working tree + `--replace-text` |
+| Git author/committer | real name, personal email | `--mailmap` |
+| Deprecated doc files | may contain PII in examples | `--invert-paths` to remove from history |
 
 ### Notes
 
@@ -203,5 +252,20 @@ The `git-fingerprint-guard.py` PreToolUse hook automatically gates
 
 The `fingerprint_scan.py` tool handles `--scan-dir` and `--scan-tree`
 for auditing repos that predate the hooks or for bulk scanning.
+
+## Operational Notes
+
+- **Agents scan, main conversation fixes** -- use background Explore
+  agents for read-only investigation (reading flagged files, classifying
+  findings, suggesting fixes). All edits, git operations, commits, and
+  filter-repo work must happen in the main conversation where
+  Bash/Edit/Write permissions are available.
+- **Fix working tree before history** -- always fix and commit PII in
+  the current tree first, then run filter-repo. This avoids committing
+  dirty files that filter-repo can't see.
+- **Batch is faster** -- for multi-repo cleanups, create shared mailmap
+  and replacements files and loop, rather than crafting per-repo configs.
+- **Re-scan after filter-repo** -- filter-repo can leave behind
+  artifacts in the working tree. Always re-scan to confirm clean.
 
 Performance: ~800 files in ~2 seconds.
