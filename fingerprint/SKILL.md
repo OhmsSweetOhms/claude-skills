@@ -1,6 +1,6 @@
 ---
 name: fingerprint
-description: "Scan a directory or git repo for PII, secrets, and digital fingerprint material. Use when the user asks to scan for secrets, check for PII, audit a repo for personal information, or verify a project is clean before publishing. Also use when the user says fingerprint, privacy check, or secret scan."
+description: "Scan a directory or git repo for PII, secrets, and digital fingerprint material. Use when the user asks to scan for secrets, check for PII, audit a repo for personal information, or verify a project is clean before publishing. Also use when the user says fingerprint, privacy check, or secret scan. Use for scrubbing git history of PII, rewriting author info, or cleaning committed secrets with git-filter-repo."
 ---
 
 # Fingerprint Scanner
@@ -114,6 +114,86 @@ nicknames, aliases. Auto-detected values don't need to be listed.
 **Project allowlist** (`.fingerprint-allowlist` in project root):
 One regex per line. Lines matching these patterns are skipped.
 Use for intentional test fixtures or example values only.
+
+## Git History Scrubbing
+
+The working-tree scanner and hooks only protect new commits. PII already
+baked into git history requires `git-filter-repo` to rewrite.
+
+### Prerequisites
+
+```bash
+# git-filter-repo is a standalone Python script -- no pip needed
+curl -sL https://raw.githubusercontent.com/newren/git-filter-repo/main/git-filter-repo \
+    -o /tmp/git-filter-repo && chmod +x /tmp/git-filter-repo
+```
+
+### Workflow
+
+1. **Commit or stash all working changes first** -- filter-repo refuses
+   to run on a dirty tree.
+
+2. **Scan history for PII** -- check every blob in every commit:
+   ```bash
+   for commit in $(git log --format="%H" --all); do
+       git show $commit --name-only --format="" | while read f; do
+           count=$(git show "$commit:$f" 2>/dev/null \
+               | grep -cE 'IDENTITY_PATTERNS_HERE' 2>/dev/null)
+           [ "$count" -gt 0 ] && echo "$commit  $count  $f"
+       done
+   done
+   ```
+   Also check author/committer: `git log --format="%an <%ae>" --all | sort -u`
+
+3. **Create config files** in `/tmp/`:
+
+   **mailmap** (author rewrite):
+   ```
+   New Name <new@email> Old Name <old@email>
+   ```
+
+   **replacements.txt** (content rewrite, `literal==>replacement`):
+   ```
+   /home/username/path/to/file==>relative/path
+   old-hostname==>build-host
+   ```
+
+4. **Run filter-repo** with all three operations in one pass:
+   ```bash
+   python3 /tmp/git-filter-repo --force \
+       --mailmap /tmp/mailmap \
+       --replace-text /tmp/replacements.txt \
+       --path secret-file.rpt --path another.rpt --invert-paths
+   ```
+   - `--mailmap`: rewrites author/committer
+   - `--replace-text`: rewrites file content (literal or regex)
+   - `--path ... --invert-paths`: deletes files from all history
+
+5. **Verify** -- re-run the history scan from step 2 to confirm zero matches.
+   Also check `git log --format="%an <%ae>" --all | sort -u`.
+
+6. **Run `/fingerprint`** on the working tree to confirm it's still clean.
+
+### Common PII sources in FPGA projects
+
+| Source | Contains | Fix |
+|--------|----------|-----|
+| Vivado `.rpt` files | hostname, absolute paths, username | `--invert-paths` (delete from history) |
+| TCL scripts (`synth.tcl`) | absolute paths to source files | `--replace-text` with relative paths |
+| Symlinks in git | target paths with `/home/user/` | Content replacement won't help; these are fine if `.gitignore`d or local-only |
+| Git author/committer | real name, personal email | `--mailmap` |
+| Vivado `clockInfo.txt` | hostname | `--invert-paths` |
+
+### Notes
+
+- `git-filter-repo` rewrites all commit SHAs. Only use on repos with no
+  shared remote, or coordinate with all collaborators.
+- Always commit working changes before running -- filter-repo operates on
+  committed history only.
+- The `--force` flag is needed if the repo has a remote configured or if
+  filter-repo has been run before.
+- filter-repo removes the `origin` remote as a safety measure. Re-add it
+  after verifying the scrub: `git remote add origin <url>`.
 
 ## Relationship to Git Hooks
 
