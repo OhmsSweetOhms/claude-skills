@@ -169,7 +169,9 @@ def run_stage(stage_num, project_dir, extra_args=None):
     if extra_args:
         cmd.extend(extra_args)
 
-    result = subprocess.run(cmd, cwd=project_dir)
+    env = os.environ.copy()
+    env["PYTHONPYCACHEPREFIX"] = os.path.join(project_dir, "build", "py")
+    result = subprocess.run(cmd, cwd=project_dir, env=env)
     return result.returncode
 
 
@@ -263,15 +265,21 @@ def main() -> int:
             # Always enable VCD generation
             extra_args.append("--vcd")
             reason += " + VCD"
+            # Pass signal map if found in tb/
+            sig_maps = glob.glob(os.path.join(project_dir, "tb", "*signal*map*.json"))
+            if sig_maps:
+                map_file = sorted(sig_maps)[-1]
+                extra_args.extend(["--signal-map", map_file])
+                reason += f" (selective: {os.path.basename(map_file)})"
 
         elif stage == 8:
             vcd_candidates = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
             signal_maps = glob.glob(os.path.join(project_dir, "build", "sim", "*signal*map*.json")) + \
                           glob.glob(os.path.join(project_dir, "tb", "*signal*map*.json"))
             if not vcd_candidates:
-                return [], "No VCD file in build/sim/", 0
+                return [], "No VCD file in build/sim/ -- Stage 7 should have generated one", 1
             if not signal_maps:
-                return [], "No signal map JSON found", 0
+                return [], "No signal map JSON found -- create tb/vcd_signal_map.json", 1
             vcd_file = sorted(vcd_candidates)[-1]
             map_file = sorted(signal_maps)[-1]
             extra_args = [vcd_file, "--signal-map", map_file]

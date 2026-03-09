@@ -33,6 +33,7 @@ Exit code 0 if all steps succeed and simulation reports no FAIL, 1 otherwise.
 
 import argparse
 import glob
+import json
 import os
 import re
 import shutil
@@ -72,16 +73,25 @@ def find_dpi_c_files(project_dir):
     return []
 
 
-def run_tool(settings_path, tool_cmd, work_dir, label):
+def run_tool(settings_path, tool_cmd, work_dir, label, timeout=600):
     """Run an Xsim tool with settings64.sh sourced. Returns (success, stdout+stderr)."""
     full_cmd = f"source {settings_path} && cd {work_dir} && {tool_cmd}"
 
-    result = subprocess.run(
-        ["bash", "-c", full_cmd],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    try:
+        result = subprocess.run(
+            ["bash", "-c", full_cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        print(f"  [{fail_str()}] {label} (timeout after {timeout}s)")
+        output = (e.stdout or "") + (e.stderr or "")
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        for line in output.splitlines()[-10:]:
+            print(f"    ! {line}")
+        return False, output
 
     output = result.stdout + result.stderr
 
@@ -119,7 +129,10 @@ def generate_vcd_tcl(work_dir, sim_name, vcd_signals=None):
         f.write(f"open_vcd {vcd_name}\n")
         if vcd_signals:
             for sig in vcd_signals:
-                f.write(f"log_vcd {sig}\n")
+                # Signal map uses dot notation (a.b.c) for vcd_verify;
+                # xsim log_vcd needs slash notation (/a/b/c)
+                tcl_path_sig = "/" + sig.replace(".", "/")
+                f.write(f"log_vcd {tcl_path_sig}\n")
         else:
             f.write("log_vcd *\n")
         f.write("run -all\nclose_vcd\nexit\n")
@@ -178,8 +191,10 @@ def main() -> int:
                         help="Custom Tcl batch file for simulation")
     parser.add_argument("--clean", action="store_true",
                         help="Clean Xsim artifacts and exit")
-    parser.add_argument("--timeout", type=int, default=300,
-                        help="Simulation timeout in seconds (default: 300)")
+    parser.add_argument("--signal-map", type=str, default=None,
+                        help="JSON signal map for selective VCD logging (used with --vcd)")
+    parser.add_argument("--timeout", type=int, default=600,
+                        help="Simulation timeout in seconds (default: 600)")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -294,7 +309,7 @@ def main() -> int:
             fname = os.path.basename(sv)
             ok, _ = run_tool(
                 settings_path,
-                f'xvlog -sv "{abs_path}"',
+                f'xvlog -sv -d SOCKS_VCD "{abs_path}"',
                 work_dir,
                 f"xvlog {fname}",
             )
@@ -365,7 +380,17 @@ def main() -> int:
             return 1
         sim_cmd = f'xsim {sim_name} -tclbatch "{tcl_path}"'
     elif args.vcd:
-        tcl_path, vcd_name = generate_vcd_tcl(work_dir, sim_name)
+        vcd_signals = None
+        if args.signal_map:
+            map_path = os.path.abspath(args.signal_map)
+            if os.path.isfile(map_path):
+                with open(map_path) as mf:
+                    sig_map = json.load(mf)
+                vcd_signals = list(sig_map.values())
+                print(f"  Signal map: {map_path} ({len(vcd_signals)} signals)")
+            else:
+                print(f"  WARNING: Signal map not found: {map_path}, falling back to log_vcd *")
+        tcl_path, vcd_name = generate_vcd_tcl(work_dir, sim_name, vcd_signals=vcd_signals)
         sim_cmd = f'xsim {sim_name} -tclbatch "{tcl_path}"'
         print(f"  VCD output: {vcd_name}")
     else:
@@ -376,17 +401,22 @@ def main() -> int:
         sim_cmd,
         work_dir,
         f"xsim {sim_name}",
+        timeout=args.timeout,
     )
 
     if not ok:
         all_passed = False
 
     # Check simulation output for PASS/FAIL
-    sim_upper = sim_output.upper()
-    has_fail = ("FAIL" in sim_upper and "ALL PASS" not in sim_upper and
-                "SIMULATION PASSED" not in sim_upper and "0 FAIL" not in sim_upper)
-    has_pass = ("ALL PASS" in sim_upper or "ALL TESTS PASSED" in sim_upper or
-                "TEST PASSED" in sim_upper or "SIMULATION PASSED" in sim_upper)
+    # Filter out xsim Tcl echo lines (## command ...) to avoid false
+    # positives from signal names like "fail_cnt" or "pass_cnt"
+    check_lines = [l for l in sim_output.splitlines()
+                   if not l.strip().startswith("##")]
+    check_text = "\n".join(check_lines).upper()
+    has_fail = ("FAIL" in check_text and "ALL PASS" not in check_text and
+                "SIMULATION PASSED" not in check_text and "0 FAIL" not in check_text)
+    has_pass = ("ALL PASS" in check_text or "ALL TESTS PASSED" in check_text or
+                "TEST PASSED" in check_text or "SIMULATION PASSED" in check_text)
 
     if has_fail:
         all_passed = False

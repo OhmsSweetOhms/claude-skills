@@ -18,6 +18,7 @@ project/
 ├── build/
 │   ├── sim/           # Simulation scripts + Xsim artifacts
 │   ├── synth/         # Synthesis TCL + Vivado reports
+│   ├── py/            # Python outputs (plots, generated data)
 │   ├── logs/          # Pipeline logs (auto-generated)
 │   └── artifacts/     # Claude scratch space
 ├── docs/              # Architecture diagrams + README
@@ -134,11 +135,18 @@ set proj_dir   [file dirname [file dirname $script_dir]]
 
 **Python scripts** (tb/*.py):
 ```python
+# Source references:
 # Old: Path(__file__).parent / "file.vhd"
 # New: Path(__file__).parent.parent / "src" / "file.vhd"
 
+# Sim data references:
 # Old: os.path.join(os.path.dirname(__file__), "sim", "file.csv")
 # New: os.path.join(os.path.dirname(__file__), "..", "build", "sim", "file.csv")
+
+# Python outputs (plots, generated data) go to build/py/:
+_PY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'build', 'py')
+os.makedirs(_PY_DIR, exist_ok=True)
+plt.savefig(os.path.join(_PY_DIR, 'waveform.png'))
 ```
 
 #### 4e. Update .gitignore
@@ -146,46 +154,24 @@ set proj_dir   [file dirname [file dirname $script_dir]]
 Use the SOCKS template:
 
 ```gitignore
-# Build directory — logs and artifacts always gitignored
-build/logs/
-build/artifacts/
-
-# Xilinx Vivado / Xsim build artifacts
-xsim.dir/
-xsim_work/
-.Xil/
-webtalk/
-*.pb
-*.wdb
-*.vcd
-*.jou
-*.log
-*.backup.jou
-*.backup.log
-
-# Vivado synthesis reports (regenerated; contain hostname/username)
-*_utilization.txt
-*_timing.txt
-*_timing_constrained.txt
-*_timing_paths.txt
-*_drc.txt
-*.rpt
-clockInfo.txt
-
-# Simulation intermediates
-build/sim/_run.tcl
-build/sim/*.csv
-
-# Python artifacts
-__pycache__/
-*.pyc
-
-# Testbench generated plots
-tb/*.png
+# Build outputs (tracked scripts survive — gitignore only affects untracked)
+build/
 
 # Claude local settings
 .claude/
 ```
+
+Add project-specific lines only if needed (e.g. `*.pdf`, `*.zip`).
+
+`PYTHONPYCACHEPREFIX` is set in build scripts and `socks.py` to redirect
+`__pycache__/` into `build/py/`, so no separate `__pycache__` gitignore
+line is needed.
+
+All Vivado/Xsim artifacts, synthesis reports, generated TCL scripts,
+CSV logs, and Python-generated plots land under `build/` so a single
+`build/` rule covers everything. Tracked files (shell scripts,
+hand-written TCL) are unaffected — gitignore only applies to
+untracked files.
 
 #### 4f. Update CLAUDE.md
 
