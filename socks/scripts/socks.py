@@ -321,12 +321,13 @@ def main() -> int:
 
         elif stage == 1:
             files = args.files or find_vhdl_files(project_dir)
-            if not files:
-                return [], "No VHDL files found", 0
-            extra_args = files
+            extra_args = list(files)
             if args.top:
                 extra_args = ["--top", args.top] + extra_args
-            reason = f"Parse {len(files)} VHDL file(s), estimate DSP/resource usage"
+            if files:
+                reason = f"Parse {len(files)} VHDL file(s), estimate DSP/resource usage"
+            else:
+                reason = "Greenfield -- no VHDL yet, guidance creates ARCHITECTURE.md"
 
         elif stage == 3:
             files = args.files or find_vhdl_files(project_dir)
