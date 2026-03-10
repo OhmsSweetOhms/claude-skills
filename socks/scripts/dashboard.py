@@ -90,6 +90,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --skip: #eab308;
     --not-run: #334155;
     --running: #3b82f6;
+    --loop: #a78bfa;
     --border: #334155;
     --radius: 8px;
 }
@@ -206,6 +207,8 @@ body {
 .stage-card.fail { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); }
 .stage-card.skip { background: rgba(234,179,8,0.15); border: 1px solid rgba(234,179,8,0.3); }
 .stage-card.not-run { border: 1px solid transparent; }
+.stage-card.design-loop { border-left: 3px solid var(--loop); }
+.stage-card.design-loop .stage-card-num { color: var(--loop); }
 .stage-card-num {
     font-size: 11px;
     color: var(--text-muted);
@@ -278,6 +281,8 @@ body {
 .timeline-entry.pass { border-left-color: var(--pass); }
 .timeline-entry.fail { border-left-color: var(--fail); background: rgba(239,68,68,0.06); }
 .timeline-entry.skip { border-left-color: var(--skip); }
+.timeline-entry.design-loop { border-left-color: var(--loop); }
+.timeline-entry.design-loop.fail { border-left-color: var(--fail); }
 .timeline-time {
     color: var(--text-muted);
     font-size: 12px;
@@ -444,6 +449,7 @@ const STAGE_NAMES = {
     13: "SOCKS Self-Audit"
 };
 
+const DESIGN_LOOP = new Set([2, 3, 4, 5, 6, 7, 8, 9]);
 let currentStagesCount = 0;
 let firstTime = null;
 let lastTime = null;
@@ -454,7 +460,7 @@ let durationInterval = null;
 const grid = document.getElementById("stage-grid");
 for (let i = 0; i <= 13; i++) {
     const card = document.createElement("div");
-    card.className = "stage-card not-run";
+    card.className = "stage-card not-run" + (DESIGN_LOOP.has(i) ? " design-loop" : "");
     card.id = "card-" + i;
     card.innerHTML = '<div class="stage-card-num">Stage ' + i + '</div>' +
         '<div class="stage-card-name">' + STAGE_NAMES[i] + '</div>' +
@@ -546,7 +552,8 @@ function updateDashboard(data) {
     // Reset all first
     for (let i = 0; i <= 13; i++) {
         const card = document.getElementById("card-" + i);
-        card.className = "stage-card not-run";
+        const loopCls = DESIGN_LOOP.has(i) ? " design-loop" : "";
+        card.className = "stage-card not-run" + loopCls;
         card.querySelector(".stage-card-status").textContent = "--";
         card.querySelector(".stage-card-status").className = "stage-card-status not-run";
         // Remove old iter badge
@@ -558,7 +565,7 @@ function updateDashboard(data) {
         const e = stageLatest[num];
         const card = document.getElementById("card-" + num);
         if (!card) continue;
-        card.className = "stage-card " + e.status;
+        card.className = "stage-card " + e.status + (DESIGN_LOOP.has(parseInt(num)) ? " design-loop" : "");
         const statusEl = card.querySelector(".stage-card-status");
         statusEl.textContent = e.status.toUpperCase();
         statusEl.className = "stage-card-status " + e.status;
@@ -582,7 +589,8 @@ function updateDashboard(data) {
     for (let i = currentStagesCount; i < stages.length; i++) {
         const e = stages[i];
         const entry = document.createElement("div");
-        entry.className = "timeline-entry " + e.status;
+        const loopTag = DESIGN_LOOP.has(e.stage) ? " design-loop" : "";
+        entry.className = "timeline-entry " + e.status + loopTag;
         entry.id = "tl-last-" + e.stage;
 
         // Remove old "last" id for this stage
@@ -757,23 +765,25 @@ def write_static_html(project_dir, output_path):
     }
 
     # Replace the fetch + SSE block with direct data injection
-    static_script = (
-        '\n<script>\n'
+    # This replaces everything from "// Initial fetch" to the closing </script>,
+    # so we must NOT wrap in extra <script> tags (we're already inside one).
+    static_js = (
         '// Static snapshot -- no SSE\n'
         'const STATIC_DATA = ' + json.dumps(data, indent=2) + ';\n'
         'updateDashboard(STATIC_DATA);\n'
         'document.getElementById("conn-text").textContent = "Static snapshot";\n'
-        '</script>\n'
     )
 
     html = HTML_TEMPLATE
-    # Remove the SSE/fetch block at the end (between "// Initial fetch" and "</script>")
+    # Remove the fetch + SSE + ticker block, replace with static data injection.
+    # Everything from "// Initial fetch" up to (but not including) the closing
+    # </script> tag is replaced.
     marker_start = "// Initial fetch"
     marker_end = "</script>"
     idx_start = html.rfind(marker_start)
     idx_end = html.rfind(marker_end)
     if idx_start > 0 and idx_end > idx_start:
-        html = html[:idx_start] + "// Static mode\n" + static_script + "\n" + html[idx_end:]
+        html = html[:idx_start] + static_js + html[idx_end:]
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     with open(output_path, "w") as f:
