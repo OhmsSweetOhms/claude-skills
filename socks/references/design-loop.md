@@ -56,6 +56,20 @@ Reason about the root cause. Re-enter at the producing stage:
 **Carry-forward rule:** Every fix must propagate through all downstream stages.
 Never skip a downstream stage after a fix.
 
+### Iteration Cap
+
+The session manifest may contain a `max_iterations` field (0 = unlimited). When
+`max_iterations > 0`, check before re-entering the design loop:
+
+```python
+from session import iterations_exhausted
+if iterations_exhausted(project_dir):
+    # Stop looping — exit to Stage 10+
+```
+
+When the cap is reached, **do not re-enter the design loop.** Proceed to
+Stage 10 with whatever state exists. Log a note that the iteration cap was hit.
+
 ### Circular Logic Detection
 
 If you have tried a fix and ended up at the same failure, or tried two different

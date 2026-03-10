@@ -11,6 +11,9 @@ run — both scripted and guidance — in a single unified log.
 # Create a fresh session on first pipeline invocation
 python3 scripts/socks.py --project-dir . --stages 0 --new-session
 
+# With iteration cap (exit design loop after N iterations, 0 = unlimited)
+python3 scripts/socks.py --project-dir . --stages 0 --new-session --max-iter 2
+
 # Scripted stages auto-log to session.json
 python3 scripts/socks.py --project-dir . --stages 1,4,7,8,10
 
@@ -76,6 +79,7 @@ The dashboard shows:
 
 - **source**: `"script"` (socks.py) or `"guidance"` (log_stage.py / Claude)
 - **iteration**: auto-increments per stage number across design-loop re-entries
+- **max_iterations**: design-loop cap (0 = unlimited); checked by `iterations_exhausted()`
 
 ## Design-loop iterations
 

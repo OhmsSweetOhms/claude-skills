@@ -19,11 +19,15 @@ def _session_path(project_dir):
     return os.path.join(project_dir, "build", "logs", "session.json")
 
 
-def _new_session(project_dir):
-    """Create a fresh session manifest dict."""
+def _new_session(project_dir, max_iterations=0):
+    """Create a fresh session manifest dict.
+
+    max_iterations: design-loop iteration cap (0 = unlimited).
+    """
     return {
         "session_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "project": project_dir,
+        "max_iterations": max_iterations,
         "stages": [],
     }
 
@@ -58,11 +62,35 @@ def load_session(project_dir):
         return None
 
 
-def create_session(project_dir):
-    """Create a new session.json, overwriting any existing one."""
-    session = _new_session(project_dir)
+def create_session(project_dir, max_iterations=0):
+    """Create a new session.json, overwriting any existing one.
+
+    max_iterations: design-loop iteration cap (0 = unlimited).
+    """
+    session = _new_session(project_dir, max_iterations=max_iterations)
     _atomic_write(_session_path(project_dir), session)
     return session
+
+
+def iterations_exhausted(project_dir):
+    """Check if the design-loop iteration cap has been reached.
+
+    Returns True if max_iterations > 0 and any design-loop stage (2-9)
+    has been run max_iterations times. Returns False if cap is 0 (unlimited)
+    or not yet reached.
+    """
+    session = load_session(project_dir)
+    if session is None:
+        return False
+    cap = session.get("max_iterations", 0)
+    if cap <= 0:
+        return False
+    # Check design-loop stages (2-9)
+    for stage_num in range(2, 10):
+        count = sum(1 for e in session["stages"] if e["stage"] == stage_num)
+        if count >= cap:
+            return True
+    return False
 
 
 def append_session_entry(project_dir, stage_num, status, source,

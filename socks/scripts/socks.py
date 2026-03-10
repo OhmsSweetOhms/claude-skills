@@ -266,6 +266,8 @@ def main() -> int:
                         help="Clean build artifacts before running pipeline")
     parser.add_argument("--new-session", action="store_true",
                         help="Create a fresh session.json before running")
+    parser.add_argument("--max-iter", type=int, default=0,
+                        help="Design-loop iteration cap (0 = unlimited)")
     parser.add_argument("--summary", action="store_true",
                         help="Print session summary and exit")
     args = parser.parse_args()
@@ -298,9 +300,9 @@ def main() -> int:
 
     # --- Session manifest ---
     if args.new_session:
-        create_session(project_dir)
+        create_session(project_dir, max_iterations=args.max_iter)
     elif load_session(project_dir) is None:
-        create_session(project_dir)
+        create_session(project_dir, max_iterations=args.max_iter)
 
     results = {}
     warnings = set()  # stages that passed with warnings (e.g. audit external)
