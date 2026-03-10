@@ -44,6 +44,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from socks_lib import print_header, print_separator, pass_str, fail_str, yellow, bold
+from session import load_session, create_session, append_session_entry
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -61,7 +62,8 @@ STAGES = {
     1:  StageDef("Architecture Analysis",    script="architecture.py",
                  guidance="RTL + TB architecture, Mermaid diagrams, rate analysis (read references/architecture-diagrams.md). Enter plan mode for user approval before proceeding."),
     2:  StageDef("Write/Modify RTL",         guidance="read references/vhdl.md"),
-    3:  StageDef("VHDL Linter",              guidance="read references/linter.md"),
+    3:  StageDef("VHDL Linter",              script="linter.py",
+                 guidance="read references/linter.md"),
     4:  StageDef("Synthesis Audit",          script="audit.py"),
     5:  StageDef("Python Testbench",         script="python_rerun.py",
                  guidance="Write/update cycle-accurate Python model (read references/python-testbench.md)"),
@@ -77,6 +79,74 @@ STAGES = {
 }
 
 DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
+
+
+# ---------------------------------------------------------------------------
+# Session summary
+# ---------------------------------------------------------------------------
+
+def print_session_summary(project_dir):
+    """Print a compact text summary of the current session manifest."""
+    session = load_session(project_dir)
+    if session is None:
+        print("  No session manifest found.")
+        return
+
+    print(f"SOCKS Pipeline Session: {session['session_id']}")
+    print(f"Project: {session['project']}")
+    print()
+
+    stages_list = session["stages"]
+    if not stages_list:
+        print("  (no stages recorded)")
+        return
+
+    n_pass = n_fail = n_skip = 0
+    max_iteration = 0
+
+    for entry in stages_list:
+        stage_num = entry["stage"]
+        label = STAGES[stage_num].label if stage_num in STAGES else f"Stage {stage_num}"
+        status = entry["status"].upper()
+        time_str = entry.get("time", "")
+        note = entry.get("note", "") or ""
+        iteration = entry.get("iteration", 1)
+
+        # Iteration badge
+        if iteration > 1:
+            iter_badge = f" [{iteration}]"
+        else:
+            iter_badge = ""
+
+        # Status colour
+        if status == "PASS":
+            status_display = pass_str()
+            n_pass += 1
+        elif status == "FAIL":
+            status_display = fail_str()
+            n_fail += 1
+        else:
+            status_display = yellow(status)
+            n_skip += 1
+
+        if iteration > max_iteration:
+            max_iteration = iteration
+
+        # Format: Stage  N: Name              [iter] STATUS  time  note
+        note_trunc = note[:50] if note else ""
+        print(f"  Stage {stage_num:2d}: {label:<28s}{iter_badge:>4s} "
+              f"{status_display}   {time_str}   {note_trunc}")
+
+    # Compute iterations (max iteration across all stages)
+    iter_count = max_iteration if max_iteration > 1 else 0
+
+    total = n_pass + n_fail + n_skip
+    print()
+    print(f"Result: {n_pass}/{total} stages passed", end="")
+    if iter_count > 0:
+        print(f" ({iter_count} design-loop iterations)")
+    else:
+        print()
 
 
 def log_transition(stage_num, reason, extra_args, project_dir):
@@ -194,9 +264,19 @@ def main() -> int:
                         help="Path to Vivado settings64.sh")
     parser.add_argument("--clean", action="store_true",
                         help="Clean build artifacts before running pipeline")
+    parser.add_argument("--new-session", action="store_true",
+                        help="Create a fresh session.json before running")
+    parser.add_argument("--summary", action="store_true",
+                        help="Print session summary and exit")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
+
+    # --summary: print and exit
+    if args.summary:
+        print_session_summary(project_dir)
+        return 0
+
     stages = parse_stages(args.stages)
 
     print_header("SOCKS Pipeline Orchestrator")
@@ -215,6 +295,12 @@ def main() -> int:
                 print(f"  WARNING: Clean exited with code {rc}")
         else:
             print(f"  WARNING: clean.py not found at {clean_script}")
+
+    # --- Session manifest ---
+    if args.new_session:
+        create_session(project_dir)
+    elif load_session(project_dir) is None:
+        create_session(project_dir)
 
     results = {}
     warnings = set()  # stages that passed with warnings (e.g. audit external)
@@ -240,12 +326,19 @@ def main() -> int:
                 extra_args = ["--top", args.top] + extra_args
             reason = f"Parse {len(files)} VHDL file(s), estimate DSP/resource usage"
 
+        elif stage == 3:
+            files = args.files or find_vhdl_files(project_dir)
+            if not files:
+                return [], "No VHDL files found", 0
+            extra_args = files
+            reason = f"Lint {len(files)} VHDL file(s)"
+
         elif stage == 4:
             files = args.files or find_vhdl_files(project_dir)
             if not files:
                 return [], "No VHDL files found", 0
             extra_args = files
-            reason = f"Run 12 static synthesis checks on {len(files)} file(s)"
+            reason = f"Run 13 static synthesis checks on {len(files)} file(s)"
 
         elif stage == 5:
             tb_path = find_python_tb(project_dir)
@@ -302,22 +395,41 @@ def main() -> int:
             reason = f"Compare {os.path.basename(sim_csv)} vs {os.path.basename(model_csv)}"
 
         elif stage == 10:
-            if not args.top:
-                return [], "--top not provided", 0
+            synth_top = args.top
             src_dir = os.path.join(project_dir, "src")
             if not os.path.isdir(src_dir):
                 src_dir = project_dir
+
+            # Auto-detect RTL entity: strip _tb suffix, or scan src/ for entities
+            if synth_top and synth_top.endswith("_tb"):
+                synth_top = synth_top[:-3]
+            if not synth_top:
+                # Scan VHDL files for entity declarations
+                import re as _re
+                for vf in sorted(glob.glob(os.path.join(src_dir, "*.vhd"))):
+                    with open(vf) as _f:
+                        for _line in _f:
+                            _m = _re.match(r'\s*entity\s+(\w+)\s+is\b',
+                                           _line, _re.IGNORECASE)
+                            if _m:
+                                synth_top = _m.group(1)
+                                break
+                    if synth_top:
+                        break
+            if not synth_top:
+                return [], "--top not provided and no entity found in src/", 0
+
             out_dir = os.path.join(project_dir, "build", "synth")
             os.makedirs(out_dir, exist_ok=True)
             extra_args = [
-                "--top", args.top,
+                "--top", synth_top,
                 "--part", args.part,
                 "--src-dir", src_dir,
                 "--out-dir", out_dir,
             ]
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            reason = f"Synthesise {args.top} for {args.part}"
+            reason = f"Synthesise {synth_top} for {args.part}"
 
         elif stage == 11:
             extra_args = ["--project-dir", project_dir]
@@ -338,6 +450,11 @@ def main() -> int:
             log_transition(stage, reason, [], project_dir)
             print(f"      {yellow('SKIP')}: {reason}")
             results[stage] = skip
+            # Log skip to session manifest
+            status_str = "skip" if skip == 0 else "fail"
+            append_session_entry(
+                project_dir, stage, status_str, source="script",
+                note=reason)
             if skip != 0:
                 print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
                 break
@@ -354,6 +471,19 @@ def main() -> int:
             warnings.add(stage)
         else:
             results[stage] = rc
+
+        # Log result to session manifest
+        if results[stage] == 0:
+            sess_status = "pass"
+        else:
+            sess_status = "fail"
+        # Determine log file for this run
+        logs_dir = os.path.join(project_dir, "build", "logs")
+        log_files = sorted(glob.glob(os.path.join(logs_dir, "pipeline_*.log")))
+        latest_log = log_files[-1] if log_files else None
+        append_session_entry(
+            project_dir, stage, sess_status, source="script",
+            note=reason, log_file=latest_log)
 
         if results[stage] != 0:
             print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")

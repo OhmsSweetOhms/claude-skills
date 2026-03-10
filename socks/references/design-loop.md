@@ -85,6 +85,19 @@ in the Python).
 
 ## Stage Details (2-9)
 
+**Running automated stages:** Always run stages through the orchestrator, never
+call stage scripts directly:
+```bash
+python3 scripts/socks.py --project-dir . --stages 4,5,7,8,9
+```
+This creates a timestamped pipeline log in `build/logs/`, handles stage
+sequencing, and ensures all artifacts are captured. On design-loop re-entry,
+run from the re-entry stage through Stage 9:
+```bash
+# Example: RTL fix, re-enter at Stage 4 and run through 9
+python3 scripts/socks.py --project-dir . --stages 4,5,7,8,9
+```
+
 ### Stage 2 -- Write/Modify RTL
 
 Read `references/vhdl.md` before writing any VHDL.
@@ -118,7 +131,7 @@ own code. Ignore read-only external module warnings.
 
 ### Stage 4 -- Synthesis Audit
 
-Run `scripts/audit.py src/*.vhd`. 12 static checks. All must pass before
+Run `scripts/audit.py src/*.vhd`. 13 static checks. All must pass before
 proceeding. External module audit warnings are non-blocking (exit code 2).
 
 ### Stage 5 -- Python Testbench

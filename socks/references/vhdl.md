@@ -161,6 +161,30 @@ p_fsm     : process(clk) ... reset_cnt <= '1'; ...
 
 ---
 
+## Delta-cycle race avoidance
+
+When process A sets a registered signal at the same clock edge that process B reads it, process B sees the OLD value (pre-update). This is correct VHDL semantics but causes subtle bugs when two processes react to the same strobe (e.g. `sample_point`).
+
+**Symptom:** FSM skips a condition or sees stale data, but only when two processes both trigger on the same enable.
+
+**Fix:** Make the shared signal combinational from registered state, so it reflects the CURRENT register values without a 1-cycle pipeline delay:
+
+```vhdl
+-- WRONG: registered flag set in p_counter, read in p_fsm at same edge
+-- p_fsm sees the OLD is_overflow (from previous cycle)
+p_counter : process(clk) ...
+    is_overflow <= '0';
+    if cnt_r = MAX then is_overflow <= '1'; end if; ...
+
+-- CORRECT: combinational decode of registered counter
+-- Available instantly at the same clock edge p_fsm reads it
+is_overflow <= '1' when (cnt_r = MAX) else '0';
+```
+
+Use this pattern whenever a flag depends only on registered state and must be visible to other processes in the same cycle. The combinational signal reads the register values from the PREVIOUS edge (which are stable) and produces a result that all processes see consistently.
+
+---
+
 ## Error flag timing
 
 When an error condition is detected in one state but the validity pulse fires in a later state, latch the error into an intermediate signal:

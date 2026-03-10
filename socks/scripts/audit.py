@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stage 4: Synthesis Audit -- Static VHDL checks (12 rules).
+Stage 4: Synthesis Audit -- Static VHDL checks (13 rules).
 
 Checks each VHDL source file for common synthesis hazards and coding
 standard violations.
@@ -363,6 +363,90 @@ def check_state_prefix(path: str, lines: List[str]) -> CheckResult:
     return result
 
 
+def check_multi_driver(path: str, lines: List[str]) -> CheckResult:
+    """Check 13: No signal driven by multiple processes."""
+    result = CheckResult(name="No multi-driver signals", passed=True)
+
+    # Build map: signal_name -> set of process names that assign it
+    sig_decl = re.compile(r'^\s*signal\s+(\w[\w,\s]*?)\s*:', re.IGNORECASE)
+    declared: set = set()
+    for raw_line in lines:
+        code = strip_vhdl_comments(raw_line)
+        m = sig_decl.match(code)
+        if m:
+            for name in m.group(1).split(","):
+                name = name.strip().lower()
+                if name:
+                    declared.add(name)
+
+    # Walk processes, track which signals each assigns
+    process_pat = re.compile(r'(\w+)\s*:\s*process\b', re.IGNORECASE)
+    end_process_pat = re.compile(r'\bend\s+process\b', re.IGNORECASE)
+    assign_pat = re.compile(r'(\w+)\s*<=\b', re.IGNORECASE)
+
+    driver_map: dict = {}  # signal_name -> set of (process_name, line)
+    current_proc = None
+    proc_line = 0
+
+    for i, raw_line in enumerate(lines, 1):
+        code = strip_vhdl_comments(raw_line)
+
+        m = process_pat.search(code)
+        if m:
+            current_proc = m.group(1).lower()
+            proc_line = i
+
+        if current_proc:
+            for am in assign_pat.finditer(code):
+                sig = am.group(1).lower()
+                if sig in declared:
+                    if sig not in driver_map:
+                        driver_map[sig] = set()
+                    driver_map[sig].add(current_proc)
+
+        if end_process_pat.search(code):
+            current_proc = None
+
+    # Also check concurrent assignments (outside processes)
+    in_arch = False
+    in_process = False
+    arch_pat = re.compile(r'^\s*begin\b', re.IGNORECASE)
+    for i, raw_line in enumerate(lines, 1):
+        code = strip_vhdl_comments(raw_line)
+        code_lower = code.lower().strip()
+
+        if process_pat.search(code):
+            in_process = True
+        if end_process_pat.search(code):
+            in_process = False
+
+        if not in_process and not code_lower.startswith('--'):
+            for am in assign_pat.finditer(code):
+                sig = am.group(1).lower()
+                if sig in declared:
+                    if sig not in driver_map:
+                        driver_map[sig] = set()
+                    driver_map[sig].add("__concurrent__")
+
+    for sig, drivers in sorted(driver_map.items()):
+        if len(drivers) > 1:
+            driver_list = ", ".join(sorted(d for d in drivers))
+            # Find declaration line
+            decl_line = 0
+            for idx, raw_line in enumerate(lines, 1):
+                if re.search(r'\bsignal\b.*\b' + re.escape(sig) + r'\b',
+                             strip_vhdl_comments(raw_line), re.IGNORECASE):
+                    decl_line = idx
+                    break
+            result.passed = False
+            result.violations.append(
+                Violation(basename(path), decl_line,
+                          f"signal '{sig}' driven by multiple sources: "
+                          f"{driver_list}"))
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -380,6 +464,7 @@ ALL_CHECKS = [
     check_architecture_rtl,
     check_no_component_decl,
     check_state_prefix,
+    check_multi_driver,
 ]
 
 

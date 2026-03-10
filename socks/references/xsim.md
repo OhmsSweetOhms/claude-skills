@@ -140,6 +140,28 @@ endtask
 
 ---
 
+## VCD signal map format
+
+The signal map (`tb/vcd_signal_map.json`) tells `xsim.py` which signals to log to VCD via Tcl `log_vcd` commands. It must be a **flat JSON object** mapping logical names to hierarchical dot-notation paths:
+
+```json
+{
+    "logical_name":  "tb_top.dut.signal_name",
+    "mon_state":     "tb_top.dut.mon_state_o",
+    "rx_stimulus":   "tb_top.rx_stim"
+}
+```
+
+**Rules:**
+- Keys are logical names (used in VCD verification reports)
+- Values are dot-separated hierarchical paths (`xsim.py` converts dots to slashes for Tcl)
+- **No arrays, no nested objects, no wrapper keys** — flat key-value only
+- Use the DUT instance name from the SV testbench (e.g. `dut`, `u_dut`)
+- Include `mon_*` ports plus key stimulus/output signals
+- Exclude high-toggle signals (clk, fast stimulus) to keep VCD size manageable
+
+---
+
 ## CSV debug logger
 
 Log one row per meaningful event, not every sys_clk cycle.

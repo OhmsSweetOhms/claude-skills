@@ -63,6 +63,9 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 
 Guidance-only stages (2, 3, 6, 12) are driven by Claude, not the orchestrator.
 
+**Never call stage scripts directly** (e.g. `xsim.py`, `audit.py`). Always
+route through `socks.py` so pipeline logs are captured in `build/logs/`.
+
 **Full rebuild:** When the user asks to "build", "rebuild", or "recompile",
 invoke the `/build` skill. It runs `scripts/build.py` which handles clean +
 full pipeline. **Do not manually invoke individual stage scripts for a build

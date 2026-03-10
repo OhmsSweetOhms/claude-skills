@@ -57,8 +57,10 @@ REQUIRED_STDLIB = [
 REQUIRED_SCRIPTS = [
     "socks.py",
     "socks_lib.py",
+    "session.py",
     "env.py",
     "architecture.py",
+    "linter.py",
     "audit.py",
     "python_rerun.py",
     "xsim.py",
@@ -69,6 +71,8 @@ REQUIRED_SCRIPTS = [
     "self_audit.py",
     "clean.py",
     "build.py",
+    "log_stage.py",
+    "dashboard.py",
 ]
 
 # Reference files that must exist

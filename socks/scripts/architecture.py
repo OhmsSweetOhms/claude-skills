@@ -199,6 +199,67 @@ def analyze_file(filepath):
             print(f"    L{line_no:4d}: {msg}")
 
 
+def render_mermaid(project_dir):
+    """Render docs/ARCHITECTURE.md Mermaid diagrams to PNG if mmdc is available."""
+    import shutil
+    import subprocess
+
+    arch_md = os.path.join(project_dir, "docs", "ARCHITECTURE.md")
+    if not os.path.isfile(arch_md):
+        return
+
+    mmdc = shutil.which("mmdc")
+    if not mmdc:
+        print(f"\n  {yellow('mmdc not found')} -- skipping Mermaid PNG render")
+        print(f"  Install: npm install -g @mermaid-js/mermaid-cli")
+        return
+
+    docs_dir = os.path.join(project_dir, "docs")
+    tmp_out = os.path.join(docs_dir, "arch.png")
+
+    print(f"\n  Rendering Mermaid diagrams...")
+    try:
+        result = subprocess.run(
+            [mmdc, "-i", arch_md, "-o", tmp_out,
+             "-w", "1400", "-e", "png", "-b", "white"],
+            capture_output=True, text=True, timeout=30,
+            cwd=docs_dir)
+
+        if result.returncode != 0:
+            print(f"  {yellow('mmdc failed')}: {result.stderr.strip()[:200]}")
+            return
+
+        # mmdc numbers output files for multiple diagrams: arch-1.png, arch-2.png
+        rendered = []
+        for candidate in sorted(os.listdir(docs_dir)):
+            if candidate.startswith("arch") and candidate.endswith(".png"):
+                rendered.append(candidate)
+
+        # Rename to descriptive names
+        rename_map = {0: "ARCHITECTURE_dataflow.png", 1: "ARCHITECTURE_clocking.png"}
+        for idx, fname in enumerate(rendered):
+            src = os.path.join(docs_dir, fname)
+            if idx in rename_map:
+                dst = os.path.join(docs_dir, rename_map[idx])
+            else:
+                dst = os.path.join(docs_dir, f"ARCHITECTURE_{idx+1}.png")
+            if src != dst:
+                os.rename(src, dst)
+            print(f"    {os.path.basename(dst)}")
+
+        if not rendered:
+            # Single diagram case: mmdc writes arch.png directly
+            if os.path.isfile(tmp_out):
+                dst = os.path.join(docs_dir, "ARCHITECTURE_dataflow.png")
+                os.rename(tmp_out, dst)
+                print(f"    {os.path.basename(dst)}")
+
+    except subprocess.TimeoutExpired:
+        print(f"  {yellow('mmdc timed out')}")
+    except Exception as e:
+        print(f"  {yellow('mmdc error')}: {e}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 1: Architecture Analysis")
     parser.add_argument("files", nargs="+", help="VHDL source files to analyze")
@@ -213,6 +274,13 @@ def main() -> int:
             print(f"\n  ERROR: File not found: {filepath}")
             continue
         analyze_file(filepath)
+
+    # Render Mermaid PNGs if docs/ARCHITECTURE.md exists
+    # Derive project dir: files are in src/, go up one level
+    if args.files:
+        first_file = os.path.abspath(args.files[0])
+        project_dir = os.path.dirname(os.path.dirname(first_file))
+        render_mermaid(project_dir)
 
     print()
     print_separator()
