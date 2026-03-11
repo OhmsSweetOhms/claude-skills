@@ -17,7 +17,7 @@ Available stages:
     0   Environment setup (script)
     1   Architecture analysis (script + guidance)
     2   Write/Modify RTL (guidance only)
-    3   VHDL Linter (guidance only)
+    3   VHDL Linter (script + guidance)
     4   Synthesis audit (script)
     5   Python testbench (script + guidance)
     6   Bare-Metal C driver (guidance only)
@@ -30,7 +30,7 @@ Available stages:
     13  SOCKS self-audit (script)
 
 Stages 2-9 form the design loop. Claude decides re-entry on failure.
-Guidance-only stages (2, 3, 6, 12) are driven by Claude reading SKILL.md,
+Guidance-only stages (2, 6, 12) are driven by Claude reading SKILL.md,
 not by this orchestrator.
 """
 

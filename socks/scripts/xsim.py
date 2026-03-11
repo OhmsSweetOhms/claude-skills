@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stage 6: Xsim Build & Simulate -- Compile VHDL + SV, elaborate, and run.
+Stage 7: Xsim Build & Simulate -- Compile VHDL + SV, elaborate, and run.
 
 Handles settings64.sh sourcing, compile order, elaboration, simulation,
 and optional VCD/Tcl batch mode. Replaces all manual bash -c calls.
@@ -75,7 +75,7 @@ def find_dpi_c_files(project_dir):
 
 def run_tool(settings_path, tool_cmd, work_dir, label, timeout=600):
     """Run an Xsim tool with settings64.sh sourced. Returns (success, stdout+stderr)."""
-    full_cmd = f"source {settings_path} && cd {work_dir} && {tool_cmd}"
+    full_cmd = f'source "{settings_path}" && cd "{work_dir}" && {tool_cmd}'
 
     try:
         result = subprocess.run(
@@ -123,7 +123,10 @@ def generate_run_tcl(work_dir, sim_name, run_time="all"):
 
 def generate_vcd_tcl(work_dir, sim_name, vcd_signals=None):
     """Generate a Tcl script for VCD capture."""
-    vcd_name = sim_name.replace("_sim", "_verify.vcd")
+    if "_sim" in sim_name:
+        vcd_name = sim_name.replace("_sim", "_verify.vcd")
+    else:
+        vcd_name = sim_name + "_verify.vcd"
     tcl_path = os.path.join(work_dir, "_run_vcd.tcl")
     with open(tcl_path, "w") as f:
         f.write(f"open_vcd {vcd_name}\n")
@@ -280,7 +283,7 @@ def main() -> int:
             # Pass 1: silent -- populate library, ignore failures
             for vhd in vhdl_files:
                 abs_path = os.path.abspath(vhd)
-                full_cmd = (f"source {settings_path} && cd {work_dir} && "
+                full_cmd = (f'source "{settings_path}" && cd "{work_dir}" && '
                             f'xvhdl --2008 "{abs_path}"')
                 subprocess.run(["bash", "-c", full_cmd],
                                capture_output=True, text=True, timeout=300)

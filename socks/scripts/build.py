@@ -39,7 +39,7 @@ def main() -> int:
     parser.add_argument("--skip-synth", action="store_true",
                         help="Skip Vivado synthesis (stages 0-8,11 only)")
     parser.add_argument("--synth-only", action="store_true",
-                        help="Only run synthesis (stages 0,9)")
+                        help="Only run synthesis (stages 0,10)")
     parser.add_argument("--no-clean", action="store_true",
                         help="Skip clean step")
     args = parser.parse_args()
@@ -66,10 +66,10 @@ def main() -> int:
 
     # Step 2: Pipeline
     if args.synth_only:
-        stages = "0,9"
+        stages = "0,10"
         print(f"\n  Step 2: Synthesis only (stages {stages})")
     elif args.skip_synth:
-        stages = "0,1,4,5,6,7,8,11"
+        stages = "0,1,4,5,7,8,11"
         print(f"\n  Step 2: Pipeline without synthesis (stages {stages})")
     else:
         stages = "automated"

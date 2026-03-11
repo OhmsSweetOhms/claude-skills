@@ -61,7 +61,7 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 - `--stages automated` -- all stages with scripts: 0, 1, 4, 5, 7, 8, 9, 10, 11, 13
 - `--stages 5,7,8` -- specific stages, comma-separated (no auto-expansion)
 
-Guidance-only stages (2, 3, 6, 12) are driven by Claude, not the orchestrator.
+Guidance-only stages (2, 6, 12) are driven by Claude, not the orchestrator.
 
 **Never call stage scripts directly** (e.g. `xsim.py`, `audit.py`). Always
 route through `socks.py` so pipeline logs are captured in `build/logs/`.

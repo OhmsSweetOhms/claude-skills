@@ -97,7 +97,7 @@ def verify_tools(settings_path: str) -> Dict[str, Optional[str]]:
     for tool in REQUIRED_TOOLS:
         try:
             out = subprocess.check_output(
-                ["bash", "-c", f"source {settings_path} && which {tool}"],
+                ["bash", "-c", f'source "{settings_path}" && which {tool}'],
                 stderr=subprocess.DEVNULL,
                 text=True,
             ).strip()

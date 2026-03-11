@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stage 9: Vivado Synthesis -- Generate TCL scripts, invoke Vivado in batch
+Stage 10: Vivado Synthesis -- Generate TCL scripts, invoke Vivado in batch
 mode, and parse utilization/timing/DRC reports.
 
 Usage:
@@ -104,10 +104,10 @@ def run_vivado(settings_path, tcl_path, out_dir, label):
     """Run Vivado in batch mode with cwd=out_dir for relative paths."""
     tcl_basename = os.path.basename(tcl_path)
     log_name = os.path.splitext(tcl_basename)[0]
-    cmd = (f"source {settings_path} && "
-           f"vivado -mode batch -source {tcl_basename} "
-           f"-log {log_name}.log "
-           f"-journal {log_name}.jou")
+    cmd = (f'source "{settings_path}" && '
+           f'vivado -mode batch -source "{tcl_basename}" '
+           f'-log "{log_name}.log" '
+           f'-journal "{log_name}.jou"')
 
     print(f"\n  Running {label}...")
     print(f"    TCL: {tcl_path}")
