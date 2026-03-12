@@ -32,6 +32,7 @@ under `socks/references/` — no external skill dependencies.
 │    regmap.md             (Stage 2, on register change)   │
 │    dpll.md               (DPLL/PLL designs)              │
 │    project-structure.md  (directory conventions)          │
+│    project-migration.md  (legacy + flat→SOCKS migration) │
 │    session.md            (state file & dashboard)        │
 │    skill-map.md          (this file)                     │
 └──────────────────────────────────────────────────────────┘

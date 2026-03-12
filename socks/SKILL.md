@@ -15,7 +15,7 @@ Five entry points. Parse the user's `/socks` message for flags:
 | `/socks --test [scope]` | Ask what to test/enhance, then sim stages (4,5,7,8,9) |
 | `/socks --architecture [scope]` | Ask what architecture changes, then full pipeline (0-13) |
 | `/socks --bughunt [scope]` | Ask what bug, then sim+synth stages (3-10) |
-| `/socks --migrate` | Migrate old log-based project to state file format |
+| `/socks --migrate` | Claude-driven project migration (legacy SOCKS or flat/3rd-party) |
 | `/socks` *(no flags)* | Ask the user which workflow they want |
 
 **Scope** is `module`, `block`, or `project`. If the user doesn't specify
@@ -30,7 +30,7 @@ scope, ask: "What scope? (module / block / project)". Scope definitions:
 > 2. `--test` -- Edit and run testbenches
 > 3. `--architecture` -- Change architecture, re-run full pipeline
 > 4. `--bughunt` -- Fix a bug, verify with sim + synthesis
-> 5. `--migrate` -- Upgrade old project to new state format
+> 5. `--migrate` -- Migrate a project to SOCKS layout (legacy or flat/3rd-party)
 
 Then proceed with their choice.
 
@@ -61,7 +61,10 @@ the design intent.
   `python scripts/socks.py --project-dir . --architecture`
 - **`--bughunt`:** Ask what bug they're hunting. Analyze, help edit `src/` files.
   Then run: `python scripts/socks.py --project-dir . --bughunt`
-- **`--migrate`:** Run: `python scripts/socks.py --project-dir . --migrate`
+- **`--migrate`:** Read `references/project-migration.md`. Classify the project
+  (legacy SOCKS vs flat/3rd-party), run `scripts/clean.py --project-dir . --all`
+  to remove generated artifacts, then follow the migration workflow. This is
+  Claude-driven — no pipeline stages run automatically.
 
 ---
 
@@ -116,7 +119,7 @@ python scripts/socks.py --project-dir . --design --scope block
 python scripts/socks.py --project-dir . --test
 python scripts/socks.py --project-dir . --architecture --scope module
 python scripts/socks.py --project-dir . --bughunt
-python scripts/socks.py --project-dir . --migrate
+python scripts/socks.py --project-dir . --migrate   # Claude-driven, no automated stages
 ```
 
 **Explicit stage control (legacy):**
@@ -132,6 +135,7 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 - `--test` -- 4, 5, 7, 8, 9 (sim only)
 - `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
+- `--migrate` -- Claude-driven (`references/project-migration.md`), no automated stages
 
 **Stage keywords:**
 - `--stages automated` -- all stages with scripts: 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13

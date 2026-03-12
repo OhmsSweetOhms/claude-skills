@@ -303,10 +303,21 @@ def main() -> int:
         print_session_summary(project_dir)
         return 0
 
-    # --migrate: create state stub and exit
+    # --migrate: Claude-driven workflow (no automated stages)
     if args.migrate:
-        from socks_lib import migrate_project
-        return migrate_project(project_dir)
+        print_header("SOCKS Migration")
+        print(f"\n  Project: {project_dir}")
+        print()
+        print("  This is a Claude-driven workflow. Read references/project-migration.md")
+        print("  and follow the steps:")
+        print()
+        print("  1. Classify: legacy SOCKS or flat/3rd-party")
+        print("  2. Clean generated artifacts (scripts/clean.py --project-dir . --all)")
+        print("  3. Inventory and investigate")
+        print("  4. Present migration plan for approval")
+        print("  5. Apply migrations (use socks_lib.migrate_project() for state file stub)")
+        print("  6. Validate with SOCKS pipeline")
+        return 0
 
     # Determine stages from workflow flag or --stages
     active_workflow = None

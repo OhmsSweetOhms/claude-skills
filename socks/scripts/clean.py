@@ -62,7 +62,7 @@ REPORT_GLOBS = [
 ]
 
 # Directories to never descend into or remove
-KEEP_DIRS = {".git", "build/logs", "docs"}
+KEEP_DIRS = {".git", "build/logs", "build/state", "docs"}
 
 # Files to never remove
 KEEP_FILES = {
