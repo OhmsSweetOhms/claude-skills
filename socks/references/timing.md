@@ -1,18 +1,9 @@
----
-name: timing
-description: "Timing closure assistant for Vivado synthesis. Use when a design has timing violations (negative WNS/WHS), when the user asks about critical paths, or when they want to fix setup/hold failures. Parses Vivado timing reports, identifies the critical path, diagnoses root causes (long carry chains, deep logic levels, high fan-out), and recommends RTL fixes (pipeline registers, retiming, DSP inference). Can re-run constrained synthesis to verify fixes."
----
-
 # Timing Closure Assistant
 
-Diagnose and fix Vivado timing violations in FPGA designs.
+Diagnose and fix Vivado timing violations in FPGA designs. Read this reference
+at Stage 10c when synthesis reports VIOLATED timing.
 
-## When to Use
-
-- User mentions timing violations, negative WNS, setup failures, hold failures
-- User asks to fix critical path or close timing
-- After a `/socks` Stage 10 run that shows VIOLATED timing
-- User asks "why is timing failing" or similar
+---
 
 ## Step 1: Gather Reports
 
@@ -22,12 +13,8 @@ Find and read the timing reports. Look in `sim/` and `build/` for:
 - `*_timing.txt` -- unconstrained timing summary
 - `*_utilization.txt` -- resource usage (relevant for DSP/BRAM inference)
 
-If no constrained reports exist, tell the user they need to run constrained
-synthesis first:
-```bash
-python3 scripts/stage9_synth.py --top <module> --src-dir src --out-dir sim \
-    --async-ports <async_pins...>
-```
+If no constrained reports exist, run constrained synthesis first via
+`scripts/synth.py`.
 
 ## Step 2: Parse the Critical Path
 
@@ -78,6 +65,7 @@ Classify the violation into one or more categories:
 ### Clock-related
 - **Clock skew**: Large negative skew eats into timing margin.
 - **Multi-clock paths**: Missing false_path or multicycle constraints.
+  See `references/constraints.md` for constraint patterns.
 
 ## Step 4: Recommend Fixes
 
@@ -134,11 +122,7 @@ After the user approves a fix:
 1. Read the full VHDL file before modifying (never edit from summary)
 2. Make the RTL change
 3. If the fix changes latency, update the Python model and SV testbench
-4. Re-run constrained synthesis:
-   ```bash
-   python3 scripts/stage9_synth.py --top <module> --src-dir src --out-dir sim \
-       --async-ports <async_pins...>
-   ```
+4. Re-run constrained synthesis via `scripts/synth.py`
 5. Parse the new timing report and verify WNS >= 0
 6. If still failing, return to Step 2 with the new critical path
 
@@ -147,7 +131,6 @@ After the user approves a fix:
 Once timing is clean:
 - Update CLAUDE.md timing status section (remove TODO if present)
 - Update docs/README.md synthesis results table with new slack values
-- Commit the timing reports
 
 ## Notes
 

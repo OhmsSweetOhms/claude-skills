@@ -69,15 +69,15 @@ the design intent.
 
 ```
 Stage 0:  Environment Setup                              AUTOMATED
-          /status -- project health dashboard (on re-entry)
+          dashboard -- check project.json on re-entry
 Stage 1:  Architecture (RTL + TB) -> Plan Mode approval  BOTH
           +-------------------------------------------------------+
           |  DESIGN LOOP (2-9) -- see references/design-loop.md  |
-          |  /regmap -- after any register map change in Stage 2  |
+          |  references/regmap.md -- after any register change    |
           +-------------------------------------------------------+
 Stage 10: Vivado Synthesis                               AUTOMATED
-          /constraints -- generate XDC before first synthesis
-          /timing -- diagnose and fix if synthesis shows VIOLATED
+          references/constraints.md -- generate XDC before first synthesis
+          references/timing.md -- diagnose and fix if VIOLATED
 Stage 11: Bash Audit                                     AUTOMATED
 Stage 12: CLAUDE.md Documentation                        GUIDANCE
 Stage 13: SOCKS Self-Audit                               AUTOMATED
@@ -94,12 +94,12 @@ for stages 2-9.
 | Stage | Name | Script / Action | Reference |
 |-------|------|----------------|-----------|
 | 0 | Environment Setup | `scripts/env.py` | -- |
-| 0+ | **Project Status** | **Invoke `/status` skill** | *On re-entry to existing project* |
+| 0+ | **Project Status** | Check `build/state/project.json` or run dashboard | *On re-entry to existing project* |
 | 1 | Architecture | `scripts/architecture.py` + guidance | `references/architecture-diagrams.md`, `references/vhdl.md` |
-| 2-9 | **Design Loop** | *See `references/design-loop.md`* | *Per stage, in design-loop.md* |
-| 10a | **XDC Constraints** | **Invoke `/constraints` skill** | *Before first synthesis or when missing XDC* |
+| 2-9 | **Design Loop** | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
+| 10a | **XDC Constraints** | Read `references/constraints.md`, generate XDC | *Before first synthesis or when missing XDC* |
 | 10b | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
-| 10c | **Timing Closure** | **Invoke `/timing` skill** | *Only if Stage 10b shows VIOLATED* |
+| 10c | **Timing Closure** | Read `references/timing.md`, diagnose + fix | *Only if Stage 10b shows VIOLATED* |
 | 11 | Bash Audit | `scripts/bash_audit.py` | -- |
 | 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md` |
 | 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
@@ -143,9 +143,8 @@ Guidance-only stages (2, 6, 12) are driven by Claude, not the orchestrator.
 route through `socks.py` so results are captured in `build/state/project.json`.
 
 **Full rebuild:** When the user asks to "build", "rebuild", or "recompile",
-invoke the `/build` skill. It runs `scripts/build.py` which handles clean +
-full pipeline. **Do not manually invoke individual stage scripts for a build
-request.**
+run `scripts/build.py` which handles clean + full pipeline. **Do not manually
+invoke individual stage scripts for a build request.**
 
 ---
 
@@ -192,9 +191,9 @@ python3 scripts/env.py --project-dir /path/to/my_project
 
 Exit codes: 0 = all passed, 1 = critical failure, 2 = warnings only.
 
-**On re-entry to an existing project:** invoke the `/status` skill to get a
-project health dashboard before starting work. This shows test counts,
-synthesis results, timing pass/fail, open TODOs, and report freshness.
+**On re-entry to an existing project:** check `build/state/project.json`
+for current pipeline state, or run `scripts/dashboard.py` for a visual
+overview of stage results, timing, and next-action suggestions.
 
 ### Stage 1 -- Architecture
 
@@ -220,19 +219,20 @@ Read `references/vhdl.md` for saturation constant patterns and multiply width ru
 
 **Stage 10a -- XDC Constraints:** Before the first synthesis run, or if the
 project has no `.xdc` file and `synth_timing.tcl` uses inline constraints,
-invoke the `/constraints` skill to generate proper XDC timing constraints.
-This ensures async inputs have `set_false_path` to sync1 registers (not just
-`get_ports`), clock definitions are correct, and monitor ports are excluded.
+read `references/constraints.md` and follow the procedure to generate proper
+XDC timing constraints. This ensures async inputs have `set_false_path` to
+sync1 registers (not just `get_ports`), clock definitions are correct, and
+monitor ports are excluded.
 
 **Stage 10b -- Synthesis:** Run `scripts/synth.py`. All timing checks must
 show MET.
 
-**Stage 10c -- Timing Closure:** If Stage 10b reports VIOLATED timing, invoke
-the `/timing` skill. It will parse the critical path report, diagnose root
-causes (carry chain depth, logic levels, fan-out), and recommend RTL fixes.
-After applying fixes, the timing skill re-runs synthesis to verify. If the
-critical path is inside a read-only external module, the timing skill will
-flag this and discuss constraint-based workarounds.
+**Stage 10c -- Timing Closure:** If Stage 10b reports VIOLATED timing, read
+`references/timing.md` and follow the diagnostic procedure. Parse the critical
+path report, diagnose root causes (carry chain depth, logic levels, fan-out),
+and recommend RTL fixes. After applying fixes, re-run synthesis to verify.
+If the critical path is inside a read-only external module, flag this and
+discuss constraint-based workarounds.
 
 Do not proceed to Stage 11 until all timing checks show MET (or the user
 explicitly accepts the violation with a documented rationale in CLAUDE.md).

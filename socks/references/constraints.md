@@ -1,19 +1,9 @@
----
-name: constraints
-description: "XDC timing constraint generator for Vivado. Use when the user needs timing constraints, false path exceptions, I/O delays, clock definitions, or multicycle paths for a Vivado FPGA project. Also use when the user mentions XDC files, set_false_path, create_clock, ASYNC_REG, or timing exceptions."
----
-
 # XDC Constraint Generator
 
-Generate Vivado XDC timing constraints for FPGA designs.
+Generate Vivado XDC timing constraints for FPGA designs. Read this reference
+at Stage 10a, before the first synthesis run or when no `.xdc` file exists.
 
-## When to Use
-
-- User asks for timing constraints or an XDC file
-- User asks about false paths for async inputs
-- After `/timing` identifies missing constraints as the cause of violations
-- User is integrating a peripheral into a block design and needs pin constraints
-- User mentions `set_false_path`, `create_clock`, `set_input_delay`, or XDC
+---
 
 ## Step 1: Analyse the Design
 
@@ -26,8 +16,8 @@ Read the VHDL source to identify:
 4. **Clock frequency** -- from generics (`SYS_CLK_HZ`) or CLAUDE.md
 5. **Generated clocks** -- any internally divided clocks (baud counters, etc.)
    that drive output ports
-6. **Multicycle paths** -- any paths the user or `/timing` has identified as
-   needing multicycle constraints
+6. **Multicycle paths** -- any paths the user or timing analysis has identified
+   as needing multicycle constraints
 
 ## Step 2: Generate Constraints
 

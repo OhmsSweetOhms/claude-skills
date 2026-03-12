@@ -1,19 +1,10 @@
----
-name: regmap
-description: "Register map synchronisation checker. Use when a VHDL register map changes, when adding/removing registers, or when the user asks to check consistency between VHDL, Python testbench, SV testbench, C driver, and documentation. Parses the VHDL register decode as the source of truth and diffs against all other layers to detect drift."
----
-
 # Register Map Synchroniser
 
-Check and synchronise the register map across all project layers.
+Check and synchronise the register map across all project layers. Read this
+reference at Stage 2 after any register map change, or whenever register
+consistency is in question.
 
-## When to Use
-
-- After adding, removing, or modifying a register in VHDL
-- User asks to check register map consistency
-- User asks "are the registers in sync" or similar
-- Before a release or after a large RTL change
-- When a testbench fails on a register access and the cause is unclear
+---
 
 ## Source of Truth
 
@@ -123,13 +114,15 @@ If mismatches are found:
 1. Present the full diff to the user
 2. Ask which layers to update (or all)
 3. For each layer, make the minimal edit to bring it in sync with VHDL
-4. **Never modify the VHDL** to match another layer -- VHDL is the source of truth
+4. **Never modify the VHDL** to match another layer -- VHDL is the source
+   of truth
 5. After fixes, re-run the check to confirm sync
 
 ## Notes
 
-- This skill does NOT modify VHDL. If the user wants to change the register
-  map, they should edit VHDL first, then run `/regmap` to propagate.
+- This procedure does NOT modify VHDL. If the user wants to change the
+  register map, they should edit VHDL first, then follow this procedure to
+  propagate.
 - When a register map change also affects the Python model's behaviour
   (not just constants), flag that the Python testbench logic may need
   updates beyond just address constants.
