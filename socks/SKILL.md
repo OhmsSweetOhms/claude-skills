@@ -5,6 +5,66 @@ description: "System-On-a-Chip Kit for Synthesis. Use this skill for any FPGA/So
 
 # SOCKS -- System-On-a-Chip Kit for Synthesis
 
+## Workflows
+
+Five entry points. Parse the user's `/socks` message for flags:
+
+| Invocation | What happens |
+|---|---|
+| `/socks --design [scope]` | Discovery conversation, then full pipeline (0-13) |
+| `/socks --test [scope]` | Ask what to test/enhance, then sim stages (4,5,7,8,9) |
+| `/socks --architecture [scope]` | Ask what architecture changes, then full pipeline (0-13) |
+| `/socks --bughunt [scope]` | Ask what bug, then sim+synth stages (3-10) |
+| `/socks --migrate` | Migrate old log-based project to state file format |
+| `/socks` *(no flags)* | Ask the user which workflow they want |
+
+**Scope** is `module`, `block`, or `project`. If the user doesn't specify
+scope, ask: "What scope? (module / block / project)". Scope definitions:
+- **module** -- single VHDL entity (e.g. CRC engine, edge detector)
+- **block** -- multi-module subsystem (e.g. UART controller with TX, RX, FIFO, reg map)
+- **project** -- full SoC or multi-block integration (e.g. Zynq PS-PL)
+
+**Bare `/socks`:** When the user types `/socks` with no flags, present:
+> Which workflow?
+> 1. `--design` -- New design from scratch (includes discovery phase)
+> 2. `--test` -- Edit and run testbenches
+> 3. `--architecture` -- Change architecture, re-run full pipeline
+> 4. `--bughunt` -- Fix a bug, verify with sim + synthesis
+> 5. `--migrate` -- Upgrade old project to new state format
+
+Then proceed with their choice.
+
+### Discovery Phase (`--design` only)
+
+Before Stage 1, run a discovery conversation to produce `docs/DESIGN-INTENT.md`.
+
+1. Read `references/discovery.md` for the core questions (scope-specific)
+2. Ask each core question, one at a time or in small batches
+3. Analyze the user's answers and ask generative follow-up questions
+   (clarifications triggered by their specific answers)
+4. When the design space is sufficiently constrained, synthesize all answers
+   into `docs/DESIGN-INTENT.md` using the template in `references/discovery.md`
+5. Present the intent document to the user for approval
+6. If the user requests changes, iterate
+7. Once approved, run: `python scripts/socks.py --project-dir . --design --scope {scope}`
+
+**Important:** Discovery is a conversation, not a script. Claude drives the
+questions and synthesis. The pipeline only starts after the user approves
+the design intent.
+
+### Other Workflows
+
+- **`--test`:** Ask the user what they want to test or enhance. Help them edit
+  `tb/` files. Then run: `python scripts/socks.py --project-dir . --test`
+- **`--architecture`:** Ask what architecture changes. Help edit
+  `docs/ARCHITECTURE.md` and `src/` files. Then run:
+  `python scripts/socks.py --project-dir . --architecture`
+- **`--bughunt`:** Ask what bug they're hunting. Analyze, help edit `src/` files.
+  Then run: `python scripts/socks.py --project-dir . --bughunt`
+- **`--migrate`:** Run: `python scripts/socks.py --project-dir . --migrate`
+
+---
+
 ## Pipeline Overview
 
 ```
@@ -50,6 +110,16 @@ for stages 2-9.
 
 ## Orchestrator
 
+**Workflow entry points (preferred):**
+```bash
+python scripts/socks.py --project-dir . --design --scope block
+python scripts/socks.py --project-dir . --test
+python scripts/socks.py --project-dir . --architecture --scope module
+python scripts/socks.py --project-dir . --bughunt
+python scripts/socks.py --project-dir . --migrate
+```
+
+**Explicit stage control (legacy):**
 ```bash
 python scripts/socks.py --project-dir . --stages automated
 python scripts/socks.py --project-dir . --stages 0,4,7
@@ -57,8 +127,14 @@ python scripts/socks.py --project-dir . --stages 4 --files src/*.vhd
 python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z020clg484-1
 ```
 
+**Workflows map to stages:**
+- `--design` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13 (all automated)
+- `--test` -- 4, 5, 7, 8, 9 (sim only)
+- `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13 (full re-architecture)
+- `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
+
 **Stage keywords:**
-- `--stages automated` -- all stages with scripts: 0, 1, 4, 5, 7, 8, 9, 10, 11, 13
+- `--stages automated` -- all stages with scripts: 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13
 - `--stages 5,7,8` -- specific stages, comma-separated (no auto-expansion)
 
 Guidance-only stages (2, 6, 12) are driven by Claude, not the orchestrator.

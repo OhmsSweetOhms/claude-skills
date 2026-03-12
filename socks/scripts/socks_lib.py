@@ -400,3 +400,74 @@ def is_in_comment(line: str, match_start: int) -> bool:
     """Return True if the match position falls inside a -- comment."""
     comment_pos = line.find("--")
     return comment_pos >= 0 and match_start >= comment_pos
+
+
+# ---------------------------------------------------------------------------
+# Project migration (v1 logs -> v2 state stub)
+# ---------------------------------------------------------------------------
+
+def migrate_project(project_dir: str) -> int:
+    """Migrate old log-based project to state file format.
+
+    Creates a minimal build/state/project.json stub. Full state schema
+    is populated in Phase 2; this stub marks the project as migrated.
+
+    Returns 0 on success, 1 on error.
+    """
+    import json
+    import tempfile
+    from datetime import datetime
+
+    state_dir = os.path.join(project_dir, "build", "state")
+    state_file = os.path.join(state_dir, "project.json")
+
+    if os.path.isfile(state_file):
+        print(f"  State file already exists: {state_file}")
+        print(f"  Nothing to migrate.")
+        return 0
+
+    has_old_logs = os.path.isdir(os.path.join(project_dir, "build", "logs"))
+
+    stub = {
+        "version": 2,
+        "project": {
+            "name": os.path.basename(os.path.abspath(project_dir)),
+            "scope": None,
+            "last_workflow": None,
+            "timestamp_last_modified": datetime.now().isoformat(),
+        },
+        "design_intent": {
+            "intent_file": None,
+            "scope": None,
+            "status": None,
+        },
+        "stages": {},
+        "inputs_hash": {},
+        "next_action": None,
+    }
+
+    if has_old_logs:
+        stub["project"]["migrated_from"] = "v1-logs"
+
+    # Atomic write
+    os.makedirs(state_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=state_dir, suffix=".tmp", prefix=".state_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(stub, f, indent=4)
+            f.write("\n")
+        os.replace(tmp, state_file)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+    if has_old_logs:
+        print(f"  Migrated from v1 logs -> {state_file}")
+        print(f"  Old build/logs/ preserved (read-only). New runs use state file.")
+    else:
+        print(f"  Initialised new project state -> {state_file}")
+
+    return 0

@@ -4,30 +4,28 @@ socks.py -- SOCKS Pipeline Orchestrator
 
 Runs pipeline stages in sequence or individually.
 
-Usage:
+Workflow entry points:
+    python scripts/socks.py --project-dir . --design --scope block
+    python scripts/socks.py --project-dir . --test
+    python scripts/socks.py --project-dir . --architecture --scope module
+    python scripts/socks.py --project-dir . --bughunt
+    python scripts/socks.py --project-dir . --migrate
+
+Legacy / explicit stage control:
     python scripts/socks.py --project-dir . --stages automated
     python scripts/socks.py --project-dir . --stages 0,4,7
     python scripts/socks.py --project-dir . --stages 4 --files src/*.vhd
 
+Workflows:
+    --design        Full design: stages 0,1,3,4,5,7,8,9,10,11,13
+    --test          Simulation only: stages 4,5,7,8,9
+    --architecture  Re-architecture: stages 0,1,3,4,5,7,8,9,10,11,13
+    --bughunt       Bug fix + verify: stages 3,4,5,7,8,9,10
+    --migrate       Migrate old log-based project to state file format
+
 Stage keywords:
     automated   All stages with scripts (default)
     0,4,7       Specific stages (comma-separated, no auto-expansion)
-
-Available stages:
-    0   Environment setup (script)
-    1   Architecture analysis (script + guidance)
-    2   Write/Modify RTL (guidance only)
-    3   VHDL Linter (script + guidance)
-    4   Synthesis audit (script)
-    5   Python testbench (script + guidance)
-    6   Bare-Metal C driver (guidance only)
-    7   SV/Xsim testbench (script + guidance)
-    8   VCD verification (script)
-    9   CSV cross-check (script)
-    10  Vivado synthesis (script)
-    11  Bash audit (script)
-    12  CLAUDE.md documentation (guidance only)
-    13  SOCKS self-audit (script)
 
 Stages 2-9 form the design loop. Claude decides re-entry on failure.
 Guidance-only stages (2, 6, 12) are driven by Claude reading SKILL.md,
@@ -79,6 +77,14 @@ STAGES = {
 }
 
 DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
+
+# Workflow-to-stages mapping (automated stages only; guidance stages handled by Claude)
+WORKFLOW_STAGES = {
+    "design":       [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13],
+    "test":         [4, 5, 7, 8, 9],
+    "architecture": [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13],
+    "bughunt":      [3, 4, 5, 7, 8, 9, 10],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +258,23 @@ def main() -> int:
         epilog=__doc__)
     parser.add_argument("--project-dir", type=str, default=".",
                         help="Project root directory (default: current dir)")
+
+    # Workflow entry points (mutually exclusive with each other)
+    workflow = parser.add_mutually_exclusive_group()
+    workflow.add_argument("--design", action="store_true",
+                          help="Full design workflow: discovery + stages 0-13")
+    workflow.add_argument("--test", action="store_true",
+                          help="Test workflow: simulation stages (4,5,7,8,9)")
+    workflow.add_argument("--architecture", action="store_true",
+                          help="Architecture workflow: stages 0-13 (re-architecture)")
+    workflow.add_argument("--bughunt", action="store_true",
+                          help="Bug hunt workflow: sim + synthesis (3-10)")
+    workflow.add_argument("--migrate", action="store_true",
+                          help="Migrate old log-based project to state file format")
+
+    parser.add_argument("--scope", type=str, default=None,
+                        choices=["module", "block", "project"],
+                        help="Design scope (module/block/project)")
     parser.add_argument("--stages", type=str, default="automated",
                         help="Stages to run: 'automated' or comma-separated (e.g. '0,4,9')")
     parser.add_argument("--files", type=str, nargs="*", default=None,
@@ -279,10 +302,32 @@ def main() -> int:
         print_session_summary(project_dir)
         return 0
 
-    stages = parse_stages(args.stages)
+    # --migrate: create state stub and exit
+    if args.migrate:
+        from socks_lib import migrate_project
+        return migrate_project(project_dir)
+
+    # Determine stages from workflow flag or --stages
+    active_workflow = None
+    if args.design:
+        active_workflow = "design"
+    elif args.test:
+        active_workflow = "test"
+    elif args.architecture:
+        active_workflow = "architecture"
+    elif args.bughunt:
+        active_workflow = "bughunt"
+
+    if active_workflow:
+        stages = WORKFLOW_STAGES[active_workflow]
+    else:
+        stages = parse_stages(args.stages)
 
     print_header("SOCKS Pipeline Orchestrator")
     print(f"\n  Project: {project_dir}")
+    if active_workflow:
+        scope_str = f" ({args.scope})" if args.scope else ""
+        print(f"  Workflow: --{active_workflow}{scope_str}")
     print(f"  Stages: {', '.join(str(s) for s in stages)}")
 
     if args.clean:

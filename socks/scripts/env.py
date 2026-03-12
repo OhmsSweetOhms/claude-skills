@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from socks_lib import (
     find_vivado_settings, verify_tools, get_vivado_version,
     print_header, print_result, print_separator, pass_str, fail_str,
-    REQUIRED_TOOLS,
+    yellow, bold, REQUIRED_TOOLS,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -80,6 +80,7 @@ REQUIRED_REFERENCES = [
     "architecture-diagrams.md",
     "baremetal.md",
     "design-loop.md",
+    "discovery.md",
     "dpll.md",
     "linter.md",
     "project-structure.md",
@@ -442,6 +443,22 @@ def main() -> int:
         if not fp_ok:
             all_passed = False
         all_warnings.extend(fp_warn)
+
+    # --- Section 6: Migration Check (if project-dir given) ---
+    if args.project_dir:
+        proj = os.path.abspath(args.project_dir)
+        has_old_logs = os.path.isdir(os.path.join(proj, "build", "logs"))
+        has_new_state = os.path.isfile(
+            os.path.join(proj, "build", "state", "project.json"))
+
+        if has_old_logs and not has_new_state:
+            print(f"\n  Migration:")
+            print(f"    {yellow('WARNING')}: Old project structure detected "
+                  f"(build/logs/ without build/state/project.json)")
+            print(f"    Run {bold('/socks --migrate')} to upgrade to "
+                  f"the new state file format.")
+            all_warnings.append(
+                "Old project structure -- run /socks --migrate")
 
     # --- Warnings ---
     if all_warnings:
