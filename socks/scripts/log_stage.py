@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from session import _session_path, append_session_entry
+from state_manager import StateManager
 
 
 def main() -> int:
@@ -51,6 +52,15 @@ def main() -> int:
     print(f"  Logged stage {args.stage} ({args.status}) "
           f"iteration {entry['iteration']} -> "
           f"{_session_path(project_dir)}")
+
+    # Also write to state file if it exists
+    sm = StateManager(project_dir)
+    if sm.exists():
+        sm.load()
+        sm.update_stage(args.stage, args.status.upper(),
+                        source="guidance", note=args.note)
+        print(f"  State file updated -> {sm.state_file}")
+
     return 0
 
 

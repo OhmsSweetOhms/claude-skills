@@ -41,8 +41,9 @@ from collections import namedtuple
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from socks_lib import print_header, print_separator, pass_str, fail_str, yellow, bold
+from socks_lib import print_header, print_separator, pass_str, fail_str, yellow, bold, green
 from session import load_session, create_session, append_session_entry
+from state_manager import StateManager, HASH_DIRS
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -343,7 +344,34 @@ def main() -> int:
         else:
             print(f"  WARNING: clean.py not found at {clean_script}")
 
-    # --- Session manifest ---
+    # --- State file & hash check (workflow paths only) ---
+    sm = None
+    if active_workflow:
+        sm = StateManager(project_dir)
+        sm.ensure_state(scope=args.scope, workflow=active_workflow)
+
+        changed, re_entry = sm.detect_changes()
+
+        if re_entry is None and not args.clean:
+            # Nothing changed -- all cached
+            print(f"\n  {green('CACHED')}: No input changes detected. "
+                  f"Skipping pipeline.")
+            for d, diff in changed.items():
+                tag = "changed" if diff else "ok"
+                print(f"    {d:6s} {tag}")
+            return 0
+
+        if re_entry is not None:
+            changed_dirs = [d for d, diff in changed.items() if diff]
+            print(f"\n  Hash check: {', '.join(changed_dirs)} changed")
+            print(f"  Re-entry point: Stage {re_entry}")
+
+            # Filter: only run stages >= re_entry
+            stages = [s for s in stages if s >= re_entry]
+            print(f"  Stages after filter: "
+                  f"{', '.join(str(s) for s in stages)}")
+
+    # --- Session manifest (legacy, always maintained) ---
     if args.new_session:
         create_session(project_dir, max_iterations=args.max_iter)
     elif load_session(project_dir) is None:
@@ -491,6 +519,8 @@ def main() -> int:
 
         return extra_args, reason, skip
 
+    import time as _time
+
     for stage in stages:
         extra_args, reason, skip = build_stage_args(stage)
 
@@ -503,6 +533,11 @@ def main() -> int:
             append_session_entry(
                 project_dir, stage, status_str, source="script",
                 note=reason)
+            # Log skip to state file
+            if sm:
+                label = STAGES[stage].label if stage in STAGES else ""
+                sm.update_stage(stage, status_str.upper(),
+                                source="script", note=reason, name=label)
             if skip != 0:
                 print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
                 break
@@ -510,7 +545,9 @@ def main() -> int:
 
         log_transition(stage, reason, extra_args, project_dir)
 
+        t0 = _time.monotonic()
         rc = run_stage(stage, project_dir, extra_args)
+        elapsed = _time.monotonic() - t0
 
         # Stage 4 (audit) exit code 2 = external-only warnings (non-blocking)
         if stage == 4 and rc == 2:
@@ -533,6 +570,13 @@ def main() -> int:
             project_dir, stage, sess_status, source="script",
             note=reason, log_file=latest_log)
 
+        # Log result to state file
+        if sm:
+            label = STAGES[stage].label if stage in STAGES else ""
+            sm.update_stage(stage, sess_status.upper(),
+                            duration_seconds=elapsed,
+                            source="script", note=reason, name=label)
+
         if results[stage] != 0:
             print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
             break
@@ -554,6 +598,23 @@ def main() -> int:
     else:
         print(f"  RESULT: {fail_str()} -- pipeline failed")
     print_separator()
+
+    # --- Update state file hashes and next-action ---
+    if sm:
+        sm.update_hashes()
+        if all_passed:
+            sm.clear_next_action()
+        else:
+            # Find the failed stage
+            failed = [s for s, rc in results.items() if rc != 0]
+            if failed:
+                fs = failed[0]
+                label = STAGES[fs].label if fs in STAGES else f"Stage {fs}"
+                blocked = [s for s in stages if s > fs]
+                sm.set_next_action(
+                    f"Stage {fs} ({label}) FAILED. Fix and re-run.",
+                    blocked_stages=blocked,
+                    can_retry_from=fs)
 
     # Post-run: always run SOCKS self-audit (unless it was already a requested stage)
     if 13 not in stages:

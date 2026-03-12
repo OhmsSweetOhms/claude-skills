@@ -58,6 +58,7 @@ REQUIRED_SCRIPTS = [
     "socks.py",
     "socks_lib.py",
     "session.py",
+    "state_manager.py",
     "env.py",
     "architecture.py",
     "linter.py",

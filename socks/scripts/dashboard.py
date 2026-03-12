@@ -42,10 +42,18 @@ STAGE_NAMES = {
 }
 
 # ---------------------------------------------------------------------------
-# Session file helpers
+# Session / state file helpers
 # ---------------------------------------------------------------------------
 
+def _state_path(project_dir):
+    return os.path.join(project_dir, "build", "state", "project.json")
+
+
 def session_path(project_dir):
+    """Return the active data file: project.json if it exists, else session.json."""
+    sp = _state_path(project_dir)
+    if os.path.isfile(sp):
+        return sp
     return os.path.join(project_dir, "build", "logs", "session.json")
 
 
