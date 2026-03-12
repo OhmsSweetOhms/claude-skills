@@ -5,7 +5,7 @@ session.py -- Session manifest read/write helpers for the SOCKS pipeline.
 The session manifest (build/logs/session.json) tracks every stage run
 across a pipeline session, including both scripted and guidance stages.
 
-Shared by socks.py, log_stage.py, and dashboard.py.
+Shared by socks.py and log_stage.py (legacy path).
 """
 
 import json

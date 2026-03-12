@@ -2,13 +2,13 @@
 """
 dashboard.py -- Live SSE dashboard for the SOCKS pipeline.
 
-Serves an HTML dashboard that watches session.json and pushes updates
-to the browser via Server-Sent Events.
+Serves an HTML dashboard that watches build/state/project.json and pushes
+updates to the browser via Server-Sent Events.
 
 Usage:
     python scripts/dashboard.py --project-dir .
     python scripts/dashboard.py --project-dir . --port 8099
-    python scripts/dashboard.py --project-dir . --output build/logs/dashboard.html --no-serve
+    python scripts/dashboard.py --project-dir . --output build/dashboard.html --no-serve
 """
 
 import argparse
@@ -21,7 +21,7 @@ import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ---------------------------------------------------------------------------
-# Stage name definitions (local copy to avoid importing from socks.py)
+# Stage name definitions
 # ---------------------------------------------------------------------------
 
 STAGE_NAMES = {
@@ -42,23 +42,16 @@ STAGE_NAMES = {
 }
 
 # ---------------------------------------------------------------------------
-# Session / state file helpers
+# State file helpers (project.json only -- no session.json fallback)
 # ---------------------------------------------------------------------------
 
-def _state_path(project_dir):
+def state_path(project_dir):
+    """Return path to build/state/project.json."""
     return os.path.join(project_dir, "build", "state", "project.json")
 
 
-def session_path(project_dir):
-    """Return the active data file: project.json if it exists, else session.json."""
-    sp = _state_path(project_dir)
-    if os.path.isfile(sp):
-        return sp
-    return os.path.join(project_dir, "build", "logs", "session.json")
-
-
-def load_session(project_dir):
-    path = session_path(project_dir)
+def load_state(project_dir):
+    path = state_path(project_dir)
     if not os.path.isfile(path):
         return None
     try:
@@ -68,12 +61,23 @@ def load_session(project_dir):
         return None
 
 
-def session_mtime(project_dir):
-    path = session_path(project_dir)
+def state_mtime(project_dir):
     try:
-        return os.path.getmtime(path)
+        return os.path.getmtime(state_path(project_dir))
     except OSError:
         return 0
+
+
+def _empty_state(project_dir):
+    """Minimal empty state for when project.json doesn't exist yet."""
+    return {
+        "version": 2,
+        "project": {"name": os.path.basename(project_dir)},
+        "stages": {},
+        "inputs_hash": {},
+        "next_action": None,
+    }
+
 
 # ---------------------------------------------------------------------------
 # HTML template
@@ -101,6 +105,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --loop: #a78bfa;
     --border: #334155;
     --radius: 8px;
+    --action-bg: #78350f;
+    --action-border: #f59e0b;
 }
 
 body {
@@ -138,10 +144,6 @@ body {
     font-weight: 700;
     color: var(--text);
 }
-.header-session {
-    color: var(--text-muted);
-    font-size: 12px;
-}
 .header-center {
     font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
     font-size: 16px;
@@ -150,12 +152,12 @@ body {
 .header-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
 }
 .badge {
     padding: 4px 12px;
     border-radius: 12px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -164,6 +166,9 @@ body {
 .badge-fail { background: var(--fail); color: #fff; }
 .badge-progress { background: var(--running); color: #fff; }
 .badge-none { background: var(--not-run); color: var(--text-muted); }
+.badge-scope { background: #6366f1; color: #fff; }
+.badge-workflow { background: #0d9488; color: #fff; }
+.badge:empty { display: none; }
 
 .live-dot {
     width: 10px;
@@ -171,6 +176,7 @@ body {
     border-radius: 50%;
     background: var(--not-run);
     transition: background 0.3s;
+    margin-left: 4px;
 }
 .live-dot.connected {
     background: var(--pass);
@@ -179,6 +185,41 @@ body {
 @keyframes pulse {
     0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
     50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+}
+
+/* Next Action Banner */
+.next-action {
+    margin: 12px 24px 0;
+    padding: 12px 16px;
+    background: var(--action-bg);
+    border: 1px solid var(--action-border);
+    border-radius: var(--radius);
+    display: none;
+}
+.next-action.visible { display: block; }
+.next-action.fail-action {
+    background: rgba(239,68,68,0.12);
+    border-color: var(--fail);
+}
+.next-action-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--action-border);
+    margin-bottom: 4px;
+}
+.next-action.fail-action .next-action-label { color: var(--fail); }
+.next-action-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fbbf24;
+}
+.next-action.fail-action .next-action-text { color: #fca5a5; }
+.next-action-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
 }
 
 /* Stage Grid */
@@ -202,19 +243,19 @@ body {
     background: var(--not-run);
     border-radius: var(--radius);
     padding: 12px;
-    cursor: pointer;
     transition: background 0.3s, box-shadow 0.3s, transform 0.15s;
     position: relative;
     box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    border: 1px solid transparent;
 }
 .stage-card:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
-.stage-card.pass { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); }
-.stage-card.fail { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); }
-.stage-card.skip { background: rgba(234,179,8,0.15); border: 1px solid rgba(234,179,8,0.3); }
-.stage-card.not-run { border: 1px solid transparent; }
+.stage-card.pass { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); }
+.stage-card.fail { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.3); }
+.stage-card.skip { background: rgba(234,179,8,0.15); border-color: rgba(234,179,8,0.3); }
+.stage-card.blocked { opacity: 0.35; }
 .stage-card.design-loop { border-left: 3px solid var(--loop); }
 .stage-card.design-loop .stage-card-num { color: var(--loop); }
 .stage-card-num {
@@ -237,29 +278,31 @@ body {
 .stage-card-status.fail { color: var(--fail); }
 .stage-card-status.skip { color: var(--skip); }
 .stage-card-status.not-run { color: var(--text-muted); }
-.iter-badge {
+.stage-card-dur {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+.source-dot {
     position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--running);
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    top: 8px;
+    right: 8px;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.08);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-/* Timeline */
-.timeline-section {
+/* Activity Log */
+.activity-section {
     flex: 1;
     padding: 0 24px 120px;
     overflow-y: auto;
 }
-.timeline-section h2 {
+.activity-section h2 {
     font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
     font-size: 14px;
     color: var(--text-muted);
@@ -267,12 +310,12 @@ body {
     letter-spacing: 1px;
     margin-bottom: 12px;
 }
-.timeline {
+.activity {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
-.timeline-entry {
+.activity-entry {
     display: flex;
     align-items: flex-start;
     gap: 12px;
@@ -286,33 +329,23 @@ body {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
 }
-.timeline-entry.pass { border-left-color: var(--pass); }
-.timeline-entry.fail { border-left-color: var(--fail); background: rgba(239,68,68,0.06); }
-.timeline-entry.skip { border-left-color: var(--skip); }
-.timeline-entry.design-loop { border-left-color: var(--loop); }
-.timeline-entry.design-loop.fail { border-left-color: var(--fail); }
-.timeline-time {
+.activity-entry.pass { border-left-color: var(--pass); }
+.activity-entry.fail { border-left-color: var(--fail); background: rgba(239,68,68,0.06); }
+.activity-entry.skip { border-left-color: var(--skip); }
+.activity-entry.design-loop { border-left-color: var(--loop); }
+.activity-entry.design-loop.fail { border-left-color: var(--fail); }
+.activity-time {
     color: var(--text-muted);
     font-size: 12px;
-    min-width: 60px;
+    min-width: 48px;
     flex-shrink: 0;
 }
-.timeline-stage {
+.activity-stage {
     font-weight: 600;
     min-width: 200px;
     flex-shrink: 0;
 }
-.timeline-iter {
-    display: inline-block;
-    background: var(--running);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 8px;
-    margin-left: 6px;
-}
-.timeline-badge {
+.activity-badge {
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 11px;
@@ -322,10 +355,17 @@ body {
     text-align: center;
     flex-shrink: 0;
 }
-.timeline-badge.pass { background: var(--pass); color: #000; }
-.timeline-badge.fail { background: var(--fail); color: #fff; }
-.timeline-badge.skip { background: var(--skip); color: #000; }
-.timeline-note {
+.activity-badge.pass { background: var(--pass); color: #000; }
+.activity-badge.fail { background: var(--fail); color: #fff; }
+.activity-badge.skip { background: var(--skip); color: #000; }
+.activity-dur {
+    color: var(--text-muted);
+    font-size: 12px;
+    min-width: 56px;
+    text-align: right;
+    flex-shrink: 0;
+}
+.activity-note {
     color: var(--text-muted);
     font-size: 13px;
     flex: 1;
@@ -354,16 +394,33 @@ body {
     align-items: center;
     gap: 6px;
 }
-.stats-bar .stat-label {
-    color: var(--text-muted);
-}
-.stats-bar .stat-value {
-    font-weight: 600;
-}
+.stats-bar .stat-label { color: var(--text-muted); }
+.stats-bar .stat-value { font-weight: 600; }
 .stat-pass { color: var(--pass); }
 .stat-fail { color: var(--fail); }
 .stat-skip { color: var(--skip); }
-.stats-bar .conn-status {
+
+.hash-indicators {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.hash-dot {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.hash-dot .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--not-run);
+}
+.hash-dot .dot.tracked { background: var(--pass); }
+
+.conn-status {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -391,13 +448,20 @@ body {
 <div class="header">
     <div class="header-left">
         <span class="header-title">SOCKS Pipeline</span>
-        <span class="header-session" id="session-id">--</span>
     </div>
     <div class="header-center" id="project-name">--</div>
     <div class="header-right">
+        <span class="badge badge-scope" id="scope-badge"></span>
+        <span class="badge badge-workflow" id="workflow-badge"></span>
         <span class="badge badge-none" id="overall-badge">NO DATA</span>
         <div class="live-dot" id="live-dot"></div>
     </div>
+</div>
+
+<div class="next-action" id="next-action">
+    <div class="next-action-label">Next Action</div>
+    <div class="next-action-text" id="next-action-text"></div>
+    <div class="next-action-meta" id="next-action-meta"></div>
 </div>
 
 <div class="grid-section">
@@ -405,9 +469,9 @@ body {
     <div class="stage-grid" id="stage-grid"></div>
 </div>
 
-<div class="timeline-section" id="timeline-section">
-    <h2>Timeline</h2>
-    <div class="timeline" id="timeline">
+<div class="activity-section" id="activity-section">
+    <h2>Activity</h2>
+    <div class="activity" id="activity">
         <div class="empty-state">Waiting for pipeline data...</div>
     </div>
 </div>
@@ -426,12 +490,11 @@ body {
         <span class="stat-value stat-skip" id="stat-skip">0</span>
     </div>
     <div class="stat">
-        <span class="stat-label">Iterations:</span>
-        <span class="stat-value" id="stat-iter">0</span>
-    </div>
-    <div class="stat">
         <span class="stat-label">Duration:</span>
-        <span class="stat-value" id="stat-duration">00:00:00</span>
+        <span class="stat-value" id="stat-duration">--</span>
+    </div>
+    <div class="hash-indicators" id="hash-indicators">
+        <span class="stat-label">Inputs:</span>
     </div>
     <div class="conn-status">
         <div class="conn-dot" id="conn-dot"></div>
@@ -458,193 +521,209 @@ const STAGE_NAMES = {
 };
 
 const DESIGN_LOOP = new Set([2, 3, 4, 5, 6, 7, 8, 9]);
-let currentStagesCount = 0;
-let firstTime = null;
-let lastTime = null;
-let userScrolled = false;
-let durationInterval = null;
+const HASH_DIRS = ["docs", "src", "tb", "sw"];
 
 // Build stage grid
 const grid = document.getElementById("stage-grid");
 for (let i = 0; i <= 13; i++) {
     const card = document.createElement("div");
-    card.className = "stage-card not-run" + (DESIGN_LOOP.has(i) ? " design-loop" : "");
+    card.className = "stage-card" + (DESIGN_LOOP.has(i) ? " design-loop" : "");
     card.id = "card-" + i;
-    card.innerHTML = '<div class="stage-card-num">Stage ' + i + '</div>' +
+    card.innerHTML =
+        '<div class="stage-card-num">Stage ' + i + '</div>' +
         '<div class="stage-card-name">' + STAGE_NAMES[i] + '</div>' +
-        '<div class="stage-card-status not-run">--</div>';
-    card.onclick = function() {
-        const el = document.getElementById("tl-last-" + i);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    };
+        '<div class="stage-card-status not-run">--</div>' +
+        '<div class="stage-card-dur"></div>';
     grid.appendChild(card);
 }
 
-// Track user scroll
-const tlSection = document.getElementById("timeline-section");
-tlSection.addEventListener("scroll", function() {
-    const atBottom = tlSection.scrollHeight - tlSection.scrollTop - tlSection.clientHeight < 40;
-    userScrolled = !atBottom;
-});
-
-function parseTime(s) {
-    if (!s) return null;
-    const parts = s.split(":");
-    if (parts.length !== 3) return null;
-    return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
+// Build hash indicator dots
+const hashEl = document.getElementById("hash-indicators");
+for (const d of HASH_DIRS) {
+    const span = document.createElement("span");
+    span.className = "hash-dot";
+    span.id = "hash-" + d;
+    span.innerHTML = '<span class="dot"></span>' + d;
+    hashEl.appendChild(span);
 }
 
-function formatDuration(secs) {
-    if (secs < 0) secs = 0;
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
+function fmtDur(secs) {
+    if (secs == null || secs < 0) return "--";
+    if (secs < 60) return secs.toFixed(1) + "s";
+    const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
-    return String(h).padStart(2, "0") + ":" +
-           String(m).padStart(2, "0") + ":" +
-           String(s).padStart(2, "0");
+    if (m < 60) return m + "m " + s + "s";
+    const h = Math.floor(m / 60);
+    return h + "h " + (m % 60) + "m";
 }
 
-function updateDuration() {
-    if (firstTime === null || lastTime === null) return;
-    const dur = lastTime - firstTime;
-    document.getElementById("stat-duration").textContent = formatDuration(dur);
+function extractTime(iso) {
+    if (!iso) return "--";
+    const t = iso.split("T")[1];
+    if (!t) return "--";
+    return t.substring(0, 5);
 }
 
 function updateDashboard(data) {
     if (!data) return;
 
-    // Header
-    document.getElementById("session-id").textContent = data.session_id || "--";
-    const proj = data.project || "";
-    document.getElementById("project-name").textContent = proj.split("/").pop() || proj;
+    // -- Header --
+    const proj = data.project || {};
+    document.getElementById("project-name").textContent = proj.name || "--";
+    document.getElementById("scope-badge").textContent = proj.scope || "";
+    document.getElementById("workflow-badge").textContent =
+        proj.last_workflow ? proj.last_workflow.replace(/^--/, "") : "";
 
-    const stages = data.stages || [];
+    const stages = data.stages || {};
+    const stageNums = Object.keys(stages);
 
-    // Compute stats
-    const stageLatest = {};  // stage_num -> latest entry
-    let nPass = 0, nFail = 0, nSkip = 0;
-    let maxIter = 0;
-
-    for (const e of stages) {
-        stageLatest[e.stage] = e;
-        if (e.iteration > maxIter) maxIter = e.iteration;
+    // -- Counts --
+    let nPass = 0, nFail = 0, nSkip = 0, totalDur = 0;
+    for (const num of stageNums) {
+        const s = stages[num].status;
+        if (s === "PASS") nPass++;
+        else if (s === "FAIL") nFail++;
+        else if (s === "SKIP") nSkip++;
+        if (stages[num].duration_seconds)
+            totalDur += stages[num].duration_seconds;
     }
 
-    // Count unique stages completed and their latest status
-    for (const num in stageLatest) {
-        const s = stageLatest[num].status;
-        if (s === "pass") nPass++;
-        else if (s === "fail") nFail++;
-        else nSkip++;
-    }
-
-    const totalComplete = Object.keys(stageLatest).length;
-
-    // Overall badge
+    // -- Overall badge --
     const badge = document.getElementById("overall-badge");
-    if (stages.length === 0) {
+    if (stageNums.length === 0) {
         badge.className = "badge badge-none";
         badge.textContent = "NO DATA";
     } else if (nFail > 0) {
         badge.className = "badge badge-fail";
         badge.textContent = "FAIL";
-    } else if (totalComplete >= 14) {
+    } else if (stageNums.length >= 14) {
         badge.className = "badge badge-pass";
-        badge.textContent = "PASS";
+        badge.textContent = "ALL PASS";
     } else {
         badge.className = "badge badge-progress";
         badge.textContent = "IN PROGRESS";
     }
 
-    // Update grid cards
-    // Reset all first
+    // -- Next Action banner --
+    const actionEl = document.getElementById("next-action");
+    const na = data.next_action;
+    if (na && na.suggested) {
+        actionEl.classList.add("visible");
+        // Use red styling if suggestion contains FAIL
+        if (na.suggested.indexOf("FAIL") !== -1) {
+            actionEl.classList.add("fail-action");
+        } else {
+            actionEl.classList.remove("fail-action");
+        }
+        document.getElementById("next-action-text").textContent = na.suggested;
+        let meta = "";
+        if (na.can_retry_from != null)
+            meta += "Retry from Stage " + na.can_retry_from;
+        if (na.blocked_stages && na.blocked_stages.length > 0) {
+            if (meta) meta += "  \u00b7  ";
+            meta += "Blocked: " + na.blocked_stages.join(", ");
+        }
+        document.getElementById("next-action-meta").textContent = meta;
+    } else {
+        actionEl.classList.remove("visible");
+        actionEl.classList.remove("fail-action");
+    }
+
+    // -- Blocked set --
+    const blockedSet = new Set((na && na.blocked_stages) || []);
+
+    // -- Update grid cards --
     for (let i = 0; i <= 13; i++) {
         const card = document.getElementById("card-" + i);
         const loopCls = DESIGN_LOOP.has(i) ? " design-loop" : "";
-        card.className = "stage-card not-run" + loopCls;
-        card.querySelector(".stage-card-status").textContent = "--";
-        card.querySelector(".stage-card-status").className = "stage-card-status not-run";
-        // Remove old iter badge
-        const old = card.querySelector(".iter-badge");
-        if (old) old.remove();
-    }
+        const stage = stages[String(i)];
 
-    for (const num in stageLatest) {
-        const e = stageLatest[num];
-        const card = document.getElementById("card-" + num);
-        if (!card) continue;
-        card.className = "stage-card " + e.status + (DESIGN_LOOP.has(parseInt(num)) ? " design-loop" : "");
-        const statusEl = card.querySelector(".stage-card-status");
-        statusEl.textContent = e.status.toUpperCase();
-        statusEl.className = "stage-card-status " + e.status;
+        // Remove old source dot
+        const oldDot = card.querySelector(".source-dot");
+        if (oldDot) oldDot.remove();
 
-        // Count iterations for this stage
-        const iterCount = stages.filter(s => s.stage == num).length;
-        if (iterCount > 1) {
-            const ib = document.createElement("div");
-            ib.className = "iter-badge";
-            ib.textContent = iterCount;
-            card.appendChild(ib);
+        if (stage) {
+            const sl = stage.status.toLowerCase();
+            card.className = "stage-card " + sl + loopCls;
+            if (blockedSet.has(i)) card.classList.add("blocked");
+
+            const statusEl = card.querySelector(".stage-card-status");
+            statusEl.textContent = stage.status;
+            statusEl.className = "stage-card-status " + sl;
+
+            card.querySelector(".stage-card-dur").textContent =
+                stage.duration_seconds ? fmtDur(stage.duration_seconds) : "";
+
+            // Show source for non-script stages (guidance, manual)
+            if (stage.source && stage.source !== "script") {
+                const dot = document.createElement("span");
+                dot.className = "source-dot";
+                dot.textContent = stage.source;
+                card.appendChild(dot);
+            }
+        } else {
+            card.className = "stage-card" + loopCls;
+            if (blockedSet.has(i)) card.classList.add("blocked");
+            card.querySelector(".stage-card-status").textContent = "--";
+            card.querySelector(".stage-card-status").className =
+                "stage-card-status not-run";
+            card.querySelector(".stage-card-dur").textContent = "";
         }
     }
 
-    // Timeline - only add new entries
-    const timeline = document.getElementById("timeline");
-    if (stages.length > 0 && currentStagesCount === 0) {
-        timeline.innerHTML = "";  // clear empty state
-    }
+    // -- Activity log (stages sorted by timestamp, newest first) --
+    const activity = document.getElementById("activity");
+    const sorted = stageNums
+        .map(function(n) {
+            return { num: parseInt(n), status: stages[n].status,
+                     timestamp: stages[n].timestamp,
+                     duration_seconds: stages[n].duration_seconds,
+                     note: stages[n].note };
+        })
+        .sort(function(a, b) {
+            return (b.timestamp || "").localeCompare(a.timestamp || "");
+        });
 
-    for (let i = currentStagesCount; i < stages.length; i++) {
-        const e = stages[i];
-        const entry = document.createElement("div");
-        const loopTag = DESIGN_LOOP.has(e.stage) ? " design-loop" : "";
-        entry.className = "timeline-entry " + e.status + loopTag;
-        entry.id = "tl-last-" + e.stage;
-
-        // Remove old "last" id for this stage
-        const oldEl = document.querySelector("#tl-last-" + e.stage);
-        if (oldEl && oldEl !== entry) {
-            oldEl.id = "";
+    if (sorted.length === 0) {
+        activity.innerHTML =
+            '<div class="empty-state">Waiting for pipeline data...</div>';
+    } else {
+        activity.innerHTML = "";
+        for (const e of sorted) {
+            const sl = e.status.toLowerCase();
+            const loopTag = DESIGN_LOOP.has(e.num) ? " design-loop" : "";
+            const entry = document.createElement("div");
+            entry.className = "activity-entry " + sl + loopTag;
+            entry.innerHTML =
+                '<span class="activity-time">' +
+                    extractTime(e.timestamp) + '</span>' +
+                '<span class="activity-stage">Stage ' + e.num + ': ' +
+                    (STAGE_NAMES[e.num] || "?") + '</span>' +
+                '<span class="activity-badge ' + sl + '">' +
+                    e.status + '</span>' +
+                '<span class="activity-dur">' +
+                    (e.duration_seconds ? fmtDur(e.duration_seconds) : "") +
+                    '</span>' +
+                '<span class="activity-note">' +
+                    (e.note || "") + '</span>';
+            activity.appendChild(entry);
         }
-
-        let iterHtml = "";
-        if (e.iteration > 1) {
-            iterHtml = '<span class="timeline-iter">' + e.iteration + '</span>';
-        }
-
-        entry.innerHTML =
-            '<span class="timeline-time">' + (e.time || "") + '</span>' +
-            '<span class="timeline-stage">Stage ' + e.stage + ': ' +
-                (STAGE_NAMES[e.stage] || "?") + iterHtml + '</span>' +
-            '<span class="timeline-badge ' + e.status + '">' +
-                e.status.toUpperCase() + '</span>' +
-            '<span class="timeline-note">' + (e.note || "") + '</span>';
-
-        timeline.appendChild(entry);
     }
 
-    currentStagesCount = stages.length;
-
-    // Auto-scroll
-    if (!userScrolled) {
-        tlSection.scrollTop = tlSection.scrollHeight;
+    // -- Hash indicators --
+    const hashes = data.inputs_hash || {};
+    for (const d of HASH_DIRS) {
+        const dot = document.querySelector("#hash-" + d + " .dot");
+        if (dot) dot.className = hashes[d] ? "dot tracked" : "dot";
     }
 
-    // Times
-    if (stages.length > 0) {
-        const ft = parseTime(stages[0].time);
-        const lt = parseTime(stages[stages.length - 1].time);
-        if (ft !== null) firstTime = ft;
-        if (lt !== null) lastTime = lt;
-    }
-
-    // Stats
-    document.getElementById("stat-complete").textContent = totalComplete + "/14";
+    // -- Stats bar --
+    document.getElementById("stat-complete").textContent =
+        stageNums.length + "/14";
     document.getElementById("stat-pass").textContent = nPass;
     document.getElementById("stat-fail").textContent = nFail;
     document.getElementById("stat-skip").textContent = nSkip;
-    document.getElementById("stat-iter").textContent = maxIter > 1 ? maxIter : 0;
-    updateDuration();
+    document.getElementById("stat-duration").textContent = fmtDur(totalDur);
 }
 
 // SSE connection
@@ -659,8 +738,7 @@ function connectSSE() {
 
     evtSrc.onmessage = function(ev) {
         try {
-            const data = JSON.parse(ev.data);
-            updateDashboard(data);
+            updateDashboard(JSON.parse(ev.data));
         } catch(e) {}
     };
 
@@ -671,17 +749,13 @@ function connectSSE() {
     };
 }
 
-// Initial fetch
-fetch("/api/session")
+// Initial fetch + SSE
+fetch("/api/state")
     .then(r => r.json())
     .then(data => updateDashboard(data))
     .catch(() => {});
 
-// Start SSE
 connectSSE();
-
-// Duration ticker
-durationInterval = setInterval(updateDuration, 1000);
 </script>
 </body>
 </html>"""
@@ -695,7 +769,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
     project_dir = None  # set by factory
 
     def log_message(self, format, *args):
-        # Suppress default request logging
         pass
 
     def do_GET(self):
@@ -703,8 +776,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_html()
         elif self.path == "/events":
             self._serve_sse()
-        elif self.path == "/api/session":
-            self._serve_session_json()
+        elif self.path == "/api/state":
+            self._serve_state_json()
         else:
             self.send_error(404)
 
@@ -716,10 +789,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_session_json(self):
-        data = load_session(self.project_dir) or {
-            "session_id": None, "project": self.project_dir, "stages": []
-        }
+    def _serve_state_json(self):
+        data = load_state(self.project_dir) or \
+            _empty_state(self.project_dir)
         body = json.dumps(data).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -739,13 +811,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         last_mtime = 0
         try:
             while True:
-                mt = session_mtime(self.project_dir)
+                mt = state_mtime(self.project_dir)
                 if mt != last_mtime:
                     last_mtime = mt
-                    data = load_session(self.project_dir)
+                    data = load_state(self.project_dir)
                     if data is not None:
                         payload = json.dumps(data)
-                        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                        self.wfile.write(
+                            f"data: {payload}\n\n".encode("utf-8"))
                         self.wfile.flush()
                 time.sleep(1)
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -766,26 +839,17 @@ def make_handler(project_dir):
 
 def write_static_html(project_dir, output_path):
     """Write a static snapshot of the dashboard HTML."""
-    # For static mode, we inject the current session data directly
-    # into the HTML as a script variable, replacing the SSE/fetch logic
-    data = load_session(project_dir) or {
-        "session_id": None, "project": project_dir, "stages": []
-    }
+    data = load_state(project_dir) or _empty_state(project_dir)
 
-    # Replace the fetch + SSE block with direct data injection
-    # This replaces everything from "// Initial fetch" to the closing </script>,
-    # so we must NOT wrap in extra <script> tags (we're already inside one).
     static_js = (
         '// Static snapshot -- no SSE\n'
         'const STATIC_DATA = ' + json.dumps(data, indent=2) + ';\n'
         'updateDashboard(STATIC_DATA);\n'
-        'document.getElementById("conn-text").textContent = "Static snapshot";\n'
+        'document.getElementById("conn-text").textContent = '
+        '"Static snapshot";\n'
     )
 
     html = HTML_TEMPLATE
-    # Remove the fetch + SSE + ticker block, replace with static data injection.
-    # Everything from "// Initial fetch" up to (but not including) the closing
-    # </script> tag is replaced.
     marker_start = "// Initial fetch"
     marker_end = "</script>"
     idx_start = html.rfind(marker_start)
@@ -840,10 +904,9 @@ def main() -> int:
     url = f"http://localhost:{args.port}"
     print(f"  SOCKS Dashboard: {url}")
     print(f"  Project: {project_dir}")
-    print(f"  Watching: {session_path(project_dir)}")
+    print(f"  Watching: {state_path(project_dir)}")
     print(f"  Press Ctrl-C to stop.\n")
 
-    # Open browser in a thread to avoid blocking
     threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
 
     try:
