@@ -16,6 +16,8 @@ truth. The loop iterates until the RTL meets the architecture from Stage 1 and a
 verification layers agree.
 
 ```
+DESIGN-INTENT.md (contract)
+      │
 Stage 1 approval
       │
       ▼
@@ -36,6 +38,27 @@ Stage 1 approval
       ▼ (all stages pass + architecture met)
   Stage 10+
 ```
+
+## Design Intent Gate
+
+The design loop is **bounded by `docs/DESIGN-INTENT.md`**. Every iteration must
+stay within the approved design space. The intent document defines:
+
+- Which interfaces exist (no adding new ones mid-loop)
+- Which clock domains exist (no adding crossings mid-loop)
+- Resource budget limits (LUT/DSP/BRAM)
+- Success criteria (timing, coverage, test counts)
+
+**Scope creep detection:** During the loop, if work exceeds the intent boundaries,
+stop and flag it. See `references/discovery.md` § Scope Creep Detection for the
+full protocol. Summary:
+
+1. Stop and flag: "This change goes beyond the approved design intent."
+2. Ask the user: update DESIGN-INTENT.md or defer to a follow-up design?
+3. If updating, re-run discovery for the expanded scope and get approval first.
+
+Scope creep signals: new interface, new clock domain, resource budget exceeded,
+register map structure change, new sub-module not in the decomposition.
 
 ---
 
@@ -58,17 +81,15 @@ Never skip a downstream stage after a fix.
 
 ### Iteration Cap
 
-The session manifest may contain a `max_iterations` field (0 = unlimited). When
-`max_iterations > 0`, check before re-entering the design loop:
+Use `--max-iter N` when running the pipeline (0 = unlimited). When the cap is
+reached, **do not re-enter the design loop.** Proceed to Stage 10 with whatever
+state exists. Log a note that the iteration cap was hit.
 
 ```python
 from session import iterations_exhausted
 if iterations_exhausted(project_dir):
     # Stop looping — exit to Stage 10+
 ```
-
-When the cap is reached, **do not re-enter the design loop.** Proceed to
-Stage 10 with whatever state exists. Log a note that the iteration cap was hit.
 
 ### Circular Logic Detection
 
@@ -100,12 +121,17 @@ in the Python).
 ## Stage Details (2-9)
 
 **Running automated stages:** Always run stages through the orchestrator, never
-call stage scripts directly:
+call stage scripts directly. Workflow commands handle hash-based re-entry
+automatically:
 ```bash
+# Preferred: workflow commands (hash detection picks re-entry point)
+python3 scripts/socks.py --project-dir . --bughunt
+python3 scripts/socks.py --project-dir . --test
+
+# Legacy: explicit stage list (no hash detection)
 python3 scripts/socks.py --project-dir . --stages 4,5,7,8,9
 ```
-This creates a timestamped pipeline log in `build/logs/`, handles stage
-sequencing, and ensures all artifacts are captured. On design-loop re-entry,
+Results are written to `build/state/project.json`. On design-loop re-entry,
 run from the re-entry stage through Stage 9:
 ```bash
 # Example: RTL fix, re-enter at Stage 4 and run through 9

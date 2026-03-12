@@ -1,33 +1,34 @@
-# Session Manifest & Dashboard
+# State File & Dashboard
 
 ## Overview
 
-The session manifest (`build/logs/session.json`) tracks every pipeline stage
-run — both scripted and guidance — in a single unified log.
+The project state file (`build/state/project.json`) is the single source of
+truth for all pipeline data: project metadata, stage results, input hashes,
+and next-action suggestions.
 
-## Session lifecycle
+## State file lifecycle
 
 ```bash
-# Create a fresh session on first pipeline invocation
+# Workflow commands create/update project.json automatically
+python3 scripts/socks.py --project-dir . --design --scope module
+python3 scripts/socks.py --project-dir . --test
+python3 scripts/socks.py --project-dir . --bughunt
+
+# Migrate from old log-based format
+python3 scripts/socks.py --project-dir . --migrate
+
+# Legacy: explicit stages (also writes to project.json if it exists)
 python3 scripts/socks.py --project-dir . --stages 0 --new-session
+python3 scripts/socks.py --project-dir . --stages 4,5,7,8,9
 
-# With iteration cap (exit design loop after N iterations, 0 = unlimited)
-python3 scripts/socks.py --project-dir . --stages 0 --new-session --max-iter 2
-
-# Scripted stages auto-log to session.json
-python3 scripts/socks.py --project-dir . --stages 1,4,7,8,10
-
-# Log guidance stages manually after completing them
+# Log guidance stages manually
 python3 scripts/log_stage.py --project-dir . --stage 2 --status pass \
     --note "Wrote RTL" --files src/module.vhd
-
-# Terminal summary
-python3 scripts/socks.py --project-dir . --summary
 ```
 
 ## log_stage.py
 
-Logs guidance stages (2, 5, 6, 11, 12, 13) or any manual stage work:
+Logs guidance stages (2, 6, 12) or any manual stage work:
 
 ```
 --project-dir   Project root (required)
@@ -37,52 +38,106 @@ Logs guidance stages (2, 5, 6, 11, 12, 13) or any manual stage work:
 --files         Files created or modified
 ```
 
-Creates `session.json` if it doesn't exist.
+Writes to both `build/logs/session.json` (legacy) and
+`build/state/project.json` (if it exists).
 
 ## dashboard.py
 
 Live HTML dashboard with SSE auto-refresh:
 
 ```bash
-# Live server (opens browser, auto-refreshes on session.json changes)
+# Live server (opens browser, auto-refreshes on project.json changes)
 python3 scripts/dashboard.py --project-dir . --port 8077
 
 # Static HTML snapshot
-python3 scripts/dashboard.py --project-dir . --no-serve --output build/logs/dashboard.html
+python3 scripts/dashboard.py --project-dir . --no-serve --output build/dashboard.html
 ```
 
 The dashboard shows:
-- 14-card stage grid with pass/fail/skip colours and iteration badges
-- Chronological timeline of all stage runs
-- Stats bar: stages completed, pass/fail/skip counts, iteration depth, duration
+- 14-card stage grid with pass/fail/skip colours, duration, and source badges
+- Next-action banner with retry point and blocked stages
+- Activity log sorted by timestamp (newest first)
+- Stats bar: stages completed, pass/fail/skip counts, total duration
+- Input hash indicators (docs/src/tb/sw tracking status)
+- Scope and workflow badges in header
 
-## session.json format
+Data source: `build/state/project.json` via `/api/state` endpoint.
+
+## project.json format
 
 ```json
 {
-    "session_id": "20260310_143022",
-    "project": "/path/to/project",
-    "stages": [
-        {
-            "stage": 0,
-            "time": "14:30:22",
-            "status": "pass",
+    "version": 2,
+    "project": {
+        "name": "my_module",
+        "scope": "module",
+        "last_workflow": "design",
+        "timestamp_last_modified": "2026-03-12T14:30:00.000000"
+    },
+    "design_intent": {
+        "intent_file": "docs/DESIGN-INTENT.md",
+        "scope": "module",
+        "status": "APPROVED"
+    },
+    "stages": {
+        "0": {
+            "name": "Environment Setup",
+            "status": "PASS",
+            "timestamp": "2026-03-12T14:30:01.000000",
             "source": "script",
-            "note": "Environment OK",
-            "files": [],
-            "iteration": 1,
-            "log_file": "build/logs/stage_00.log"
+            "duration_seconds": 0.42,
+            "note": "All checks passed"
+        },
+        "4": {
+            "name": "Synthesis Audit",
+            "status": "PASS",
+            "timestamp": "2026-03-12T14:31:15.000000",
+            "source": "script",
+            "duration_seconds": 0.05,
+            "note": "Run 13 static synthesis checks on 1 file(s)"
         }
-    ]
+    },
+    "inputs_hash": {
+        "docs": "abc123...",
+        "src": "def456...",
+        "tb": null,
+        "sw": null
+    },
+    "next_action": {
+        "suggested": "Stage 7 (SV/Xsim Testbench) FAILED. Fix and re-run.",
+        "blocked_stages": [8, 9, 10, 11, 13],
+        "can_retry_from": 7
+    }
 }
 ```
 
+- **status**: `"PASS"`, `"FAIL"`, `"SKIP"`, `"VIOLATED"`, `"UNKNOWN"` (uppercase)
 - **source**: `"script"` (socks.py) or `"guidance"` (log_stage.py / Claude)
-- **iteration**: auto-increments per stage number across design-loop re-entries
-- **max_iterations**: design-loop cap (0 = unlimited); checked by `iterations_exhausted()`
+- **inputs_hash**: SHA-256 of each tracked directory; `null` if directory absent
+- **next_action**: `null` when all stages pass; populated on failure
 
-## Design-loop iterations
+## Hash-based incremental detection
 
-When the pipeline re-enters at Stage 2, each subsequent stage run increments
-its iteration counter. The dashboard shows iteration badges on cards and in the
-timeline, making it easy to see how many passes each stage required.
+Workflow commands (`--design`, `--test`, etc.) automatically compare directory
+hashes against stored values. When nothing changed, stages are skipped:
+
+| Directory | Re-entry stage | Reason |
+|-----------|---------------|--------|
+| `docs/`   | Stage 1       | Architecture / design intent changed |
+| `src/`    | Stage 4       | RTL changed |
+| `tb/`     | Stage 4       | Testbench changed |
+| `sw/`     | Stage 7       | C driver changed (DPI-C) |
+
+When multiple directories change, the earliest re-entry stage wins.
+
+## Migration from legacy format
+
+Old projects using `build/logs/session.json` can migrate:
+
+```bash
+python3 scripts/socks.py --project-dir . --migrate
+```
+
+This creates a minimal `build/state/project.json` stub. The `--design` workflow
+also auto-detects old projects and warns. After migration, the next pipeline
+run populates all stage results and hashes.

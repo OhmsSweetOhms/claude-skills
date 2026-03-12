@@ -140,7 +140,7 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 Guidance-only stages (2, 6, 12) are driven by Claude, not the orchestrator.
 
 **Never call stage scripts directly** (e.g. `xsim.py`, `audit.py`). Always
-route through `socks.py` so pipeline logs are captured in `build/logs/`.
+route through `socks.py` so results are captured in `build/state/project.json`.
 
 **Full rebuild:** When the user asks to "build", "rebuild", or "recompile",
 invoke the `/build` skill. It runs `scripts/build.py` which handles clean +
@@ -159,7 +159,8 @@ project_name/
 ├── build/
 │   ├── sim/           # Simulation scripts + Xsim artifacts
 │   ├── synth/         # Synthesis TCL + Vivado reports
-│   ├── logs/          # Pipeline logs (auto-generated)
+│   ├── state/         # project.json (pipeline state)
+│   ├── logs/          # Legacy pipeline logs
 │   └── artifacts/     # Claude scratch space
 ├── docs/              # Architecture diagrams + README
 ├── CLAUDE.md          # Project guide (Stage 12 output)
