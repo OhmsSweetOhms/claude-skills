@@ -83,6 +83,7 @@ REQUIRED_REFERENCES = [
     "design-loop.md",
     "discovery.md",
     "dpll.md",
+    "hil.md",
     "linter.md",
     "project-structure.md",
     "python-testbench.md",
@@ -445,7 +446,42 @@ def main() -> int:
             all_passed = False
         all_warnings.extend(fp_warn)
 
-    # --- Section 6: Migration Check (if project-dir given) ---
+    # --- Section 6: HIL Tool Checks (if project has hil.json) ---
+    if args.project_dir:
+        hil_json = os.path.join(os.path.abspath(args.project_dir), "hil.json")
+        if os.path.isfile(hil_json):
+            print(f"\n  HIL Tools (hil.json detected):")
+            # Import hil_lib for tool discovery
+            hil_lib_dir = os.path.join(SCRIPT_DIR, "hil")
+            sys.path.insert(0, hil_lib_dir)
+            try:
+                from hil_lib import find_xsdb, find_xsct, check_pyserial
+
+                xsdb = find_xsdb()
+                if xsdb:
+                    print_result(f"{'xsdb':24s} {xsdb}", True)
+                else:
+                    print_result(f"{'xsdb':24s} NOT FOUND", False)
+                    all_warnings.append("xsdb not found -- required for HIL stages 17-18")
+
+                xsct = find_xsct()
+                if xsct:
+                    print_result(f"{'xsct':24s} {xsct}", True)
+                else:
+                    print_result(f"{'xsct':24s} NOT FOUND", False)
+                    all_warnings.append("xsct not found -- required for HIL stage 16")
+
+                if check_pyserial():
+                    import serial
+                    print_result(f"{'pyserial':24s} {serial.__version__}", True)
+                else:
+                    print_result(f"{'pyserial':24s} NOT INSTALLED", False)
+                    all_warnings.append("pyserial not installed -- required for HIL stages 17-18")
+            except ImportError:
+                print_result(f"{'HIL library':24s} hil_lib.py import failed", False)
+                all_warnings.append("HIL library import failed")
+
+    # --- Section 7: Migration Check (if project-dir given) ---
     if args.project_dir:
         proj = os.path.abspath(args.project_dir)
         has_old_logs = os.path.isdir(os.path.join(proj, "build", "logs"))

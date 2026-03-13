@@ -10,6 +10,8 @@ Workflow entry points:
     python scripts/socks.py --project-dir . --architecture --scope module
     python scripts/socks.py --project-dir . --bughunt
     python scripts/socks.py --project-dir . --migrate
+    python scripts/socks.py --project-dir . --hil
+    python scripts/socks.py --project-dir . --hil --no-hw
 
 Legacy / explicit stage control:
     python scripts/socks.py --project-dir . --stages automated
@@ -22,6 +24,7 @@ Workflows:
     --architecture  Re-architecture: stages 0,1,3,4,5,7,8,9,10,11,13
     --bughunt       Bug fix + verify: stages 3,4,5,7,8,9,10
     --migrate       Migrate old log-based project to state file format
+    --hil           Hardware-in-the-loop: stages 0,10,14,15,16,17,18,19
 
 Stage keywords:
     automated   All stages with scripts (default)
@@ -75,6 +78,12 @@ STAGES = {
     11: StageDef("Bash Audit",               script="bash_audit.py"),
     12: StageDef("CLAUDE.md Documentation",  guidance="read references/project-structure.md"),
     13: StageDef("SOCKS Self-Audit",         script="self_audit.py"),
+    14: StageDef("HIL: Vivado Project",      script="hil/hil_project.py"),
+    15: StageDef("HIL: Implementation",      script="hil/hil_impl.py"),
+    16: StageDef("HIL: Firmware Build",      script="hil/hil_firmware.py"),
+    17: StageDef("HIL: Program + Test",      script="hil/hil_run.py"),
+    18: StageDef("HIL: ILA Capture",         script="hil/hil_ila.py"),
+    19: StageDef("HIL: ILA Verify",          script="hil/hil_verify.py"),
 }
 
 DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
@@ -85,6 +94,7 @@ WORKFLOW_STAGES = {
     "test":         [4, 5, 7, 8, 9],
     "architecture": [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13],
     "bughunt":      [3, 4, 5, 7, 8, 9, 10],
+    "hil":          [0, 10, 14, 15, 16, 17, 18, 19],
 }
 
 
@@ -272,7 +282,13 @@ def main() -> int:
                           help="Bug hunt workflow: sim + synthesis (3-10)")
     workflow.add_argument("--migrate", action="store_true",
                           help="Migrate old log-based project to state file format")
+    workflow.add_argument("--hil", action="store_true",
+                          help="Hardware-in-the-loop: stages 0,10,14-19")
 
+    parser.add_argument("--auto-confirm", action="store_true",
+                        help="Skip Stage 17 confirmation prompt (for CI)")
+    parser.add_argument("--no-hw", action="store_true",
+                        help="Skip hardware stages 17-19 (build but don't program)")
     parser.add_argument("--scope", type=str, default=None,
                         choices=["module", "block", "project"],
                         help="Design scope (module/block/project)")
@@ -329,6 +345,8 @@ def main() -> int:
         active_workflow = "architecture"
     elif args.bughunt:
         active_workflow = "bughunt"
+    elif args.hil:
+        active_workflow = "hil"
 
     if active_workflow:
         stages = WORKFLOW_STAGES[active_workflow]
@@ -524,6 +542,66 @@ def main() -> int:
 
         elif stage == 13:
             reason = "Validate SOCKS skill internal consistency"
+
+        elif stage == 14:
+            hil_json = os.path.join(project_dir, "hil.json")
+            if not os.path.isfile(hil_json):
+                return [], "No hil.json -- skipping HIL stages", 0
+            extra_args = ["--project-dir", project_dir]
+            if args.settings:
+                extra_args.extend(["--settings", args.settings])
+            # Auto-enable debug if VCD exists
+            vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
+            if vcd_files:
+                extra_args.append("--debug")
+            reason = "Create HIL Vivado project from hil.json"
+
+        elif stage == 15:
+            xpr_files = glob.glob(os.path.join(project_dir, "build", "hil",
+                                               "vivado_project", "*.xpr"))
+            if not xpr_files:
+                return [], "No Vivado project in build/hil/ -- run Stage 14 first", 1
+            extra_args = ["--project-dir", project_dir]
+            if args.settings:
+                extra_args.extend(["--settings", args.settings])
+            reason = "Synthesize + implement + generate bitstream"
+
+        elif stage == 16:
+            xsa = os.path.join(project_dir, "build", "hil", "system_wrapper.xsa")
+            if not os.path.isfile(xsa):
+                return [], "No XSA in build/hil/ -- run Stage 15 first", 1
+            extra_args = ["--project-dir", project_dir]
+            if args.settings:
+                extra_args.extend(["--settings", args.settings])
+            reason = "Build bare-metal firmware via XSCT"
+
+        elif stage == 17:
+            bit_files = glob.glob(os.path.join(project_dir, "build", "hil",
+                                               "vivado_project", "*/impl_1/*.bit"))
+            elf = os.path.join(project_dir, "build", "hil",
+                               "vitis_ws", "hil_app", "Debug", "hil_app.elf")
+            if not bit_files or not os.path.isfile(elf):
+                return [], "Missing bitstream or ELF -- run Stages 15-16 first", 1
+            extra_args = ["--project-dir", project_dir]
+            if args.auto_confirm:
+                extra_args.append("--auto-confirm")
+            if args.no_hw:
+                extra_args.append("--no-hw")
+            reason = "Program board + run HIL test"
+
+        elif stage == 18:
+            extra_args = ["--project-dir", project_dir]
+            if args.no_hw:
+                extra_args.append("--no-hw")
+            if args.settings:
+                extra_args.extend(["--settings", args.settings])
+            reason = "ILA multi-capture (VCD-gated)"
+
+        elif stage == 19:
+            extra_args = ["--project-dir", project_dir]
+            if args.no_hw:
+                extra_args.append("--no-hw")
+            reason = "ILA-vs-VCD verification (VCD-gated)"
 
         else:
             reason = "Scheduled stage"

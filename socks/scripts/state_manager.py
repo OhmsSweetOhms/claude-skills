@@ -29,6 +29,11 @@ HASH_DIRS = {
     "sw":   7,   # C driver changed -> Stage 7 (SV/Xsim uses DPI-C)
 }
 
+# Single files to hash and their re-entry stages.
+HASH_FILES = {
+    "hil.json": 14,  # HIL config changed -> Stage 14 (re-create Vivado project)
+}
+
 
 def _state_path(project_dir: str) -> str:
     """Canonical path for project.json."""
@@ -175,9 +180,19 @@ class StateManager:
 
         return h.hexdigest() if found else None
 
+    def compute_file_hash(self, rel_file: str) -> Optional[str]:
+        """SHA-256 of a single tracked file. Returns None if missing."""
+        abs_file = os.path.join(self.project_dir, rel_file)
+        if not os.path.isfile(abs_file):
+            return None
+        return self._hash_file(abs_file)
+
     def compute_all_hashes(self) -> Dict[str, Optional[str]]:
-        """Compute hashes for all tracked project directories."""
-        return {d: self.compute_dir_hash(d) for d in HASH_DIRS}
+        """Compute hashes for all tracked project directories and files."""
+        hashes = {d: self.compute_dir_hash(d) for d in HASH_DIRS}
+        for f in HASH_FILES:
+            hashes[f] = self.compute_file_hash(f)
+        return hashes
 
     # ------------------------------------------------------------------
     # Change detection
@@ -187,13 +202,15 @@ class StateManager:
         """Compare current hashes against stored hashes.
 
         Returns:
-            changed: dict of {dir_name: True/False} for each tracked dir
+            changed: dict of {name: True/False} for each tracked dir/file
             re_entry_stage: earliest stage to re-enter, or None if cached
         """
         state = self.load()
         if state is None:
             # No state = first run, everything is "changed"
-            return {d: True for d in HASH_DIRS}, 0
+            all_keys = dict(HASH_DIRS)
+            all_keys.update(HASH_FILES)
+            return {d: True for d in all_keys}, 0
 
         stored = state.get("inputs_hash", {})
         current = self.compute_all_hashes()
@@ -201,19 +218,22 @@ class StateManager:
         changed = {}
         re_entry = None
 
-        for d, stage in sorted(HASH_DIRS.items(), key=lambda x: x[1]):
-            cur = current.get(d)
-            sto = stored.get(d)
+        # Combine HASH_DIRS and HASH_FILES for unified iteration
+        all_tracked = dict(HASH_DIRS)
+        all_tracked.update(HASH_FILES)
+
+        for name, stage in sorted(all_tracked.items(), key=lambda x: x[1]):
+            cur = current.get(name)
+            sto = stored.get(name)
 
             if cur is None and sto is None:
-                # Directory doesn't exist and never did
-                changed[d] = False
+                changed[name] = False
             elif cur != sto:
-                changed[d] = True
+                changed[name] = True
                 if re_entry is None or stage < re_entry:
                     re_entry = stage
             else:
-                changed[d] = False
+                changed[name] = False
 
         return changed, re_entry
 

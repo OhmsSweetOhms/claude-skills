@@ -596,7 +596,7 @@ function updateDashboard(data) {
     } else if (nFail > 0) {
         badge.className = "badge badge-fail";
         badge.textContent = "FAIL";
-    } else if (stageNums.length >= 14) {
+    } else if (nFail === 0 && nPass > 0 && nPass === stageNums.length - nSkip) {
         badge.className = "badge badge-pass";
         badge.textContent = "ALL PASS";
     } else {
@@ -719,7 +719,7 @@ function updateDashboard(data) {
 
     // -- Stats bar --
     document.getElementById("stat-complete").textContent =
-        stageNums.length + "/14";
+        stageNums.length + "/" + stageNums.length;
     document.getElementById("stat-pass").textContent = nPass;
     document.getElementById("stat-fail").textContent = nFail;
     document.getElementById("stat-skip").textContent = nSkip;

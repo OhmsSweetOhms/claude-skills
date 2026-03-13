@@ -30,11 +30,23 @@ under `socks/references/` — no external skill dependencies.
 │    constraints.md        (Stage 10a)                     │
 │    timing.md             (Stage 10c)                     │
 │    regmap.md             (Stage 2, on register change)   │
+│    hil.md ────────── (Stages 14-19: HIL flow)            │
 │    dpll.md               (DPLL/PLL designs)              │
 │    project-structure.md  (directory conventions)          │
 │    project-migration.md  (legacy + flat→SOCKS migration) │
 │    session.md            (state file & dashboard)        │
 │    skill-map.md          (this file)                     │
+│                                                          │
+│  scripts/hil/                                            │
+│    hil_lib.py ── shared HIL utilities                    │
+│    hil_project.py (14), hil_impl.py (15),               │
+│    hil_firmware.py (16), hil_run.py (17),               │
+│    hil_ila.py (18), hil_verify.py (19)                  │
+│    tcl/ ── gen_hil_top, run_impl, ila_capture, flash,   │
+│            boot_cpu, templates (create_project,          │
+│            block_design, build_app)                      │
+│    presets/ ── microzed_ps7_preset.tcl                   │
+│    xdc/ ── insert_debug.xdc, microzed.xdc               │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -45,6 +57,8 @@ under `socks/references/` — no external skill dependencies.
 - **design-loop.md** cross-references regmap.md, constraints.md, and timing.md
 - **timing.md** cross-references constraints.md (for missing constraint fixes)
 - **discovery.md** cross-references design-loop.md (scope creep detection)
+- **hil.md** is the HIL equivalent of design-loop.md — covers stages 14-19,
+  hil.json schema, board presets, ILA trigger plan authoring
 - **session.md** documents the project.json schema that dashboard.py reads
 - Former standalone skills (build, status, constraints, timing, regmap)
   are now folded into socks as references or replaced by workflow commands

@@ -35,8 +35,8 @@ def check(name, condition, detail=""):
 # -----------------------------------------------------------------------
 print("\n=== STAGES dict structure ===")
 
-check("STAGES has 14 entries (0-13)",
-      set(STAGES.keys()) == set(range(14)),
+check("STAGES has 20 entries (0-19)",
+      set(STAGES.keys()) == set(range(20)),
       f"keys={sorted(STAGES.keys())}")
 
 check("All values are StageDef",
@@ -76,8 +76,8 @@ check("'automated' returns stages with scripts",
       auto_stages == expected_auto,
       f"got {auto_stages}, expected {expected_auto}")
 
-check("'automated' includes 0,1,4,5,7,8,9,10,11,13",
-      auto_stages == [0, 1, 4, 5, 7, 8, 9, 10, 11, 13],
+check("'automated' includes 0,1,3,4,5,7,8,9,10,11,13,14,15,16,17,18,19",
+      auto_stages == [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19],
       f"got {auto_stages}")
 
 # BOTH stages

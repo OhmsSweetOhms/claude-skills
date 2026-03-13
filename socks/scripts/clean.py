@@ -50,6 +50,18 @@ ARTIFACT_GLOBS = [
     "**/*.pyc",
     # Testbench plots
     "tb/*.png",
+    # HIL artifacts
+    "build/hil/**/*.log",
+    "build/hil/**/*.jou",
+    "build/hil/**/*.pb",
+    "build/hil/**/*.wdb",
+    "build/hil/ila_*.csv",
+]
+
+# HIL directories to remove entirely (with --all)
+HIL_ARTIFACT_DIRS = [
+    "build/hil/vivado_project",
+    "build/hil/vitis_ws",
 ]
 
 # Synthesis report patterns (only removed with --all)
@@ -89,6 +101,11 @@ def find_artifacts(project_dir, include_reports=False):
     patterns = ARTIFACT_GLOBS[:]
     if include_reports:
         patterns.extend(REPORT_GLOBS)
+        # Add HIL build directories for full clean
+        for hil_dir in HIL_ARTIFACT_DIRS:
+            d = os.path.join(project_dir, hil_dir)
+            if os.path.isdir(d):
+                dirs_to_remove.append(d)
 
     for pattern in patterns:
         matches = glob.glob(os.path.join(project_dir, pattern), recursive=True)

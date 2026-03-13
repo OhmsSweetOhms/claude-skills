@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""
+Stage 15: HIL Implementation -- Synthesize, implement, generate bitstream and XSA.
+
+Runs run_impl.tcl via Vivado batch mode. Parses timing, copies artifacts
+(XSA, ps7_init.tcl, optionally .ltx) to build/hil/.
+
+Usage:
+    python scripts/hil/hil_impl.py --project-dir .
+
+Exit codes:
+    0  Implementation succeeded, timing met
+    1  Error (missing project, Vivado failure, timing violated)
+"""
+
+import argparse
+import glob
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hil_lib import load_hil_json, hil_build_dir, tcl_dir
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from socks_lib import (
+    find_vivado_settings, print_header, print_separator,
+    pass_str, fail_str,
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Stage 15: HIL Implementation")
+    parser.add_argument("--project-dir", required=True, help="Project root")
+    parser.add_argument("--settings", default=None,
+                        help="Path to Vivado settings64.sh")
+    args = parser.parse_args()
+
+    project_dir = os.path.abspath(args.project_dir)
+    print_header("Stage 15: HIL Implementation")
+
+    # Load hil.json for project name
+    hil_config = load_hil_json(project_dir)
+    if hil_config is None:
+        print(f"\n  No hil.json -- skipping")
+        return 0
+
+    build_dir = hil_build_dir(project_dir)
+    dut_entity = hil_config["dut"]["entity"]
+    project_name = f"hil_{dut_entity}"
+
+    # Check prerequisite: .xpr exists
+    xpr_files = glob.glob(os.path.join(build_dir, "vivado_project", "*.xpr"))
+    if not xpr_files:
+        print(f"\n  ERROR: No Vivado project found in {build_dir}/vivado_project/")
+        print(f"  Run Stage 14 first.")
+        return 1
+
+    print(f"\n  Project:  {project_dir}")
+    print(f"  Build:    {build_dir}")
+
+    # Find Vivado
+    settings = args.settings or find_vivado_settings()
+    if settings is None:
+        print(f"\n  ERROR: Vivado settings64.sh not found")
+        return 1
+
+    # Run implementation
+    run_impl_tcl = os.path.join(tcl_dir(), "run_impl.tcl")
+    cmd = (f'source "{settings}" && '
+           f'vivado -mode batch -nojournal -nolog '
+           f'-source "{run_impl_tcl}" '
+           f'-tclargs "{build_dir}" "{project_name}"')
+
+    print(f"\n  Running synthesis + implementation...")
+    result = subprocess.run(
+        ["bash", "-c", cmd],
+        cwd=build_dir,
+    )
+
+    if result.returncode != 0:
+        print(f"\n  {fail_str()}: Implementation failed (rc={result.returncode})")
+        return 1
+
+    # Verify outputs
+    xsa_path = os.path.join(build_dir, "system_wrapper.xsa")
+    if not os.path.isfile(xsa_path):
+        print(f"\n  {fail_str()}: XSA not generated")
+        return 1
+
+    # Check for bitstream
+    bit_files = glob.glob(os.path.join(
+        build_dir, "vivado_project", f"{project_name}.runs", "impl_1", "*.bit"))
+    if not bit_files:
+        print(f"\n  {fail_str()}: No bitstream generated")
+        return 1
+
+    print(f"\n  {pass_str()}: HIL implementation complete")
+    print(f"    XSA:       {xsa_path}")
+    print(f"    Bitstream: {bit_files[0]}")
+
+    ps7_init = os.path.join(build_dir, "ps7_init.tcl")
+    if os.path.isfile(ps7_init):
+        print(f"    ps7_init:  {ps7_init}")
+
+    ltx_path = os.path.join(build_dir, "hil_top.ltx")
+    if os.path.isfile(ltx_path):
+        print(f"    LTX:       {ltx_path}")
+
+    print_separator()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

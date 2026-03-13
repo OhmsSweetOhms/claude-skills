@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""
+Stage 17: HIL Program + Test -- Flash bitstream, run firmware, capture UART.
+
+Programs the board via XSDB (flash.tcl), captures UART output in a background
+thread, and scans for HIL_PASS/HIL_FAIL markers.
+
+Usage:
+    python scripts/hil/hil_run.py --project-dir .
+    python scripts/hil/hil_run.py --project-dir . --auto-confirm
+    python scripts/hil/hil_run.py --project-dir . --no-hw
+
+Exit codes:
+    0  Test passed (HIL_PASS received)
+    1  Test failed (HIL_FAIL, timeout, or programming error)
+"""
+
+import argparse
+import glob
+import os
+import subprocess
+import sys
+import threading
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hil_lib import (
+    load_hil_json, hil_build_dir, tcl_dir, find_xsdb, find_serial_port,
+)
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from socks_lib import (
+    print_header, print_separator, pass_str, fail_str, yellow, bold,
+)
+
+
+class UartCapture:
+    """Background thread that captures UART output and scans for markers."""
+
+    def __init__(self, port, baud=115200, pass_marker="HIL_PASS",
+                 fail_marker="HIL_FAIL"):
+        self.port = port
+        self.baud = baud
+        self.pass_marker = pass_marker
+        self.fail_marker = fail_marker
+        self.ser = None
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.log = []
+        self.lock = threading.Lock()
+        self.result_event = threading.Event()
+        self.result = None
+
+    def start(self):
+        import serial as _serial
+        self.ser = _serial.Serial(
+            self.port, self.baud, timeout=0.1,
+            xonxoff=False, rtscts=False, dsrdtr=False,
+        )
+        self.ser.reset_input_buffer()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        buf = ""
+        while not self.stop_event.is_set():
+            try:
+                data = self.ser.read(1024)
+            except Exception:
+                break
+            if not data:
+                continue
+
+            text = data.decode("ascii", errors="replace").replace("\r", "")
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+            with self.lock:
+                self.log.append(text)
+                buf += text
+                if len(buf) > 4096:
+                    buf = buf[-2048:]
+
+                if self.pass_marker in buf:
+                    self.result = "PASS"
+                    self.result_event.set()
+                elif self.fail_marker in buf:
+                    self.result = "FAIL"
+                    self.result_event.set()
+
+    def wait_result(self, timeout):
+        """Wait for pass/fail marker. Returns 'PASS', 'FAIL', or 'TIMEOUT'."""
+        if self.result_event.wait(timeout=timeout):
+            return self.result
+        return "TIMEOUT"
+
+    def stop(self):
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join(timeout=2)
+        if self.ser:
+            self.ser.close()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Stage 17: HIL Program + Test")
+    parser.add_argument("--project-dir", required=True, help="Project root")
+    parser.add_argument("--serial", default=None, help="Serial port override")
+    parser.add_argument("--timeout", type=int, default=30,
+                        help="UART capture timeout (seconds)")
+    parser.add_argument("--auto-confirm", action="store_true",
+                        help="Skip programming confirmation prompt")
+    parser.add_argument("--no-hw", action="store_true",
+                        help="Skip hardware stages (dry-run)")
+    args = parser.parse_args()
+
+    project_dir = os.path.abspath(args.project_dir)
+    print_header("Stage 17: HIL Program + Test")
+
+    if args.no_hw:
+        print(f"\n  --no-hw: Skipping hardware programming and test")
+        return 0
+
+    # Load hil.json
+    hil_config = load_hil_json(project_dir)
+    if hil_config is None:
+        print(f"\n  No hil.json -- skipping")
+        return 0
+
+    build_dir = hil_build_dir(project_dir)
+    dut_entity = hil_config["dut"]["entity"]
+    project_name = f"hil_{dut_entity}"
+    fw = hil_config.get("firmware", {})
+
+    # Check prerequisites: bitstream + ELF + ps7_init
+    bit_files = glob.glob(os.path.join(
+        build_dir, "vivado_project", f"{project_name}.runs", "impl_1", "*.bit"))
+    elf_path = os.path.join(build_dir, "vitis_ws", "hil_app", "Debug", "hil_app.elf")
+    ps7_init = os.path.join(build_dir, "ps7_init.tcl")
+
+    missing = []
+    if not bit_files:
+        missing.append("bitstream (.bit)")
+    if not os.path.isfile(elf_path):
+        missing.append("firmware (hil_app.elf)")
+    if not os.path.isfile(ps7_init):
+        missing.append("ps7_init.tcl")
+
+    if missing:
+        print(f"\n  ERROR: Missing: {', '.join(missing)}")
+        print(f"  Run Stages 15-16 first.")
+        return 1
+
+    bitstream = bit_files[0]
+
+    # Find tools
+    xsdb = find_xsdb()
+    if xsdb is None:
+        print(f"\n  ERROR: XSDB not found")
+        return 1
+
+    # Find serial port
+    port = args.serial or find_serial_port(hil_config)
+    if port is None:
+        print(f"\n  ERROR: No serial port found (use --serial)")
+        return 1
+
+    print(f"\n  Project:   {project_dir}")
+    print(f"  Bitstream: {os.path.relpath(bitstream, project_dir)}")
+    print(f"  Firmware:  {os.path.relpath(elf_path, project_dir)}")
+    print(f"  Serial:    {port}")
+    print(f"  XSDB:      {xsdb}")
+
+    # Confirmation gate
+    if not args.auto_confirm:
+        print(f"\n  {bold('Ready to program board.')}")
+        try:
+            answer = input("  Program board? [y/N] ")
+        except EOFError:
+            answer = "y"  # non-interactive: proceed
+        if answer.strip().lower() not in ("y", "yes"):
+            print(f"\n  Aborted by user.")
+            return 0
+
+    # Start UART capture before programming
+    pass_marker = fw.get("pass_marker", "HIL_PASS")
+    fail_marker = fw.get("fail_marker", "HIL_FAIL")
+    timeout = fw.get("timeout_s", args.timeout)
+
+    uart = UartCapture(port, pass_marker=pass_marker, fail_marker=fail_marker)
+    uart.start()
+
+    # Program the board via XSDB
+    flash_tcl = os.path.join(tcl_dir(), "flash.tcl")
+    cmd = [xsdb, flash_tcl, bitstream, elf_path, ps7_init]
+    print(f"\n  Programming board...")
+    prog_result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=120,
+        text=True,
+        cwd=build_dir,
+    )
+    print(prog_result.stdout)
+
+    if prog_result.returncode != 0:
+        uart.stop()
+        print(f"\n  {fail_str()}: Programming failed (rc={prog_result.returncode})")
+        return 1
+
+    # Wait for test result
+    print(f"\n  Waiting for result (timeout={timeout}s)...")
+    result = uart.wait_result(timeout)
+    uart.stop()
+
+    print()
+    print_separator()
+    if result == "PASS":
+        print(f"  RESULT: {pass_str()} -- {pass_marker}")
+    elif result == "FAIL":
+        print(f"  RESULT: {fail_str()} -- {fail_marker}")
+    else:
+        print(f"  RESULT: {fail_str()} -- TIMEOUT (no {pass_marker}/{fail_marker})")
+    print_separator()
+
+    return 0 if result == "PASS" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

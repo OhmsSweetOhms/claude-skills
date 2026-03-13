@@ -33,8 +33,8 @@ def check_skill_md_script_refs(verbose=False):
     with open(skill_md, "r") as f:
         content = f.read()
 
-    # Match `scripts/foo.py` patterns
-    refs = re.findall(r'`scripts/([a-zA-Z0-9_]+\.py)`', content)
+    # Match `scripts/foo.py` and `scripts/hil/foo.py` patterns
+    refs = re.findall(r'`scripts/([a-zA-Z0-9_/]+\.py)`', content)
     for ref in refs:
         path = os.path.join(SKILL_DIR, "scripts", ref)
         if not os.path.isfile(path):
@@ -188,8 +188,8 @@ def check_orchestrator_consistency(verbose=False):
     with open(socks_py, "r") as f:
         content = f.read()
 
-    # Extract script filenames from STAGES dict
-    refs = re.findall(r'\"([a-zA-Z0-9_]+\.py)\"', content)
+    # Extract script filenames from STAGES dict (handles both "foo.py" and "hil/foo.py")
+    refs = re.findall(r'\"([a-zA-Z0-9_/]+\.py)\"', content)
     for ref in refs:
         if ref == "socks.py" or ref == "clean.py":
             continue

@@ -7,7 +7,7 @@ description: "System-On-a-Chip Kit for Synthesis. Use this skill for any FPGA/So
 
 ## Workflows
 
-Five entry points. Parse the user's `/socks` message for flags:
+Six entry points. Parse the user's `/socks` message for flags:
 
 | Invocation | What happens |
 |---|---|
@@ -15,6 +15,7 @@ Five entry points. Parse the user's `/socks` message for flags:
 | `/socks --test [scope]` | Ask what to test/enhance, then sim stages (4,5,7,8,9) |
 | `/socks --architecture [scope]` | Ask what architecture changes, then full pipeline (0-13) |
 | `/socks --bughunt [scope]` | Ask what bug, then sim+synth stages (3-10) |
+| `/socks --hil` | Hardware-in-the-loop: build, program, test on Zynq-7000 (0,10,14-19) |
 | `/socks --migrate` | Claude-driven project migration (legacy SOCKS or flat/3rd-party) |
 | `/socks` *(no flags)* | Ask the user which workflow they want |
 
@@ -30,7 +31,8 @@ scope, ask: "What scope? (module / block / project)". Scope definitions:
 > 2. `--test` -- Edit and run testbenches
 > 3. `--architecture` -- Change architecture, re-run full pipeline
 > 4. `--bughunt` -- Fix a bug, verify with sim + synthesis
-> 5. `--migrate` -- Migrate a project to SOCKS layout (legacy or flat/3rd-party)
+> 5. `--hil` -- Hardware-in-the-loop test on FPGA board (requires `hil.json`)
+> 6. `--migrate` -- Migrate a project to SOCKS layout (legacy or flat/3rd-party)
 
 Then proceed with their choice.
 
@@ -61,6 +63,10 @@ the design intent.
   `python scripts/socks.py --project-dir . --architecture`
 - **`--bughunt`:** Ask what bug they're hunting. Analyze, help edit `src/` files.
   Then run: `python scripts/socks.py --project-dir . --bughunt`
+- **`--hil`:** Read `references/hil.md` for prerequisites and `hil.json` schema.
+  Requires board connected via JTAG + UART, `hil.json` in project root. Then run:
+  `python scripts/socks.py --project-dir . --hil`
+  Use `--no-hw` to build without programming, `--auto-confirm` to skip prompt.
 - **`--migrate`:** Read `references/project-migration.md`. Classify the project
   (legacy SOCKS vs flat/3rd-party), run `scripts/clean.py --project-dir . --all`
   to remove generated artifacts, then follow the migration workflow. This is
@@ -84,11 +90,25 @@ Stage 10: Vivado Synthesis                               AUTOMATED
 Stage 11: Bash Audit                                     AUTOMATED
 Stage 12: CLAUDE.md Documentation                        GUIDANCE
 Stage 13: SOCKS Self-Audit                               AUTOMATED
+          +-------------------------------------------------------+
+          |  HIL FLOW (14-19) -- see references/hil.md           |
+          |  requires hil.json in project root                    |
+          +-------------------------------------------------------+
+Stage 14: HIL: Vivado Project                            AUTOMATED
+Stage 15: HIL: Implementation                            AUTOMATED
+Stage 16: HIL: Firmware Build                            AUTOMATED
+Stage 17: HIL: Program + Test (user gate)                AUTOMATED
+Stage 18: HIL: ILA Capture (VCD-gated)                   AUTOMATED
+Stage 19: HIL: ILA Verify (VCD-gated)                    AUTOMATED
 ```
 
 **Entering the design loop:** Read `references/design-loop.md` before Stage 2.
 It contains all loop control, re-entry, failure recovery, and per-stage details
 for stages 2-9.
+
+**Entering the HIL flow:** Read `references/hil.md` before Stage 14. It contains
+`hil.json` schema, board presets, wiring rules, per-stage details, ILA trigger
+plan authoring, and troubleshooting.
 
 ---
 
@@ -106,6 +126,13 @@ for stages 2-9.
 | 11 | Bash Audit | `scripts/bash_audit.py` | -- |
 | 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md` |
 | 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
+| 14-19 | **HIL Flow** | *See `references/hil.md`* | *Requires `hil.json` in project root* |
+| 14 | HIL: Vivado Project | `scripts/hil/hil_project.py` | `references/hil.md` |
+| 15 | HIL: Implementation | `scripts/hil/hil_impl.py` | `references/hil.md` |
+| 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` | `references/hil.md` |
+| 17 | HIL: Program + Test | `scripts/hil/hil_run.py` | `references/hil.md` |
+| 18 | HIL: ILA Capture | `scripts/hil/hil_ila.py` | `references/hil.md` (VCD-gated) |
+| 19 | HIL: ILA Verify | `scripts/hil/hil_verify.py` | `references/hil.md` (VCD-gated) |
 
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
 
@@ -120,6 +147,9 @@ python scripts/socks.py --project-dir . --test
 python scripts/socks.py --project-dir . --architecture --scope module
 python scripts/socks.py --project-dir . --bughunt
 python scripts/socks.py --project-dir . --migrate   # Claude-driven, no automated stages
+python scripts/socks.py --project-dir . --hil
+python scripts/socks.py --project-dir . --hil --no-hw         # build only, no board programming
+python scripts/socks.py --project-dir . --hil --auto-confirm  # skip Stage 17 prompt (CI)
 ```
 
 **Explicit stage control (legacy):**
@@ -135,10 +165,11 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 - `--test` -- 4, 5, 7, 8, 9 (sim only)
 - `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
+- `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19 (hardware-in-the-loop)
 - `--migrate` -- Claude-driven (`references/project-migration.md`), no automated stages
 
 **Stage keywords:**
-- `--stages automated` -- all stages with scripts: 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13
+- `--stages automated` -- all stages with scripts: 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19
 - `--stages 5,7,8` -- specific stages, comma-separated (no auto-expansion)
 
 Guidance-only stages (2, 6, 12) are driven by Claude, not the orchestrator.
@@ -162,10 +193,12 @@ project_name/
 ├── build/
 │   ├── sim/           # Simulation scripts + Xsim artifacts
 │   ├── synth/         # Synthesis TCL + Vivado reports
+│   ├── hil/           # HIL build outputs (Vivado project, firmware, ILA CSVs)
 │   ├── state/         # project.json (pipeline state)
 │   ├── logs/          # Legacy pipeline logs
 │   └── artifacts/     # Claude scratch space
 ├── docs/              # Architecture diagrams + README
+├── hil.json           # HIL config (optional, triggers stages 14-19)
 ├── CLAUDE.md          # Project guide (Stage 12 output)
 └── .gitignore         # Vivado/Xsim artifact ignores
 ```
