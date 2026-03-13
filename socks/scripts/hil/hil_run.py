@@ -7,8 +7,6 @@ thread, and scans for HIL_PASS/HIL_FAIL markers.
 
 Usage:
     python scripts/hil/hil_run.py --project-dir .
-    python scripts/hil/hil_run.py --project-dir . --auto-confirm
-    python scripts/hil/hil_run.py --project-dir . --no-hw
 
 Exit codes:
     0  Test passed (HIL_PASS received)
@@ -108,24 +106,17 @@ def main() -> int:
     parser.add_argument("--serial", default=None, help="Serial port override")
     parser.add_argument("--timeout", type=int, default=30,
                         help="UART capture timeout (seconds)")
-    parser.add_argument("--auto-confirm", action="store_true",
-                        help="Skip programming confirmation prompt")
-    parser.add_argument("--no-hw", action="store_true",
-                        help="Skip hardware stages (dry-run)")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
     print_header("Stage 17: HIL Program + Test")
 
-    if args.no_hw:
-        print(f"\n  --no-hw: Skipping hardware programming and test")
-        return 0
-
-    # Load hil.json
+    # Load hil.json (hard-fail if missing)
     hil_config = load_hil_json(project_dir)
     if hil_config is None:
-        print(f"\n  No hil.json -- skipping")
-        return 0
+        print(f"\n  ERROR: hil.json not found after prep. "
+              f"Create it manually or run test discovery first.")
+        return 1
 
     build_dir = hil_build_dir(project_dir)
     dut_entity = hil_config["dut"]["entity"]
@@ -170,17 +161,6 @@ def main() -> int:
     print(f"  Firmware:  {os.path.relpath(elf_path, project_dir)}")
     print(f"  Serial:    {port}")
     print(f"  XSDB:      {xsdb}")
-
-    # Confirmation gate
-    if not args.auto_confirm:
-        print(f"\n  {bold('Ready to program board.')}")
-        try:
-            answer = input("  Program board? [y/N] ")
-        except EOFError:
-            answer = "y"  # non-interactive: proceed
-        if answer.strip().lower() not in ("y", "yes"):
-            print(f"\n  Aborted by user.")
-            return 0
 
     # Start UART capture before programming
     pass_marker = fw.get("pass_marker", "HIL_PASS")

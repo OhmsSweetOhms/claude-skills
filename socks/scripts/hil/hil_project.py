@@ -6,12 +6,15 @@ Reads hil.json, expands TCL templates, runs Vivado in batch mode to create the
 HIL project. The project includes: PS7 block design, AXI interconnect, DUT
 module reference, auto-generated hil_top.vhd wrapper, and XDC constraints.
 
+Calls hil_prep.py to auto-generate missing artifacts (hil.json,
+ila_trigger_plan.json, hil_test_main.c) before project creation.
+
 Usage:
-    python scripts/hil/hil_project.py --project-dir . [--debug]
+    python scripts/hil/hil_project.py --project-dir . --top usart_frame_ctrl
 
 Exit codes:
     0  Project created successfully
-    1  Error (missing hil.json, Vivado failure, etc.)
+    1  Error (missing files, Vivado failure, etc.)
 """
 
 import argparse
@@ -25,6 +28,7 @@ from hil_lib import (
     load_hil_json, hil_build_dir, tcl_dir, presets_dir, xdc_dir,
     expand_template, resolve_sources,
 )
+from hil_prep import maybe_generate_artifacts
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import (
@@ -85,8 +89,10 @@ def build_import_tcl(hil_config):
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 14: HIL Vivado Project")
     parser.add_argument("--project-dir", required=True, help="Project root")
-    parser.add_argument("--debug", action="store_true",
-                        help="Enable ILA debug (add insert_debug.xdc)")
+    parser.add_argument("--top", required=True,
+                        help="Top-level VHDL entity name")
+    parser.add_argument("--part", default="xc7z020clg484-1",
+                        help="FPGA part number")
     parser.add_argument("--settings", default=None,
                         help="Path to Vivado settings64.sh")
     args = parser.parse_args()
@@ -94,11 +100,23 @@ def main() -> int:
     project_dir = os.path.abspath(args.project_dir)
     print_header("Stage 14: HIL Vivado Project")
 
-    # Load hil.json
+    # VCD is a hard requirement
+    vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
+    if not vcd_files:
+        print(f"\n  ERROR: VCD not found at build/sim/*.vcd. "
+              f"Run Stage 7 to generate a VCD and fix any simulation errors.")
+        return 1
+
+    # Run hil_prep to generate missing artifacts
+    if not maybe_generate_artifacts(project_dir, args.top, args.part):
+        return 1
+
+    # Load hil.json (hard-fail if missing after prep)
     hil_config = load_hil_json(project_dir)
     if hil_config is None:
-        print(f"\n  No hil.json found in {project_dir} -- skipping HIL stages")
-        return 0
+        print(f"\n  ERROR: hil.json not found after prep. "
+              f"Create it manually or run test discovery first.")
+        return 1
 
     dut = hil_config["dut"]
     board = hil_config["board"]
@@ -108,12 +126,7 @@ def main() -> int:
     print(f"  DUT:      {dut['entity']}")
     print(f"  Part:     {board['part']}")
     print(f"  AXI base: {axi['base_address']}")
-
-    # Check VCD exists (determines whether to enable debug/ILA)
-    vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
-    enable_debug = args.debug or bool(vcd_files)
-    if vcd_files:
-        print(f"  VCD found: ILA debug enabled automatically")
+    print(f"  VCD found: ILA debug always enabled")
 
     # Prepare build directory
     build_dir = hil_build_dir(project_dir)
@@ -187,11 +200,10 @@ def main() -> int:
         print(f"\n  ERROR: Vivado settings64.sh not found")
         return 1
 
-    # Run Vivado batch
-    debug_arg = " --debug" if enable_debug else ""
+    # Run Vivado batch -- always enable debug (VCD is guaranteed)
     cmd = (f'source "{settings}" && '
            f'vivado -mode batch -nojournal -nolog '
-           f'-source "{cp_tcl}" -tclargs{debug_arg}')
+           f'-source "{cp_tcl}" -tclargs --debug')
 
     print(f"\n  Running Vivado project creation...")
     result = subprocess.run(
@@ -216,7 +228,7 @@ def main() -> int:
     print(f"\n  {pass_str()}: HIL Vivado project created")
     print(f"    Project: {xpr_files[0]}")
     print(f"    Top:     {hil_top_path}")
-    print(f"    Debug:   {enable_debug}")
+    print(f"    Debug:   True")
     print_separator()
     return 0
 

@@ -111,7 +111,7 @@ Data source: `build/state/project.json` via `/api/state` endpoint.
 }
 ```
 
-- **status**: `"PASS"`, `"FAIL"`, `"SKIP"`, `"VIOLATED"`, `"UNKNOWN"` (uppercase)
+- **status**: `"PASS"`, `"FAIL"`, `"VIOLATED"`, `"UNKNOWN"` (uppercase)
 - **source**: `"script"` (socks.py) or `"guidance"` (log_stage.py / Claude)
 - **inputs_hash**: SHA-256 of each tracked directory; `null` if directory absent
 - **next_action**: `null` when all stages pass; populated on failure

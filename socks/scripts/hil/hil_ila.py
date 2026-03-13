@@ -2,8 +2,8 @@
 """
 Stage 18: HIL ILA Capture -- Multi-capture ILA waveforms via serial pacing.
 
-VCD-gated: only runs if VCD exists from simulation (Stage 7). Requires
-ila_trigger_plan.json and hil_top.ltx in build/hil/.
+VCD required: hard-fails if VCD missing. Requires ila_trigger_plan.json and
+hil_top.ltx in build/hil/.
 
 Flow:
   1. Launch Vivado in interactive mode (programs FPGA, discovers ILA)
@@ -16,8 +16,8 @@ Usage:
     python scripts/hil/hil_ila.py --project-dir .
 
 Exit codes:
-    0  All captures succeeded (or VCD-gated skip)
-    1  One or more captures failed
+    0  All captures succeeded
+    1  One or more captures failed (or VCD missing)
 """
 
 import argparse
@@ -78,9 +78,9 @@ class VivadoILA:
                 raise RuntimeError(f"Vivado error: {line}")
         raise TimeoutError(f"Vivado did not become ready within {timeout}s")
 
-    def send_arm(self, probe, value, csv_path):
+    def send_arm(self, probe, value, compare, csv_path):
         """Send ARM command to Vivado (non-blocking)."""
-        cmd = f"ARM {probe} {value} {csv_path}\n"
+        cmd = f"ARM {probe} {value} {compare} {csv_path}\n"
         self.proc.stdin.write(cmd)
         self.proc.stdin.flush()
 
@@ -142,8 +142,6 @@ def main() -> int:
     parser.add_argument("--serial", default=None, help="Serial port override")
     parser.add_argument("--timeout", type=int, default=120,
                         help="Overall timeout (seconds)")
-    parser.add_argument("--no-hw", action="store_true",
-                        help="Skip hardware stages")
     parser.add_argument("--settings", default=None,
                         help="Path to Vivado settings64.sh")
     args = parser.parse_args()
@@ -151,22 +149,19 @@ def main() -> int:
     project_dir = os.path.abspath(args.project_dir)
     print_header("Stage 18: HIL ILA Capture")
 
-    if args.no_hw:
-        print(f"\n  --no-hw: Skipping ILA capture")
-        return 0
-
-    # VCD gate: skip if no VCD from simulation
+    # VCD is a hard requirement
     vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
     if not vcd_files:
-        print(f"\n  No VCD from simulation -- skipping ILA capture")
-        print(f"  (Run simulation stages 7-8 first to enable ILA verification)")
-        return 0
+        print(f"\n  ERROR: VCD not found at build/sim/*.vcd. "
+              f"Run Stage 7 to generate a VCD and fix any simulation errors.")
+        return 1
 
-    # Load hil.json
+    # Load hil.json (hard-fail if missing)
     hil_config = load_hil_json(project_dir)
     if hil_config is None:
-        print(f"\n  No hil.json -- skipping")
-        return 0
+        print(f"\n  ERROR: hil.json not found after prep. "
+              f"Create it manually or run test discovery first.")
+        return 1
 
     build_dir = hil_build_dir(project_dir)
 
@@ -195,6 +190,13 @@ def main() -> int:
     with open(plan_path) as f:
         plan = json.load(f)
     captures = plan["captures"]
+
+    # Validate trigger plan format (reject old probe/value fields)
+    for cap in captures:
+        if "probe" in cap or "value" in cap:
+            print(f"\n  ERROR: ila_trigger_plan.json uses deprecated probe/value fields. "
+                  f"Update to trigger_probe/trigger_value/trigger_compare.")
+            return 1
 
     print(f"\n  Project:  {project_dir}")
     print(f"  Plan:     {plan_path} ({len(captures)} captures)")
@@ -268,18 +270,19 @@ def main() -> int:
             break
 
         name = cap["name"]
-        probe = cap["probe"]
-        value = cap["value"]
+        probe = cap["trigger_probe"]
+        value = cap["trigger_value"]
+        compare = cap.get("trigger_compare", "eq")
         output = cap["output"]
         desc = cap.get("description", "")
 
         print(f"\n  --- Capture {i+1}/{len(captures)}: {name} ---")
         if desc:
             print(f"      {desc}")
-        print(f"      Trigger: {probe} == {value}")
+        print(f"      Trigger: {probe} {compare} {value}")
 
         csv_path = os.path.join(build_dir, output)
-        ila.send_arm(probe, value, csv_path)
+        ila.send_arm(probe, value, compare, csv_path)
         time.sleep(0.3)
 
         # Send go byte

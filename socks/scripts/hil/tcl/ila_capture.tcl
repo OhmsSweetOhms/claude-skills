@@ -49,14 +49,22 @@ proc parse_trigger_plan {json_file} {
         set block [string range $data $brace_start $brace_end]
 
         set cap [dict create name $name]
-        if {[regexp {"probe"\s*:\s*"([^"]+)"} $block -> val]} {
-            dict set cap probe $val
+
+        # Reject deprecated probe/value fields
+        if {[regexp {"probe"\s*:} $block] || [regexp {"value"\s*:} $block]} {
+            puts "ERROR: ila_trigger_plan.json uses deprecated probe/value fields. Update to trigger_probe/trigger_value/trigger_compare."
+            exit 1
         }
-        if {[regexp {"operator"\s*:\s*"([^"]+)"} $block -> val]} {
-            dict set cap operator $val
+
+        # Read signal-name-based fields
+        if {[regexp {"trigger_probe"\s*:\s*"([^"]+)"} $block -> val]} {
+            dict set cap trigger_probe $val
         }
-        if {[regexp {"value"\s*:\s*"([^"]+)"} $block -> val]} {
-            dict set cap value $val
+        if {[regexp {"trigger_value"\s*:\s*"([^"]+)"} $block -> val]} {
+            dict set cap trigger_value $val
+        }
+        if {[regexp {"trigger_compare"\s*:\s*"([^"]+)"} $block -> val]} {
+            dict set cap trigger_compare $val
         }
         if {[regexp {"output"\s*:\s*"([^"]+)"} $block -> val]} {
             dict set cap output $val
@@ -124,8 +132,8 @@ foreach p [get_hw_probes -of_objects $ila] {
 set_property CONTROL.DATA_DEPTH 4096 $ila
 set_property CONTROL.TRIGGER_POSITION 512 $ila
 
-# --- Helper: arm ILA on a probe/value, wait, readback CSV ---
-proc arm_and_capture {ila probe_name value csv_path {timeout 15}} {
+# --- Helper: arm ILA on a signal-name probe, wait, readback CSV ---
+proc arm_and_capture {ila probe_name value compare csv_path {timeout 15}} {
     # Reset ALL probes to don't-care
     foreach p [get_hw_probes -of_objects $ila] {
         set w [get_property WIDTH $p]
@@ -137,18 +145,22 @@ proc arm_and_capture {ila probe_name value csv_path {timeout 15}} {
         }
     }
 
-    # Find the probe object
-    set probe [get_hw_probes $probe_name -of_objects $ila -quiet]
+    # Signal-name-based probe lookup
+    set probe [get_hw_probes */$probe_name -of_objects $ila -quiet]
     if {$probe eq ""} {
-        set probe [get_hw_probes */$probe_name -of_objects $ila -quiet]
+        set probe [get_hw_probes $probe_name -of_objects $ila -quiet]
     }
     if {$probe eq ""} {
         puts "ILA_ERROR probe '$probe_name' not found"
         return 0
     }
 
-    # Set trigger
-    set_property TRIGGER_COMPARE_VALUE "eq$value" $probe
+    # Auto-derive width from probe WIDTH property
+    set w [get_property WIDTH $probe]
+
+    # Build compare string: "${compare}${width}'b${value}"
+    set trigger_str "${compare}${w}'b${value}"
+    set_property TRIGGER_COMPARE_VALUE $trigger_str $probe
 
     # Arm and wait for trigger
     run_hw_ila $ila
@@ -198,15 +210,16 @@ if {$interactive} {
             flush stdout
             break
         } elseif {$cmd eq "ARM"} {
-            if {[llength $parts] < 4} {
-                puts "ILA_ERROR usage: ARM <probe> <value> <output_csv>"
+            if {[llength $parts] < 5} {
+                puts "ILA_ERROR usage: ARM <probe> <value> <compare> <output_csv>"
                 flush stdout
                 continue
             }
             set probe_name [lindex $parts 1]
             set value [lindex $parts 2]
-            set csv_path [lindex $parts 3]
-            arm_and_capture $ila $probe_name $value $csv_path
+            set compare [lindex $parts 3]
+            set csv_path [lindex $parts 4]
+            arm_and_capture $ila $probe_name $value $compare $csv_path
             flush stdout
         } else {
             puts "ILA_ERROR unknown command: $cmd"
@@ -243,17 +256,24 @@ if {$interactive} {
     foreach cap $captures {
         incr cap_num
         set name [dict get $cap name]
-        set probe_name [dict get $cap probe]
-        set value [dict get $cap value]
+        set probe_name [dict get $cap trigger_probe]
+        set value [dict get $cap trigger_value]
+        set compare "eq"
+        if {[dict exists $cap trigger_compare]} {
+            set compare [dict get $cap trigger_compare]
+        }
         set output [dict get $cap output]
-        set desc [dict get $cap description]
+        set desc ""
+        if {[dict exists $cap description]} {
+            set desc [dict get $cap description]
+        }
 
         puts "\n--- Capture $cap_num: $name ---"
-        puts "  $desc"
-        puts "  Trigger: $probe_name == $value"
+        if {$desc ne ""} { puts "  $desc" }
+        puts "  Trigger: $probe_name $compare $value"
 
         set csv_path [file join $build_dir $output]
-        set ok [arm_and_capture $ila $probe_name $value $csv_path]
+        set ok [arm_and_capture $ila $probe_name $value $compare $csv_path]
         if {$ok} {
             puts "  Captured: $csv_path"
         } else {

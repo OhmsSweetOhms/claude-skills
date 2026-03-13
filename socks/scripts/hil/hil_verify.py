@@ -2,7 +2,7 @@
 """
 Stage 19: HIL ILA Verify -- Compare ILA CSV captures against simulation VCD.
 
-VCD-gated: only runs if both ILA CSVs and VCD exist. Compares behavioural
+VCD required: hard-fails if VCD or ILA CSVs missing. Compares behavioural
 properties rather than sample-by-sample (different time bases and windows).
 
 Checks:
@@ -14,8 +14,8 @@ Usage:
     python scripts/hil/hil_verify.py --project-dir .
 
 Exit codes:
-    0  All checks passed (or VCD-gated skip)
-    1  One or more checks failed
+    0  All checks passed
+    1  One or more checks failed (or VCD/ILA CSVs missing)
 """
 
 import argparse
@@ -133,30 +133,25 @@ def check_state_sequence(ila_values, vcd_values, signal_name):
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 19: HIL ILA Verify")
     parser.add_argument("--project-dir", required=True, help="Project root")
-    parser.add_argument("--no-hw", action="store_true",
-                        help="Skip hardware stages")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
     print_header("Stage 19: HIL ILA Verify")
 
-    if args.no_hw:
-        print(f"\n  --no-hw: Skipping ILA verify")
-        return 0
-
-    # VCD gate
+    # VCD is a hard requirement
     vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
     if not vcd_files:
-        print(f"\n  No VCD from simulation -- skipping ILA verify")
-        return 0
+        print(f"\n  ERROR: VCD not found at build/sim/*.vcd. "
+              f"Run Stage 7 to generate a VCD and fix any simulation errors.")
+        return 1
 
     build_dir = hil_build_dir(project_dir)
 
-    # ILA CSV gate
+    # ILA CSVs are a hard requirement
     ila_csvs = glob.glob(os.path.join(build_dir, "ila_*.csv"))
     if not ila_csvs:
-        print(f"\n  No ILA CSVs in {build_dir} -- skipping")
-        return 0
+        print(f"\n  ERROR: No ILA CSVs in {build_dir}. Run Stage 18 first.")
+        return 1
 
     vcd_file = sorted(vcd_files)[-1]
     print(f"\n  VCD:      {os.path.relpath(vcd_file, project_dir)}")

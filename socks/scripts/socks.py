@@ -10,8 +10,7 @@ Workflow entry points:
     python scripts/socks.py --project-dir . --architecture --scope module
     python scripts/socks.py --project-dir . --bughunt
     python scripts/socks.py --project-dir . --migrate
-    python scripts/socks.py --project-dir . --hil
-    python scripts/socks.py --project-dir . --hil --no-hw
+    python scripts/socks.py --project-dir . --hil --top usart_frame_ctrl
 
 Legacy / explicit stage control:
     python scripts/socks.py --project-dir . --stages automated
@@ -24,7 +23,7 @@ Workflows:
     --architecture  Re-architecture: stages 0,1,3,4,5,7,8,9,10,11,13
     --bughunt       Bug fix + verify: stages 3,4,5,7,8,9,10
     --migrate       Migrate old log-based project to state file format
-    --hil           Hardware-in-the-loop: stages 0,10,14,15,16,17,18,19
+    --hil           Hardware-in-the-loop: stages 0,10,14,15,16,17,18,19 (requires --top)
 
 Stage keywords:
     automated   All stages with scripts (default)
@@ -283,12 +282,8 @@ def main() -> int:
     workflow.add_argument("--migrate", action="store_true",
                           help="Migrate old log-based project to state file format")
     workflow.add_argument("--hil", action="store_true",
-                          help="Hardware-in-the-loop: stages 0,10,14-19")
+                          help="Hardware-in-the-loop: stages 0,10,14-19 (requires --top)")
 
-    parser.add_argument("--auto-confirm", action="store_true",
-                        help="Skip Stage 17 confirmation prompt (for CI)")
-    parser.add_argument("--no-hw", action="store_true",
-                        help="Skip hardware stages 17-19 (build but don't program)")
     parser.add_argument("--scope", type=str, default=None,
                         choices=["module", "block", "project"],
                         help="Design scope (module/block/project)")
@@ -297,9 +292,9 @@ def main() -> int:
     parser.add_argument("--files", type=str, nargs="*", default=None,
                         help="Specific files to pass to stage scripts")
     parser.add_argument("--top", type=str, default=None,
-                        help="Top-level entity name (for stages 1, 10)")
+                        help="Top-level entity name (required for --hil, also used by stages 1, 10)")
     parser.add_argument("--part", type=str, default="xc7z020clg484-1",
-                        help="FPGA part (for stage 10)")
+                        help="FPGA part (for stages 10, 14)")
     parser.add_argument("--settings", type=str, default=None,
                         help="Path to Vivado settings64.sh")
     parser.add_argument("--clean", action="store_true",
@@ -347,6 +342,10 @@ def main() -> int:
         active_workflow = "bughunt"
     elif args.hil:
         active_workflow = "hil"
+        if not args.top:
+            print("ERROR: --top is required for --hil. "
+                  "Provide the DUT entity name (e.g. --top uart_axi).")
+            return 1
 
     if active_workflow:
         stages = WORKFLOW_STAGES[active_workflow]
@@ -544,16 +543,11 @@ def main() -> int:
             reason = "Validate SOCKS skill internal consistency"
 
         elif stage == 14:
-            hil_json = os.path.join(project_dir, "hil.json")
-            if not os.path.isfile(hil_json):
-                return [], "No hil.json -- skipping HIL stages", 0
-            extra_args = ["--project-dir", project_dir]
+            if not args.top:
+                return [], "ERROR: --top is required for --hil. Provide the DUT entity name (e.g. --top uart_axi).", 1
+            extra_args = ["--project-dir", project_dir, "--top", args.top, "--part", args.part]
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            # Auto-enable debug if VCD exists
-            vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
-            if vcd_files:
-                extra_args.append("--debug")
             reason = "Create HIL Vivado project from hil.json"
 
         elif stage == 15:
@@ -583,25 +577,17 @@ def main() -> int:
             if not bit_files or not os.path.isfile(elf):
                 return [], "Missing bitstream or ELF -- run Stages 15-16 first", 1
             extra_args = ["--project-dir", project_dir]
-            if args.auto_confirm:
-                extra_args.append("--auto-confirm")
-            if args.no_hw:
-                extra_args.append("--no-hw")
             reason = "Program board + run HIL test"
 
         elif stage == 18:
             extra_args = ["--project-dir", project_dir]
-            if args.no_hw:
-                extra_args.append("--no-hw")
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            reason = "ILA multi-capture (VCD-gated)"
+            reason = "ILA multi-capture (VCD required)"
 
         elif stage == 19:
             extra_args = ["--project-dir", project_dir]
-            if args.no_hw:
-                extra_args.append("--no-hw")
-            reason = "ILA-vs-VCD verification (VCD-gated)"
+            reason = "ILA-vs-VCD verification (VCD required)"
 
         else:
             reason = "Scheduled stage"
