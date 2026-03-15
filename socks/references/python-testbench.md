@@ -88,6 +88,24 @@ def shift_right_arithmetic(v, n, width):
 
 ---
 
+## CSV Cross-Check Contract
+
+Stage 9 (`scripts/csv_crosscheck.py`) compares the SV TB simulation CSV against the Python model CSV. The **Python model CSV defines the column schema** — the SV TB must conform to it.
+
+**Rules:**
+- Column names are the join key. They must match exactly (case-sensitive) between simulation and model CSVs.
+- Zero common columns = **hard-fail**. This means the SV TB and Python model have no overlap and the cross-check is meaningless.
+- Row granularity must match: one row per event (e.g. one row per received frame, not one row per clock cycle).
+- The Python TB writes `*_xcheck_model.csv` filtered to only the test configurations present in the SV TB.
+- Convention: simulation CSV is `build/sim/*_sim.csv`, model CSV is `tb/*_model.csv` or `build/sim/*_model.csv`.
+
+**Column naming convention:**
+- Use the same logical signal names in both CSVs (e.g. `tx_data`, `rx_data`, `status`, `error_count`).
+- Avoid metadata-only columns (like `cycle`, `time_ns`) as comparison columns — pass them via `--skip-cols`.
+- Include both input stimulus and output response columns so the cross-check validates the full I/O contract.
+
+---
+
 ## Plots
 
 Always generate at minimum the key state variables vs time, with pass/fail bands overlaid. Use matplotlib with the Agg backend (no display required):

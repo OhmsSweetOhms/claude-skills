@@ -53,6 +53,29 @@ def build_import_sources_tcl(project_dir, hil_config):
     return "\n".join(lines)
 
 
+SUPPRESSED_PATTERNS = [
+    "WARNING: CONFIG.DEVICE_ID",
+    "WARNING: No matching IP",
+]
+
+
+def filter_xsct_output(text):
+    """Filter suppressed XSCT warning patterns from stdout display.
+
+    Returns (filtered_text, suppressed_count).
+    Full output is always logged to build/logs/.
+    """
+    lines = text.splitlines(keepends=True)
+    filtered = []
+    suppressed = 0
+    for line in lines:
+        if any(pat in line for pat in SUPPRESSED_PATTERNS):
+            suppressed += 1
+        else:
+            filtered.append(line)
+    return "".join(filtered), suppressed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 16: HIL Firmware Build")
     parser.add_argument("--project-dir", required=True, help="Project root")
@@ -73,6 +96,15 @@ def main() -> int:
 
     build_dir = hil_build_dir(project_dir)
 
+    # Hard-fail if firmware source is missing (Claude must author it)
+    fw_config = hil_config.get("firmware", {})
+    test_src = fw_config.get("test_src", "sw/hil_test_main.c")
+    test_src_path = os.path.join(project_dir, test_src)
+    if not os.path.isfile(test_src_path):
+        print(f"\n  ERROR: {test_src} not found. "
+              f"Claude must write firmware before Stage 16 can build.")
+        return 1
+
     # Check prerequisite: XSA exists
     xsa_path = os.path.join(build_dir, "system_wrapper.xsa")
     if not os.path.isfile(xsa_path):
@@ -80,10 +112,8 @@ def main() -> int:
         print(f"  Run Stage 15 first.")
         return 1
 
-    # Debug mode: only when explicitly requested (--debug flag).
-    # Normal firmware runs quick tests for Stage 17.
-    # Debug firmware (HIL_DEBUG_MODE) adds ILA pacing for Stage 18.
-    enable_debug = args.debug
+    # Debug mode: --debug flag or SOCKS_DEBUG_BUILD env var (set by hil_ila.py rebuild)
+    enable_debug = args.debug or os.environ.get("SOCKS_DEBUG_BUILD") == "1"
 
     print(f"\n  Project:  {project_dir}")
     print(f"  XSA:      {xsa_path}")
@@ -120,7 +150,26 @@ def main() -> int:
     result = subprocess.run(
         ["bash", "-c", cmd],
         cwd=build_dir,
+        capture_output=True,
+        text=True,
     )
+
+    # Log full output to build/logs/
+    logs_dir = os.path.join(project_dir, "build", "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_path = os.path.join(logs_dir, "hil_firmware_build.log")
+    with open(log_path, "w") as lf:
+        lf.write(result.stdout)
+        lf.write(result.stderr)
+
+    # Filter suppressed warnings from stdout display
+    combined = result.stdout + result.stderr
+    filtered, suppressed = filter_xsct_output(combined)
+    if filtered.strip():
+        for line in filtered.strip().splitlines()[-20:]:
+            print(f"    {line}")
+    if suppressed > 0:
+        print(f"    ({suppressed} harmless XSCT warnings suppressed, full log: {log_path})")
 
     if result.returncode != 0:
         print(f"\n  {fail_str()}: Firmware build failed (rc={result.returncode})")
@@ -132,8 +181,16 @@ def main() -> int:
         print(f"\n  {fail_str()}: ELF not generated at {elf_path}")
         return 1
 
+    # Write debug build marker if debug mode
+    if enable_debug:
+        marker_path = os.path.join(build_dir, "vitis_ws", ".debug_build")
+        with open(marker_path, "w") as mf:
+            mf.write("debug\n")
+        print(f"    Debug build marker written: {marker_path}")
+
     print(f"\n  {pass_str()}: Firmware built successfully")
     print(f"    ELF: {elf_path}")
+    print(f"    Debug: {enable_debug}")
     print_separator()
     return 0
 

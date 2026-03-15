@@ -288,6 +288,28 @@ end process;
 
 ---
 
+## External Modules
+
+When a project depends on external VHDL modules (e.g. a third-party IP core or a module from another SOCKS project), use **symlinks** in `src/`, not copies.
+
+**Policy (Linux/macOS only):**
+- Create a symbolic link in `src/` pointing to the original file's location.
+- Stage 4 (synthesis audit) detects symlinks and tracks content hash + git provenance of the target.
+- Copies break provenance tracking — if the original file is updated, the copy silently diverges.
+- The symlink target must be under version control (git). Stage 4 records the target's `git log -1` hash.
+
+```bash
+# CORRECT: symlink preserves provenance
+ln -s /path/to/other_project/src/usart_v1.vhd src/usart_v1.vhd
+
+# WRONG: copy breaks provenance tracking
+cp /path/to/other_project/src/usart_v1.vhd src/usart_v1.vhd
+```
+
+**Note:** This policy applies to Linux and macOS only. Windows symlinks require elevated privileges and are not supported by the SOCKS toolchain.
+
+---
+
 ## Dead code check
 
 Before declaring done:

@@ -245,6 +245,22 @@ def main() -> int:
 
     all_passed = True
 
+    # --- Pre-flight: scan TB sources for $dumpfile/$dumpvars (rule X8) ---
+    if not args.sim_only:
+        sv_check_files = args.sv or find_sv_files(project_dir)
+        for sv_file in sv_check_files:
+            with open(sv_file, "r") as f:
+                for lineno, line in enumerate(f, 1):
+                    # Skip comments
+                    stripped = line.split("//")[0]
+                    if re.search(r'\$dump(file|vars)\b', stripped):
+                        print(f"\n  ERROR: SV TB contains $dumpfile/$dumpvars.")
+                        print(f"    {os.path.basename(sv_file)}:{lineno}: {line.strip()}")
+                        print(f"    Remove them — VCD is managed by xsim.py via "
+                              f"vcd_signal_map.json. See references/xsim.md rule X8.")
+                        print_separator()
+                        return 1
+
     # --- Compile phase ---
     if not args.sim_only:
         vhdl_files = args.vhdl or find_vhdl_files(project_dir)

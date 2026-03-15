@@ -5,7 +5,8 @@ Read this file before Stage 7 (SystemVerilog testbench for Xsim).
 ## File header and path conventions
 
 - `Author      : OhmsSweetOhms` (never use real names or "Claude Code")
-- `$dumpfile()` and `csv_open()` must use relative filenames only (e.g. `"module_sim.vcd"`, not absolute paths)
+- **Do not put `$dumpfile`, `$dumpvars`, or any VCD system calls in the SV TB** (rule X8). VCD is managed by `xsim.py` via `vcd_signal_map.json`. `xsim.py` generates the Tcl commands for VCD dumping from the signal map. If the TB also opens a VCD, Xsim will error.
+- `csv_open()` must use relative filenames only (not absolute paths)
 - All file I/O paths in testbenches must be relative to the project directory
 
 ---
@@ -23,6 +24,7 @@ Check every testbench against all seven rules before declaring it Xsim-ready.
 | X5 | No assert/cover property inside generate loops with genvar-indexed arrays. Use a single `always_ff` with a for loop. | Silent misbehaviour or elaboration error |
 | X6 | Never write `2.0 ** 32`. Use the literal `4294967296.0`. | Evaluates to 0 at runtime in some Xsim versions |
 | X7 | No successive `#(delay)` for non-integer timing. Use absolute-time edge scheduling. | Cumulative drift corrupts stimulus after milliseconds of sim time |
+| X8 | No `$dumpfile`, `$dumpvars`, or any VCD system calls in the SV TB. VCD is managed by `xsim.py` via `vcd_signal_map.json`. | Xsim allows only one VCD file open; TB VCD conflicts with xsim.py VCD |
 
 ---
 
@@ -189,6 +191,8 @@ end
 ```
 
 Start capture BEFORE the event you want to debug. Enable CSV before the wait, disable after timeout or capture window.
+
+**CSV Cross-Check (Stage 9):** The SV TB's CSV columns must align with the Python model CSV columns for Stage 9 cross-check to work. See `references/python-testbench.md` § "CSV Cross-Check Contract" for the column schema contract.
 
 ---
 

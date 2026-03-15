@@ -79,7 +79,8 @@ STAGES = {
     13: StageDef("SOCKS Self-Audit",         script="self_audit.py"),
     14: StageDef("HIL: Vivado Project",      script="hil/hil_project.py"),
     15: StageDef("HIL: Implementation",      script="hil/hil_impl.py"),
-    16: StageDef("HIL: Firmware Build",      script="hil/hil_firmware.py"),
+    16: StageDef("HIL: Firmware Build",      script="hil/hil_firmware.py",
+                 guidance="Claude writes sw/hil_test_main.c (read references/hil.md § Firmware Authoring Guide)"),
     17: StageDef("HIL: Program + Test",      script="hil/hil_run.py"),
     18: StageDef("HIL: ILA Capture",         script="hil/hil_ila.py"),
     19: StageDef("HIL: ILA Verify",          script="hil/hil_verify.py"),
@@ -567,7 +568,12 @@ def main() -> int:
             extra_args = ["--project-dir", project_dir]
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            reason = "Build bare-metal firmware via XSCT"
+            # Forward --debug from environment (set by hil_ila.py rebuild)
+            if os.environ.get("SOCKS_DEBUG_BUILD") == "1":
+                extra_args.append("--debug")
+                reason = "Build debug firmware via XSCT (HIL_DEBUG_MODE)"
+            else:
+                reason = "Build bare-metal firmware via XSCT"
 
         elif stage == 17:
             bit_files = glob.glob(os.path.join(project_dir, "build", "hil",
@@ -601,14 +607,14 @@ def main() -> int:
 
         if skip is not None:
             log_transition(stage, reason, [], project_dir)
-            print(f"      {yellow('SKIP')}: {reason}")
+            print(f"      {yellow('N/A')}: {reason}")
             results[stage] = skip
-            # Log skip to session manifest
-            status_str = "skip" if skip == 0 else "fail"
+            # Log to session manifest — non-applicable stages are PASS, not SKIP
+            status_str = "pass" if skip == 0 else "fail"
             append_session_entry(
                 project_dir, stage, status_str, source="script",
                 note=reason)
-            # Log skip to state file
+            # Log to state file (no SKIP status — only PASS, FAIL, VIOLATED, UNKNOWN)
             if sm:
                 label = STAGES[stage].label if stage in STAGES else ""
                 sm.update_stage(stage, status_str.upper(),

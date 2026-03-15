@@ -33,7 +33,7 @@ Logs guidance stages (2, 6, 12) or any manual stage work:
 ```
 --project-dir   Project root (required)
 --stage         Stage number 0-13 (required)
---status        pass | fail | skip (required)
+--status        pass | fail (required)
 --note          Description of what was done
 --files         Files created or modified
 ```
@@ -54,10 +54,10 @@ python3 scripts/dashboard.py --project-dir . --no-serve --output build/dashboard
 ```
 
 The dashboard shows:
-- 14-card stage grid with pass/fail/skip colours, duration, and source badges
+- 14-card stage grid with pass/fail colours, duration, and source badges
 - Next-action banner with retry point and blocked stages
 - Activity log sorted by timestamp (newest first)
-- Stats bar: stages completed, pass/fail/skip counts, total duration
+- Stats bar: stages completed, pass/fail counts, total duration
 - Input hash indicators (docs/src/tb/sw tracking status)
 - Scope and workflow badges in header
 
@@ -111,7 +111,7 @@ Data source: `build/state/project.json` via `/api/state` endpoint.
 }
 ```
 
-- **status**: `"PASS"`, `"FAIL"`, `"VIOLATED"`, `"UNKNOWN"` (uppercase)
+- **status**: `"PASS"`, `"FAIL"`, `"VIOLATED"`, `"UNKNOWN"` (uppercase; `SKIP` is not a valid status — stages must pass or fail)
 - **source**: `"script"` (socks.py) or `"guidance"` (log_stage.py / Claude)
 - **inputs_hash**: SHA-256 of each tracked directory; `null` if directory absent
 - **next_action**: `null` when all stages pass; populated on failure

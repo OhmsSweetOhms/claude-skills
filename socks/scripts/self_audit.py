@@ -178,6 +178,27 @@ def check_absolute_paths(verbose=False):
         return []
 
 
+def check_expected_reference_files(verbose=False):
+    """Check that required reference files exist in the skill."""
+    expected = [
+        "axi-lite.md",
+        "claude_notes.md",
+        "hil.md",
+        "vhdl.md",
+        "xsim.md",
+        "python-testbench.md",
+        "session.md",
+    ]
+    errors = []
+    for fname in expected:
+        path = os.path.join(SKILL_DIR, "references", fname)
+        if not os.path.isfile(path):
+            errors.append(("references/", f"Expected file missing: references/{fname}"))
+        elif verbose:
+            print(f"    references/{fname} ... OK")
+    return errors
+
+
 def check_orchestrator_consistency(verbose=False):
     """Check that socks.py STAGES dict matches actual script files."""
     socks_py = os.path.join(SKILL_DIR, "scripts", "socks.py")
@@ -215,6 +236,7 @@ def main() -> int:
     checks = [
         ("SKILL.md script references", check_skill_md_script_refs),
         ("SKILL.md reference file references", check_skill_md_reference_refs),
+        ("Expected reference files", check_expected_reference_files),
         ("Reference → script cross-references", check_reference_script_refs),
         ("Stale stage-numbered names", check_stale_stage_numbers),
         ("PII / secrets / absolute paths", check_absolute_paths),

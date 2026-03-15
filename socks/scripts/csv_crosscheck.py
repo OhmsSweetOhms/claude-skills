@@ -86,7 +86,10 @@ def main() -> int:
     print(f"  Tolerance: {args.tolerance}")
 
     if not common_cols:
-        print(f"\n  ERROR: No common columns to compare")
+        print(f"\n  ERROR: No common columns. "
+              f"See references/python-testbench.md § CSV Cross-Check Contract.")
+        print(f"    Sim columns:   {', '.join(sim_headers)}")
+        print(f"    Model columns: {', '.join(mod_headers)}")
         print_separator()
         return 1
 

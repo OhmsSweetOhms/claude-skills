@@ -186,6 +186,38 @@ def main() -> int:
             print(f"\n  ERROR: {label} not found: {path}")
             return 1
 
+    # Check debug firmware build marker
+    debug_marker = os.path.join(build_dir, "vitis_ws", ".debug_build")
+    if not os.path.isfile(debug_marker):
+        print(f"\n  Debug firmware not found (no .debug_build marker)")
+        print(f"  Invoking debug rebuild through socks.py...")
+        socks_py = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "socks.py")
+        rebuild_cmd = [
+            sys.executable, socks_py,
+            "--project-dir", project_dir,
+            "--stages", "16",
+        ]
+        # Pass --debug via environment since socks.py forwards it
+        rebuild_env = os.environ.copy()
+        rebuild_env["SOCKS_DEBUG_BUILD"] = "1"
+        rebuild_rc = subprocess.run(rebuild_cmd, env=rebuild_env).returncode
+        if rebuild_rc != 0:
+            print(f"\n  ERROR: Debug firmware rebuild failed (rc={rebuild_rc})")
+            return 1
+        # Reprogram board after debug rebuild
+        print(f"\n  Reprogramming board after debug rebuild...")
+        flash_tcl = os.path.join(tcl_dir(), "flash.tcl")
+        xsdb = find_xsdb()
+        if xsdb and os.path.isfile(flash_tcl):
+            bit_files = glob.glob(os.path.join(build_dir, "vivado_project", "*/impl_1/*.bit"))
+            ps7_path = os.path.join(build_dir, "ps7_init.tcl")
+            if bit_files and os.path.isfile(ps7_path):
+                subprocess.run(
+                    [xsdb, flash_tcl, bit_files[0], elf_path, ps7_path],
+                    cwd=build_dir, timeout=60)
+
     # Load trigger plan
     with open(plan_path) as f:
         plan = json.load(f)
@@ -197,6 +229,18 @@ def main() -> int:
             print(f"\n  ERROR: ila_trigger_plan.json uses deprecated probe/value fields. "
                   f"Update to trigger_probe/trigger_value/trigger_compare.")
             return 1
+
+    # Capture count coupling (hard-fail)
+    hil_json_path = os.path.join(project_dir, "hil.json")
+    if os.path.isfile(hil_json_path):
+        with open(hil_json_path) as f:
+            hil_full = json.load(f)
+        fw_debug_iter = hil_full.get("firmware", {}).get("debug_iterations")
+        if fw_debug_iter is not None:
+            if len(captures) != fw_debug_iter:
+                print(f"\n  ERROR: ila_trigger_plan.json has {len(captures)} captures "
+                      f"but firmware.debug_iterations is {fw_debug_iter}. These must match.")
+                return 1
 
     print(f"\n  Project:  {project_dir}")
     print(f"  Plan:     {plan_path} ({len(captures)} captures)")

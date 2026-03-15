@@ -95,7 +95,7 @@ Stage 13: SOCKS Self-Audit                               AUTOMATED
           +-------------------------------------------------------+
 Stage 14: HIL: Vivado Project                            AUTOMATED
 Stage 15: HIL: Implementation                            AUTOMATED
-Stage 16: HIL: Firmware Build                            AUTOMATED
+Stage 16: HIL: Firmware Build                            BOTH
 Stage 17: HIL: Program + Test (user gate)                AUTOMATED
 Stage 18: HIL: ILA Capture (VCD required)                   AUTOMATED
 Stage 19: HIL: ILA Verify (VCD required)                    AUTOMATED
@@ -124,18 +124,18 @@ plan authoring, and troubleshooting.
 |-------|------|----------------|-----------|
 | 0 | Environment Setup | `scripts/env.py` | -- |
 | 0+ | **Project Status** | Check `build/state/project.json` or run dashboard | *On re-entry to existing project* |
-| 1 | Architecture | `scripts/architecture.py` + guidance | `references/architecture-diagrams.md`, `references/vhdl.md` |
+| 1 | Architecture | `scripts/architecture.py` + guidance | `references/architecture-diagrams.md`, `references/vhdl.md`, `references/axi-lite.md` |
 | 2-9 | **Design Loop** | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
 | 10a | **XDC Constraints** | Read `references/constraints.md`, generate XDC | *Before first synthesis or when missing XDC* |
 | 10b | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
 | 10c | **Timing Closure** | Read `references/timing.md`, diagnose + fix | *Only if Stage 10b shows VIOLATED* |
 | 11 | Bash Audit | `scripts/bash_audit.py` | -- |
-| 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md` |
+| 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md`, `references/claude_notes.md` |
 | 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
 | 14-19 | **HIL Flow** | *See `references/hil.md`* | *Requires `hil.json` in project root* |
 | 14 | HIL: Vivado Project | `scripts/hil/hil_project.py` | `references/hil.md` |
 | 15 | HIL: Implementation | `scripts/hil/hil_impl.py` | `references/hil.md` |
-| 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` | `references/hil.md` |
+| 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` + guidance | `references/hil.md` (§ Firmware Authoring Guide) |
 | 17 | HIL: Program + Test | `scripts/hil/hil_run.py` | `references/hil.md` |
 | 18 | HIL: ILA Capture | `scripts/hil/hil_ila.py` | `references/hil.md` (VCD required) |
 | 19 | HIL: ILA Verify | `scripts/hil/hil_verify.py` | `references/hil.md` (VCD required) |
@@ -287,9 +287,14 @@ checks must pass.
 
 ### Stage 12 -- CLAUDE.md
 
-Create project documentation: What This Is, Architecture, Files table, Build &
-Test, Synthesis Results (from Stage 10 reports), Vivado version, Conventions.
-Written last because it documents everything including the C driver from Stage 6.
+Read `references/claude_notes.md` for the comprehensive content template.
+Create project documentation: entity overview, architecture, file inventory,
+naming conventions, build commands, test overview, synthesis results, known
+limitations, decision boundaries, and tech stack. Written last because it
+documents everything including the C driver from Stage 6.
+
+After Stage 19 (HIL), Claude updates CLAUDE.md with HIL results (see
+`references/claude_notes.md` § "Post-HIL Update").
 
 ### Stage 13 -- SOCKS Self-Audit
 
