@@ -49,8 +49,13 @@ def mode_scan_dir(scan_dir: str) -> int:
         files = git_ls_files(scan_dir)
     else:
         files = []
-        for root, _dirs, fnames in os.walk(scan_dir):
+        workspace_dir = os.path.join(scan_dir, "workspace")
+        for root, dirs, fnames in os.walk(scan_dir):
             if ".git" in root.split(os.sep):
+                continue
+            # Skip ephemeral workspace/ at the top level of the scan root
+            if root == workspace_dir or root.startswith(workspace_dir + os.sep):
+                dirs[:] = []
                 continue
             for fname in fnames:
                 rel = os.path.relpath(os.path.join(root, fname), scan_dir)
