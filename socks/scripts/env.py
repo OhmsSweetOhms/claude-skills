@@ -24,8 +24,10 @@ Exit codes:
 
 import argparse
 import importlib
+import json
 import os
 import re
+import subprocess
 import sys
 
 # Allow importing socks_lib from the same directory
@@ -37,6 +39,11 @@ from socks_lib import (
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def print_info(text):
+    """Print an informational line with [----] prefix."""
+    print(f"    [----] {text}")
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 
 # Vivado version the pipeline is tested against
@@ -426,7 +433,7 @@ def main() -> int:
             os.path.abspath(args.project_dir))
         for name, ok, detail in proj_info:
             if ok is None:
-                print(f"    [{'----':4s}] {name:24s} {detail}")
+                print_info(f"{name:24s} {detail}")
             else:
                 print_result(f"{name:24s} {detail}", ok)
         if not proj_ok:
@@ -439,7 +446,7 @@ def main() -> int:
             os.path.abspath(args.project_dir))
         for name, ok, detail in fp_info:
             if ok is None:
-                print(f"    [{'----':4s}] {name:24s} {detail}")
+                print_info(f"{name:24s} {detail}")
             else:
                 print_result(f"{name:24s} {detail}", ok)
         if not fp_ok:
@@ -455,7 +462,7 @@ def main() -> int:
             hil_lib_dir = os.path.join(SCRIPT_DIR, "hil")
             sys.path.insert(0, hil_lib_dir)
             try:
-                from hil_lib import find_xsdb, find_xsct, check_pyserial
+                from hil_lib import find_xsdb, find_xsct, check_pyserial, find_serial_port
 
                 xsdb = find_xsdb()
                 if xsdb:
@@ -477,6 +484,59 @@ def main() -> int:
                 else:
                     print_result(f"{'pyserial':24s} NOT INSTALLED", False)
                     all_warnings.append("pyserial not installed -- required for HIL stages 17-18")
+
+                # --- Section 6.5: HIL Board Detection ---
+                print(f"\n  HIL Board Detection:")
+
+                # UART port check
+                with open(hil_json) as _f:
+                    hil_cfg = json.load(_f)
+                serial_port = find_serial_port(hil_cfg)
+                if serial_port and os.path.exists(serial_port):
+                    print_result(f"{'UART port':24s} {serial_port}", True)
+                elif serial_port:
+                    print_info(f"{'UART port':24s} {serial_port} (not present)")
+                    all_warnings.append(
+                        f"UART port {serial_port} configured but not present -- board disconnected?")
+                else:
+                    print_info(f"{'UART port':24s} not detected")
+                    all_warnings.append(
+                        "No UART port detected -- HIL stages 17-18 require a board")
+
+                # JTAG probe (only if xsdb found)
+                if xsdb:
+                    try:
+                        jtag_result = subprocess.run(
+                            [xsdb, '-eval',
+                             'connect; puts [jtag targets]; exit'],
+                            capture_output=True, text=True, timeout=10)
+                        jtag_out = jtag_result.stdout.strip()
+                        jtag_full = (jtag_result.stdout + jtag_result.stderr).strip()
+                        has_error = 'error' in jtag_full.lower()
+                        # Look for numbered target lines (e.g. "  1  Digilent ...")
+                        target_lines = [ln for ln in jtag_out.splitlines()
+                                        if re.match(r'\s*\d+\s+', ln)]
+                        if target_lines and not has_error:
+                            first_target = target_lines[0].strip()
+                            print_result(f"{'JTAG target':24s} {first_target}", True)
+                        else:
+                            detail = "none detected"
+                            if has_error:
+                                for ln in jtag_full.splitlines():
+                                    if 'error' in ln.lower():
+                                        detail = ln.strip()
+                                        break
+                            print_info(f"{'JTAG target':24s} {detail}")
+                            all_warnings.append(
+                                "No JTAG target -- HIL stages 15-18 require a board")
+                    except subprocess.TimeoutExpired:
+                        print_info(f"{'JTAG target':24s} probe timed out")
+                        all_warnings.append("JTAG probe timed out (10s)")
+                    except Exception as e:
+                        print_info(f"{'JTAG target':24s} error: {e}")
+                else:
+                    print_info(f"{'JTAG target':24s} skipped (no xsdb)")
+
             except ImportError:
                 print_result(f"{'HIL library':24s} hil_lib.py import failed", False)
                 all_warnings.append("HIL library import failed")
