@@ -466,6 +466,7 @@ The agents/ directory contains instructions for specialized subagents. Read them
 
 The references/ directory has additional documentation:
 - `references/schemas.md` — JSON structures for evals.json, grading.json, etc.
+- `references/socks.md` — Read this when evaluating or modifying the `/socks` skill. Contains eval workspace paths, entry points to test, pre-answered discovery templates, subagent prompt tips, reference file load-bearing analysis, model compatibility notes, and standard assertion sets.
 
 ---
 
