@@ -432,8 +432,10 @@ def main() -> int:
     check_lines = [l for l in sim_output.splitlines()
                    if not l.strip().startswith("##")]
     check_text = "\n".join(check_lines).upper()
+    # Exclude FAIL in zero-count contexts: "FAIL: 0", "FAIL:0", "0 FAIL", "0 FAILURES"
+    fail_zero = re.search(r'FAIL\s*:\s*0\b|0\s+FAIL', check_text)
     has_fail = ("FAIL" in check_text and "ALL PASS" not in check_text and
-                "SIMULATION PASSED" not in check_text and "0 FAIL" not in check_text)
+                "SIMULATION PASSED" not in check_text and not fail_zero)
     has_pass = ("ALL PASS" in check_text or "ALL TESTS PASSED" in check_text or
                 "TEST PASSED" in check_text or "SIMULATION PASSED" in check_text)
 

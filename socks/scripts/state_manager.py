@@ -108,6 +108,16 @@ class StateManager:
         """
         state = self.load()
         if state is not None:
+            # Migrate v1 format: "project" was a string, now a dict
+            if isinstance(state.get("project"), str):
+                old_name = state["project"]
+                state["project"] = {
+                    "name": old_name,
+                    "scope": scope,
+                    "last_workflow": workflow,
+                    "timestamp_last_modified": datetime.now().isoformat(),
+                }
+                state["version"] = 2
             # Update workflow / scope if provided
             if workflow:
                 state["project"]["last_workflow"] = workflow

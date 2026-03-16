@@ -146,7 +146,7 @@ plan authoring, and troubleshooting.
 
 ## Orchestrator
 
-**Workflow entry points (preferred):**
+**Workflow entry points (required — always use these, never call stage scripts directly):**
 ```bash
 python scripts/socks.py --project-dir . --design --scope block
 python scripts/socks.py --project-dir . --test
@@ -178,8 +178,11 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 
 Guidance-only stages (2, 6, 12) are driven by Claude, not the orchestrator.
 
-**Never call stage scripts directly** (e.g. `xsim.py`, `audit.py`). Always
-route through `socks.py` so results are captured in `build/state/project.json`.
+**Never call stage scripts directly** (e.g. `xsim.py`, `audit.py`, `python_rerun.py`).
+Always route through `socks.py` — this is mandatory because:
+- Stage results are only tracked when run through the orchestrator
+- Hash-based re-entry (skip unchanged stages) only works via `socks.py`
+- Direct calls corrupt pipeline state and break `--bughunt` recovery
 
 **Full rebuild:** When the user asks to "build", "rebuild", or "recompile",
 run `scripts/build.py` which handles clean + full pipeline. **Do not manually

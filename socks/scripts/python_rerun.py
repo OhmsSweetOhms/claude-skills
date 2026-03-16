@@ -11,6 +11,7 @@ Exit code 0 if the testbench passes, 1 if it fails or errors.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 import os
@@ -61,9 +62,10 @@ def main() -> int:
         output = result.stdout + result.stderr
         output_upper = output.upper()
 
+        fail_zero = re.search(r'FAIL\s*:\s*0\b|0\s+FAIL', output_upper)
         passed = (result.returncode == 0 and
                   ("FAIL" not in output_upper or "ALL PASS" in output_upper or
-                   "ALL TESTS PASSED" in output_upper))
+                   "ALL TESTS PASSED" in output_upper or bool(fail_zero)))
 
         print()
         print_separator()

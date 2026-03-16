@@ -120,9 +120,13 @@ in the Python).
 
 ## Stage Details (2-9)
 
-**Running automated stages:** Always run stages through the orchestrator, never
-call stage scripts directly. Workflow commands handle hash-based re-entry
-automatically:
+**Running automated stages:** Always run stages through the orchestrator — never
+call stage scripts directly. This is mandatory because:
+- Stage results are only tracked when run through the orchestrator
+- Hash-based re-entry (skip unchanged stages) only works via `socks.py`
+- Direct calls corrupt pipeline state and break `--bughunt` recovery
+
+Workflow commands handle hash-based re-entry automatically:
 ```bash
 # Preferred: workflow commands (hash detection picks re-entry point)
 python3 scripts/socks.py --project-dir . --bughunt
@@ -235,3 +239,20 @@ Report first divergence.
 4. **Verify comments with the same rigour as code.** Wrong constants in headers become bugs.
 5. **Never use `abs()` on signed values.** Two-sided comparison in VHDL, Python, and SV.
 6. **Audit scripts are not throwaway code.** They become regression tests.
+
+### Common Mistake: Calling Stage Scripts Directly
+
+Do NOT run stage scripts directly:
+```bash
+# WRONG — breaks pipeline state tracking
+python3 scripts/xsim.py --project-dir .
+python3 scripts/audit.py src/*.vhd
+python3 tb/usart_axi_tb.py
+```
+
+Always route through the orchestrator:
+```bash
+# CORRECT
+python3 scripts/socks.py --project-dir . --stages 3,4,5,7,8,9
+python3 scripts/socks.py --project-dir . --test
+```
