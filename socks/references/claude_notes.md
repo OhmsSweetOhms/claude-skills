@@ -13,7 +13,7 @@ all source files.
 
 - Entity name, version, purpose (one paragraph)
 - Target device and tool version
-- Design scope: module / block / project
+- Design scope: module / block / system
 - Key specifications (baud rates, frequencies, bit widths, etc.)
 
 ### 2. Architecture

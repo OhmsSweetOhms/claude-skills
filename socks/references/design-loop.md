@@ -144,7 +144,7 @@ python3 scripts/socks.py --project-dir . --stages 4,5,7,8,9
 
 ### Stage 2 -- Write/Modify RTL
 
-Read `references/vhdl.md` before writing any VHDL.
+Apply VHDL coding patterns from training data (saturation, multiply widths, etc.).
 
 Key rules:
 - Architecture identifier: `rtl`

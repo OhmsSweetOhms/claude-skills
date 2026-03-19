@@ -181,10 +181,8 @@ def check_absolute_paths(verbose=False):
 def check_expected_reference_files(verbose=False):
     """Check that required reference files exist in the skill."""
     expected = [
-        "axi-lite.md",
         "claude_notes.md",
         "hil.md",
-        "vhdl.md",
         "xsim.md",
         "python-testbench.md",
         "session.md",

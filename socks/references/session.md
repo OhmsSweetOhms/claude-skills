@@ -63,6 +63,38 @@ The dashboard shows:
 
 Data source: `build/state/project.json` via `/api/state` endpoint.
 
+## socks.json (project config)
+
+`socks.json` lives in the project root (git-tracked) and stores design decisions
+from discovery that survive `build/` clean:
+
+```json
+{
+    "name": "my_project",
+    "scope": "system",
+    "dut": {
+        "entity": "system_wrapper"
+    },
+    "board": {
+        "part": "xc7z020clg400-1",
+        "preset": "microzed"
+    },
+    "sub_designs": []
+}
+```
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `name` | yes | Project name |
+| `scope` | yes | `"system"` \| `"block"` \| `"module"` |
+| `dut.entity` | no | Top-level entity. Set by architecture.py/architecture-system.py |
+| `board.part` | no | FPGA part. Required for Stage 10 and `--hil` |
+| `board.preset` | no | Board name matching `references/boards/<preset>/` |
+| `sub_designs` | no | Custom RTL sub-designs: `[{"name": "...", "scope": "block", "path": "..."}]` |
+
+Created during `--design` discovery. Read by orchestrator and HIL scripts for
+scope-conditional logic.
+
 ## project.json format
 
 ```json

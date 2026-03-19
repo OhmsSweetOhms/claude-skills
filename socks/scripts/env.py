@@ -96,7 +96,6 @@ REQUIRED_REFERENCES = [
     "python-testbench.md",
     "synthesis.md",
     "vcd-verify.md",
-    "vhdl.md",
     "xsim.md",
 ]
 
@@ -289,6 +288,17 @@ def check_project_structure(project_dir):
 
     info.append(("Project directory", True, project_dir))
 
+    # Check if system scope (src/ not required)
+    socks_json = os.path.join(project_dir, "socks.json")
+    is_system_scope = False
+    if os.path.isfile(socks_json):
+        try:
+            with open(socks_json) as _f:
+                _cfg = json.load(_f)
+            is_system_scope = _cfg.get("scope") == "system"
+        except (json.JSONDecodeError, OSError):
+            pass
+
     # Required directories
     for d in PROJECT_DIRS_REQUIRED:
         path = os.path.join(project_dir, d)
@@ -297,6 +307,9 @@ def check_project_structure(project_dir):
             vhd_count = len([f for f in os.listdir(path)
                            if f.endswith((".vhd", ".vhdl"))])
             info.append((f"{d}/", True, f"{vhd_count} VHDL file(s)"))
+        elif is_system_scope and d == "src":
+            info.append((f"{d}/", None,
+                         "not present (optional for system scope)"))
         else:
             info.append((f"{d}/", False, "MISSING (required)"))
             passed = False

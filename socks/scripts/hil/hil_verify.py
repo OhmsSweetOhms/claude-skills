@@ -32,6 +32,7 @@ from socks_lib import (
     print_header, print_separator, pass_str, fail_str, yellow,
     parse_vcd_header, stream_vcd,
 )
+from project_config import get_scope
 
 
 def parse_ila_csv(csv_path):
@@ -138,7 +139,13 @@ def main() -> int:
     project_dir = os.path.abspath(args.project_dir)
     print_header("Stage 19: HIL ILA Verify")
 
-    # VCD is a hard requirement
+    # Skip entirely for system scope (no VCD baseline)
+    project_scope = get_scope(project_dir)
+    if project_scope == "system":
+        print(f"\n  Skipped: system scope has no VCD baseline for ILA comparison")
+        return 0
+
+    # VCD is a hard requirement for module/block scope
     vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
     if not vcd_files:
         print(f"\n  ERROR: VCD not found at build/sim/*.vcd. "

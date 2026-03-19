@@ -5,7 +5,7 @@ socks.py -- SOCKS Pipeline Orchestrator
 Runs pipeline stages in sequence or individually.
 
 Workflow entry points:
-    python scripts/socks.py --project-dir . --design --scope block
+    python scripts/socks.py --project-dir . --design --scope system
     python scripts/socks.py --project-dir . --test
     python scripts/socks.py --project-dir . --architecture --scope module
     python scripts/socks.py --project-dir . --bughunt
@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from socks_lib import print_header, print_separator, pass_str, fail_str, yellow, bold, green
 from session import load_session, create_session, append_session_entry
 from state_manager import StateManager, HASH_DIRS
+from project_config import load_project_config, get_scope, get_part, get_entity
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -62,7 +63,7 @@ STAGES = {
     0:  StageDef("Environment Setup",       script="env.py"),
     1:  StageDef("Architecture Analysis",    script="architecture.py",
                  guidance="RTL + TB architecture, Mermaid diagrams, rate analysis (read references/architecture-diagrams.md). Enter plan mode for user approval before proceeding."),
-    2:  StageDef("Write/Modify RTL",         guidance="read references/vhdl.md"),
+    2:  StageDef("Write/Modify RTL",         guidance="read VHDL coding patterns from training data"),
     3:  StageDef("VHDL Linter",              script="linter.py",
                  guidance="read references/linter.md"),
     4:  StageDef("Synthesis Audit",          script="audit.py"),
@@ -84,17 +85,20 @@ STAGES = {
     17: StageDef("HIL: Program + Test",      script="hil/hil_run.py"),
     18: StageDef("HIL: ILA Capture",         script="hil/hil_ila.py"),
     19: StageDef("HIL: ILA Verify",          script="hil/hil_verify.py"),
+    20: StageDef("System Design Loop",
+                 guidance="read references/design-loop-system.md"),
 }
 
 DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
 
 # Workflow-to-stages mapping (automated stages only; guidance stages handled by Claude)
 WORKFLOW_STAGES = {
-    "design":       [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13],
-    "test":         [4, 5, 7, 8, 9],
-    "architecture": [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13],
-    "bughunt":      [3, 4, 5, 7, 8, 9, 10],
-    "hil":          [0, 10, 14, 15, 16, 17, 18, 19],
+    "design":        [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13],
+    "design_system": [0, 1, 20, 10, 11, 12, 13],
+    "test":          [4, 5, 7, 8, 9],
+    "architecture":  [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13],
+    "bughunt":       [3, 4, 5, 7, 8, 9, 10],
+    "hil":           [0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13],
 }
 
 
@@ -229,10 +233,11 @@ def find_python_tb(project_dir):
     return None
 
 
-def run_stage(stage_num, project_dir, extra_args=None):
+def run_stage(stage_num, project_dir, extra_args=None, script_override=None):
     """Run a pipeline stage. Returns exit code.
 
     Guidance-only stages (no script) print their label and return 0.
+    script_override: use this script instead of the STAGES default.
     """
     if stage_num not in STAGES:
         print(f"\n  ERROR: Unknown stage {stage_num}")
@@ -240,13 +245,13 @@ def run_stage(stage_num, project_dir, extra_args=None):
 
     stage = STAGES[stage_num]
 
-    # Guidance-only stage with no script
-    if not stage.script:
+    # Guidance-only stage with no script (and no override)
+    if not stage.script and not script_override:
         print(f"\n  Stage {stage_num}: {stage.label}")
         print(f"  (Guidance-only -- no automated script)")
         return 0
 
-    script_path = os.path.join(SCRIPT_DIR, stage.script)
+    script_path = os.path.join(SCRIPT_DIR, script_override or stage.script)
 
     if not os.path.isfile(script_path):
         print(f"\n  ERROR: Script not found: {script_path}")
@@ -286,16 +291,16 @@ def main() -> int:
                           help="Hardware-in-the-loop: stages 0,10,14-19 (requires --top)")
 
     parser.add_argument("--scope", type=str, default=None,
-                        choices=["module", "block", "project"],
-                        help="Design scope (module/block/project)")
+                        choices=["module", "block", "system"],
+                        help="Design scope (module/block/system)")
     parser.add_argument("--stages", type=str, default="automated",
                         help="Stages to run: 'automated' or comma-separated (e.g. '0,4,9')")
     parser.add_argument("--files", type=str, nargs="*", default=None,
                         help="Specific files to pass to stage scripts")
     parser.add_argument("--top", type=str, default=None,
                         help="Top-level entity name (required for --hil, also used by stages 1, 10)")
-    parser.add_argument("--part", type=str, default="xc7z020clg484-1",
-                        help="FPGA part (for stages 10, 14)")
+    parser.add_argument("--part", type=str, default=None,
+                        help="FPGA part override (default: from socks.json board.part)")
     parser.add_argument("--settings", type=str, default=None,
                         help="Path to Vivado settings64.sh")
     parser.add_argument("--clean", action="store_true",
@@ -343,13 +348,23 @@ def main() -> int:
         active_workflow = "bughunt"
     elif args.hil:
         active_workflow = "hil"
-        if not args.top:
-            print("ERROR: --top is required for --hil. "
+        # --top is optional for system scope (uses dut.entity from socks.json)
+        project_scope = args.scope or get_scope(project_dir)
+        if not args.top and project_scope != "system":
+            print("ERROR: --top is required for --hil (unless scope is system). "
                   "Provide the DUT entity name (e.g. --top uart_axi).")
             return 1
 
     if active_workflow:
-        stages = WORKFLOW_STAGES[active_workflow]
+        # System scope uses design_system stage list
+        if active_workflow == "design":
+            project_scope = args.scope or get_scope(project_dir)
+            if project_scope == "system":
+                stages = WORKFLOW_STAGES["design_system"]
+            else:
+                stages = WORKFLOW_STAGES["design"]
+        else:
+            stages = WORKFLOW_STAGES[active_workflow]
     else:
         stages = parse_stages(args.stages)
 
@@ -373,11 +388,24 @@ def main() -> int:
         else:
             print(f"  WARNING: clean.py not found at {clean_script}")
 
+    # --- socks.json gate: all workflows except --design require it ---
+    if active_workflow and active_workflow != "design":
+        socks_cfg = load_project_config(project_dir)
+        if socks_cfg is None:
+            print(f"\n  ERROR: socks.json not found. Run --design first to create a "
+                  f"project, or --migrate to import an existing one.")
+            return 1
+
+    # Resolve part: CLI override > socks.json > None
+    resolved_part = args.part or get_part(project_dir)
+
     # --- State file & hash check (workflow paths only) ---
     sm = None
     if active_workflow:
         sm = StateManager(project_dir)
-        sm.ensure_state(scope=args.scope, workflow=active_workflow)
+        # Read scope from socks.json if not provided via CLI
+        effective_scope = args.scope or get_scope(project_dir)
+        sm.ensure_state(scope=effective_scope, workflow=active_workflow)
 
         changed, re_entry = sm.detect_changes()
 
@@ -422,14 +450,21 @@ def main() -> int:
                 reason += f" (user-specified: {args.settings})"
 
         elif stage == 1:
-            files = args.files or find_vhdl_files(project_dir)
-            extra_args = list(files)
-            if args.top:
-                extra_args = ["--top", args.top] + extra_args
-            if files:
-                reason = f"Parse {len(files)} VHDL file(s), estimate DSP/resource usage"
+            project_scope = get_scope(project_dir) or args.scope
+            if project_scope == "system":
+                extra_args = ["--project-dir", project_dir]
+                if args.top:
+                    extra_args.extend(["--top", args.top])
+                reason = "Validate DESIGN-INTENT.md for system scope, set dut.entity"
             else:
-                reason = "Greenfield -- no VHDL yet, guidance creates ARCHITECTURE.md"
+                files = args.files or find_vhdl_files(project_dir)
+                extra_args = list(files)
+                if args.top:
+                    extra_args = ["--top", args.top] + extra_args
+                if files:
+                    reason = f"Parse {len(files)} VHDL file(s), estimate DSP/resource usage"
+                else:
+                    reason = "Greenfield -- no VHDL yet, guidance creates ARCHITECTURE.md"
 
         elif stage == 3:
             files = args.files or find_vhdl_files(project_dir)
@@ -500,41 +535,51 @@ def main() -> int:
             reason = f"Compare {os.path.basename(sim_csv)} vs {os.path.basename(model_csv)}"
 
         elif stage == 10:
+            project_scope = get_scope(project_dir) or args.scope
             synth_top = args.top
             src_dir = os.path.join(project_dir, "src")
             if not os.path.isdir(src_dir):
                 src_dir = project_dir
 
-            # Auto-detect RTL entity: strip _tb suffix, or scan src/ for entities
-            if synth_top and synth_top.endswith("_tb"):
-                synth_top = synth_top[:-3]
-            if not synth_top:
-                # Scan VHDL files for entity declarations
-                import re as _re
-                for vf in sorted(glob.glob(os.path.join(src_dir, "*.vhd"))):
-                    with open(vf) as _f:
-                        for _line in _f:
-                            _m = _re.match(r'\s*entity\s+(\w+)\s+is\b',
-                                           _line, _re.IGNORECASE)
-                            if _m:
-                                synth_top = _m.group(1)
-                                break
-                    if synth_top:
-                        break
-            if not synth_top:
-                return [], "--top not provided and no entity found in src/", 0
+            # System scope: read entity from socks.json
+            if project_scope == "system":
+                synth_top = synth_top or get_entity(project_dir) or "system_wrapper"
+            else:
+                # Auto-detect RTL entity: strip _tb suffix, or scan src/ for entities
+                if synth_top and synth_top.endswith("_tb"):
+                    synth_top = synth_top[:-3]
+                if not synth_top:
+                    # Scan VHDL files for entity declarations
+                    import re as _re
+                    for vf in sorted(glob.glob(os.path.join(src_dir, "*.vhd"))):
+                        with open(vf) as _f:
+                            for _line in _f:
+                                _m = _re.match(r'\s*entity\s+(\w+)\s+is\b',
+                                               _line, _re.IGNORECASE)
+                                if _m:
+                                    synth_top = _m.group(1)
+                                    break
+                        if synth_top:
+                            break
+                if not synth_top:
+                    return [], "--top not provided and no entity found in src/", 0
+
+            # Resolve part: CLI > socks.json > error
+            part = resolved_part
+            if not part:
+                return [], "No --part provided and no board.part in socks.json", 0
 
             out_dir = os.path.join(project_dir, "build", "synth")
             os.makedirs(out_dir, exist_ok=True)
             extra_args = [
                 "--top", synth_top,
-                "--part", args.part,
+                "--part", part,
                 "--src-dir", src_dir,
                 "--out-dir", out_dir,
             ]
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            reason = f"Synthesise {synth_top} for {args.part}"
+            reason = f"Synthesise {synth_top} for {part}"
 
         elif stage == 11:
             extra_args = ["--project-dir", project_dir]
@@ -544,9 +589,17 @@ def main() -> int:
             reason = "Validate SOCKS skill internal consistency"
 
         elif stage == 14:
-            if not args.top:
-                return [], "ERROR: --top is required for --hil. Provide the DUT entity name (e.g. --top uart_axi).", 1
-            extra_args = ["--project-dir", project_dir, "--top", args.top, "--part", args.part]
+            project_scope = get_scope(project_dir) or args.scope
+            hil_top = args.top
+            if not hil_top:
+                # System scope: read from socks.json
+                hil_top = get_entity(project_dir)
+            if not hil_top:
+                return [], "ERROR: --top is required for --hil (no dut.entity in socks.json).", 1
+            part = resolved_part
+            if not part:
+                return [], "No --part provided and no board.part in socks.json", 1
+            extra_args = ["--project-dir", project_dir, "--top", hil_top, "--part", part]
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
             reason = "Create HIL Vivado project from hil.json"
@@ -586,12 +639,19 @@ def main() -> int:
             reason = "Program board + run HIL test"
 
         elif stage == 18:
+            project_scope = get_scope(project_dir) or args.scope
             extra_args = ["--project-dir", project_dir]
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
-            reason = "ILA multi-capture (VCD required)"
+            if project_scope == "system":
+                reason = "ILA multi-capture (capture-only, no VCD comparison)"
+            else:
+                reason = "ILA multi-capture (VCD required)"
 
         elif stage == 19:
+            project_scope = get_scope(project_dir) or args.scope
+            if project_scope == "system":
+                return [], "Skipped for system scope (no VCD baseline)", 0
             extra_args = ["--project-dir", project_dir]
             reason = "ILA-vs-VCD verification (VCD required)"
 
@@ -626,8 +686,15 @@ def main() -> int:
 
         log_transition(stage, reason, extra_args, project_dir)
 
+        # Determine script override for scope-conditional stages
+        script_override = None
+        if stage == 1:
+            project_scope = get_scope(project_dir) or args.scope
+            if project_scope == "system":
+                script_override = "architecture-system.py"
+
         t0 = _time.monotonic()
-        rc = run_stage(stage, project_dir, extra_args)
+        rc = run_stage(stage, project_dir, extra_args, script_override=script_override)
         elapsed = _time.monotonic() - t0
 
         # Stage 4 (audit) exit code 2 = external-only warnings (non-blocking)

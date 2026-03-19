@@ -16,11 +16,12 @@ under `socks/references/` — no external skill dependencies.
 │    dashboard.py (live SSE, reads project.json)           │
 │                                                          │
 │  references/                                             │
-│    discovery.md          (Stage -1: design intent)       │
+│    discovery.md          (Stage -1: module/block intent)  │
+│    discovery-system.md   (Stage -1: system scope intent)  │
 │    design-loop.md ─┬── regmap.md (Stage 2)               │
 │                    └── constraints.md, timing.md         │
+│    design-loop-system.md (Stage 20: system design loop)  │
 │    architecture-diagrams.md (Stage 1)                    │
-│    vhdl.md               (Stage 2)                       │
 │    linter.md             (Stage 3)                       │
 │    synthesis.md          (Stage 4)                       │
 │    python-testbench.md   (Stage 5)                       │
@@ -31,11 +32,14 @@ under `socks/references/` — no external skill dependencies.
 │    timing.md             (Stage 10c)                     │
 │    regmap.md             (Stage 2, on register change)   │
 │    hil.md ────────── (Stages 14-19: HIL flow)            │
+│    test-discovery-system.md (system scope test discovery) │
 │    dpll.md               (DPLL/PLL designs)              │
 │    project-structure.md  (directory conventions)          │
 │    project-migration.md  (legacy + flat→SOCKS migration) │
 │    session.md            (state file & dashboard)        │
 │    skill-map.md          (this file)                     │
+│    boards/               (board reference assets)         │
+│      microzed/           (MicroZed 7020 preset + XDC)    │
 │                                                          │
 │  scripts/hil/                                            │
 │    hil_lib.py ── shared HIL utilities                    │
@@ -45,7 +49,7 @@ under `socks/references/` — no external skill dependencies.
 │    tcl/ ── gen_hil_top, run_impl, ila_capture, flash,   │
 │            boot_cpu, templates (create_project,          │
 │            block_design, build_app)                      │
-│    presets/ ── microzed_ps7_preset.tcl                   │
+│    presets/ ── microzed_ps7_preset.tcl (legacy)           │
 │    xdc/ ── insert_debug.xdc, microzed.xdc               │
 └──────────────────────────────────────────────────────────┘
 ```

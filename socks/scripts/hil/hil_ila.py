@@ -38,6 +38,7 @@ from socks_lib import (
     find_vivado_settings, print_header, print_separator,
     pass_str, fail_str, yellow,
 )
+from project_config import get_scope
 
 
 class VivadoILA:
@@ -149,9 +150,10 @@ def main() -> int:
     project_dir = os.path.abspath(args.project_dir)
     print_header("Stage 18: HIL ILA Capture")
 
-    # VCD is a hard requirement
+    # VCD is required for module/block scope; system scope runs capture-only
+    project_scope = get_scope(project_dir)
     vcd_files = glob.glob(os.path.join(project_dir, "build", "sim", "*.vcd"))
-    if not vcd_files:
+    if not vcd_files and project_scope != "system":
         print(f"\n  ERROR: VCD not found at build/sim/*.vcd. "
               f"Run Stage 7 to generate a VCD and fix any simulation errors.")
         return 1

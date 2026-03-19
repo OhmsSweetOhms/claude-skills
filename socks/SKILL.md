@@ -19,11 +19,11 @@ Six entry points. Parse the user's `/socks` message for flags:
 | `/socks --migrate` | Claude-driven project migration (legacy SOCKS or flat/3rd-party) |
 | `/socks` *(no flags)* | Ask the user which workflow they want |
 
-**Scope** is `module`, `block`, or `project`. If the user doesn't specify
-scope, ask: "What scope? (module / block / project)". Scope definitions:
+**Scope** is `module`, `block`, or `system`. If the user doesn't specify
+scope, ask: "What scope? (module / block / system)". Scope definitions:
 - **module** -- single VHDL entity (e.g. CRC engine, edge detector)
 - **block** -- multi-module subsystem (e.g. UART controller with TX, RX, FIFO, reg map)
-- **project** -- full SoC or multi-block integration (e.g. Zynq PS-PL)
+- **system** -- SoC integration (Xilinx IP + optional custom blocks/modules from separate designs)
 
 **Bare `/socks`:** When the user types `/socks` with no flags, present:
 > Which workflow?
@@ -40,7 +40,8 @@ Then proceed with their choice.
 
 Before Stage 1, run a discovery conversation to produce `docs/DESIGN-INTENT.md`.
 
-1. Read `references/discovery.md` for the core questions (scope-specific)
+1. Read `references/discovery.md` for module/block scope, or
+   `references/discovery-system.md` for system scope
 2. Ask each core question, one at a time or in small batches
 3. Analyze the user's answers and ask generative follow-up questions
    (clarifications triggered by their specific answers)
@@ -82,6 +83,12 @@ Stage 1:  Architecture (RTL + TB) -> Plan Mode approval  BOTH
           +-------------------------------------------------------+
           |  DESIGN LOOP (2-9) -- see references/design-loop.md  |
           |  references/regmap.md -- after any register change    |
+          |  (module/block scope only)                             |
+          +-------------------------------------------------------+
+          +-------------------------------------------------------+
+          |  SYSTEM DESIGN LOOP (20)                               |
+          |  see references/design-loop-system.md                  |
+          |  (system scope only -- replaces stages 2-9)            |
           +-------------------------------------------------------+
 Stage 10: Vivado Synthesis                               AUTOMATED
           references/constraints.md -- generate XDC before first synthesis
@@ -124,7 +131,7 @@ plan authoring, and troubleshooting.
 |-------|------|----------------|-----------|
 | 0 | Environment Setup | `scripts/env.py` | -- |
 | 0+ | **Project Status** | Check `build/state/project.json` or run dashboard | *On re-entry to existing project* |
-| 1 | Architecture | `scripts/architecture.py` + guidance | `references/architecture-diagrams.md`, `references/vhdl.md`, `references/axi-lite.md` |
+| 1 | Architecture | `scripts/architecture.py` (module/block) or `scripts/architecture-system.py` (system) + guidance | `references/architecture-diagrams.md` |
 | 2-9 | **Design Loop** | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
 | 10a | **XDC Constraints** | Read `references/constraints.md`, generate XDC | *Before first synthesis or when missing XDC* |
 | 10b | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
@@ -148,6 +155,7 @@ plan authoring, and troubleshooting.
 
 **Workflow entry points (required — always use these, never call stage scripts directly):**
 ```bash
+python scripts/socks.py --project-dir . --design --scope system
 python scripts/socks.py --project-dir . --design --scope block
 python scripts/socks.py --project-dir . --test
 python scripts/socks.py --project-dir . --architecture --scope module
@@ -161,15 +169,16 @@ python scripts/socks.py --project-dir . --hil --top <entity>
 python scripts/socks.py --project-dir . --stages automated
 python scripts/socks.py --project-dir . --stages 0,4,7
 python scripts/socks.py --project-dir . --stages 4 --files src/*.vhd
-python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z020clg484-1
+python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z020clg400-1
 ```
 
 **Workflows map to stages:**
-- `--design` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13 (all automated)
+- `--design` (module/block) -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13
+- `--design --scope system` -- 0, 1, 20, 10, 11, 12, 13 (Stage 20 replaces 2-9)
 - `--test` -- 4, 5, 7, 8, 9 (sim only)
-- `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13 (full re-architecture)
+- `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
-- `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19 (hardware-in-the-loop, --top required)
+- `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13 (--top optional for system scope)
 - `--migrate` -- Claude-driven (`references/project-migration.md`), no automated stages
 
 **Stage keywords:**
@@ -205,6 +214,7 @@ project_name/
 │   ├── logs/          # Legacy pipeline logs
 │   └── artifacts/     # Claude scratch space
 ├── docs/              # Architecture diagrams + README
+├── socks.json         # Project config (name, scope, board, sub-designs)
 ├── hil.json           # HIL config (optional, triggers stages 14-19)
 ├── CLAUDE.md          # Project guide (Stage 12 output)
 └── .gitignore         # Vivado/Xsim artifact ignores
@@ -224,8 +234,9 @@ Run `scripts/env.py` to verify everything the pipeline needs:
    (`xvhdl`, `xvlog`, `xelab`, `xsim`, `vivado`), warns if version != 2023.2
 2. **Python** -- version >= 3.8, all stdlib modules used by SOCKS scripts
 3. **SOCKS skill** -- all scripts and reference files exist, SKILL.md valid
-4. **Project structure** (with `--project-dir`) -- `src/` required;
-   `tb/`, `build/`, `sw/`, `docs/`, `CLAUDE.md`, `.gitignore` checked if present
+4. **Project structure** (with `--project-dir`) -- `src/` required for module/block
+   (optional for system scope); `tb/`, `build/`, `sw/`, `docs/`, `CLAUDE.md`,
+   `.gitignore` checked if present. Reads `socks.json` for scope and `board.part`.
 
 On a new machine, run it standalone first:
 ```bash
@@ -254,10 +265,18 @@ two Mermaid diagrams into `docs/ARCHITECTURE.md`:
 
 Every frequency must appear with its derivation (e.g. "100 MHz / 100 = 1 MHz tick").
 
-**2. Resource analysis** -- widest intermediates, integer overflow risk, DSP48E1
-count per multiply, critical path depth.
+**2. Resource analysis** (module/block scope) -- widest intermediates, integer
+overflow risk, DSP48E1 count per multiply, critical path depth.
 
-Read `references/vhdl.md` for saturation constant patterns and multiply width rules.
+**System scope variant:** When scope is `system`, Stage 1 runs
+`scripts/architecture-system.py` which validates DESIGN-INTENT.md for system
+scope sections (IP config, pin assignment, memory map), checks board references,
+and sets `dut.entity` in socks.json. System scope deliverables are authored by
+Claude during Stage 20 (system design loop):
+1. `build/synth/create_bd.tcl` -- Vivado block design TCL
+2. `build/synth/build_bitstream.tcl` -- synthesis/impl/bitstream TCL
+3. `constraints/*.xdc` -- pin assignment + I/O standard
+4. `docs/ARCHITECTURE.md` -- Mermaid diagrams (data flow, clocking, rate summary)
 
 ### Stage 10 -- Vivado Synthesis
 

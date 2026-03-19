@@ -180,8 +180,40 @@ def tcl_dir():
 
 
 def presets_dir():
-    """Return absolute path to scripts/hil/presets/."""
+    """Return absolute path to scripts/hil/presets/ (legacy location)."""
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+
+
+def boards_dir():
+    """Return absolute path to references/boards/."""
+    skill_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(skill_dir, "references", "boards")
+
+
+def find_preset(preset_name, board_name=None):
+    """Find a board preset TCL file.
+
+    Search order:
+    1. references/boards/<board_name>/ (if board_name provided)
+    2. scripts/hil/presets/ (legacy location)
+    """
+    if board_name:
+        board_path = os.path.join(boards_dir(), board_name)
+        if os.path.isdir(board_path):
+            # Search for any *_preset.tcl
+            for f in os.listdir(board_path):
+                if f.endswith("_preset.tcl"):
+                    return os.path.join(board_path, f)
+            # Try exact name
+            candidate = os.path.join(board_path, preset_name)
+            if os.path.isfile(candidate):
+                return candidate
+
+    # Legacy fallback
+    candidate = os.path.join(presets_dir(), os.path.basename(preset_name))
+    if os.path.isfile(candidate):
+        return candidate
+    return None
 
 
 def xdc_dir():

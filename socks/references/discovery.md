@@ -1,5 +1,8 @@
 # SOCKS Discovery Phase
 
+> **System scope:** For system scope designs (SoC integration of Xilinx IP),
+> read `references/discovery-system.md` instead of this file.
+
 The discovery phase runs before Stage 1 Architecture on `/socks --design`.
 It produces `docs/DESIGN-INTENT.md` -- the contract that gates the design loop.
 
@@ -55,21 +58,6 @@ A multi-module subsystem (e.g. a UART controller with TX, RX, FIFO, register map
 9. **What does the bare-metal C driver need to do?** Init, configure, poll, IRQ?
 10. **Any existing code, IP, or constraints to integrate with?**
 
-### Project Scope
-
-A full SoC or multi-block integration (e.g. Zynq PS-PL with multiple peripherals).
-
-1. **What is the system?** Name, purpose, target board/part.
-2. **What blocks does it contain?** Names, roles, interconnects.
-3. **What is the memory map?** Base addresses, aperture sizes, bus topology.
-4. **What are the system clocks?** PS clock, PL clocks, derived clocks, CDC plan.
-5. **What external interfaces?** Board-level I/O (pins, connectors, standards).
-6. **What is the boot flow?** PS boot, PL configuration, firmware loading.
-7. **What are the integration constraints?** Shared buses, interrupt routing, DMA.
-8. **What are the success criteria?** System-level tests, timing across all blocks, resource budget.
-9. **What firmware/software runs on the PS?** Bare-metal, RTOS, Linux?
-10. **Any existing IP, block designs, or constraints?**
-
 ---
 
 ## DESIGN-INTENT.md Template
@@ -81,7 +69,7 @@ Claude synthesizes discovery answers into this structure:
 
 ## What Are We Building?
 - **Name:** {entity/block/project name}
-- **Scope:** {module | block | project}
+- **Scope:** {module | block | system}
 - **Purpose:** {one paragraph}
 
 ## Design Space Constraints
@@ -107,7 +95,7 @@ Claude synthesizes discovery answers into this structure:
 - {questions for the design loop to resolve}
 ```
 
-For **block** and **project** scopes, add:
+For **block** scope, add:
 
 ```markdown
 ## Register Map (Block/Project)

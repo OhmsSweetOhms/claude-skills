@@ -67,7 +67,7 @@ SCAN_NAMES = {
 
 # Directories to skip
 SKIP_DIRS = {
-    ".git", ".Xil", "xsim.dir", "webtalk", "__pycache__", ".claude",
+    ".git", ".Xil", "xsim.dir", "webtalk", "__pycache__", ".claude", "build",
 }
 
 

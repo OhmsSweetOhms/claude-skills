@@ -1,5 +1,8 @@
 # SOCKS Test Discovery Phase
 
+> **System scope:** For system scope designs (Xilinx IP block design),
+> read `references/test-discovery-system.md` instead of this file.
+
 The test discovery phase runs before the HIL flow (`--hil`). It produces
 `docs/TEST-INTENT.md` -- the contract that drives artifact generation
 (`hil_prep.py`) and ILA capture planning.

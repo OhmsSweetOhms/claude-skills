@@ -25,6 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import print_header, print_separator, pass_str, fail_str, yellow
+from project_config import get_scope
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +200,52 @@ def generate_hil_json(project_dir, top, part="xc7z020clg484-1"):
         return None  # caller should load existing
 
     # Find and parse top entity
+    project_scope = get_scope(project_dir)
     vhd_files = sorted(glob.glob(os.path.join(project_dir, "src", "*.vhd")))
-    if not vhd_files:
+    if not vhd_files and project_scope != "system":
         print(f"  ERROR: No VHDL files in src/")
         return None
+    if not vhd_files and project_scope == "system":
+        # System scope: no VHDL yet, use entity from socks.json
+        from project_config import get_entity
+        entity = get_entity(project_dir) or top
+        print(f"  System scope: no VHDL in src/, using entity '{entity}' from socks.json")
+        # Build minimal config without VHDL parsing
+        hil_config = {
+            "dut": {
+                "entity": entity,
+                "sources": [],
+                "project_type": "block_design",
+            },
+            "board": {
+                "part": part,
+                "serial_vid": "10c4",
+                "serial_pid": "ea60",
+                "serial_fallback": "/dev/ttyUSB1",
+            },
+            "axi": {
+                "base_address": "0x43C00000",
+                "range": "4K",
+                "fclk_mhz": 100,
+            },
+            "wiring": {
+                "loopback": [],
+                "monitor": {"prefixes": [], "ports": []},
+            },
+            "firmware": {
+                "test_src": "sw/hil_test_main.c",
+                "driver_sources": [],
+                "pass_marker": "HIL_PASS",
+                "fail_marker": "HIL_FAIL",
+                "timeout_s": 30,
+            },
+        }
+        hil_json_path = os.path.join(project_dir, "hil.json")
+        with open(hil_json_path, "w") as f:
+            json.dump(hil_config, f, indent=2)
+            f.write("\n")
+        print(f"  {pass_str()}: Generated hil.json (system scope, minimal)")
+        return hil_config
 
     top_file = None
     top_lines = None
