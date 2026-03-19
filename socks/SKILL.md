@@ -77,35 +77,39 @@ the design intent.
 ## Pipeline Overview
 
 ```
-Stage 0:  Environment Setup                              AUTOMATED
-          dashboard -- check project.json on re-entry
-Stage 1:  Architecture (RTL + TB) -> Plan Mode approval  BOTH
-          +-------------------------------------------------------+
-          |  DESIGN LOOP (2-9) -- see references/design-loop.md  |
-          |  references/regmap.md -- after any register change    |
-          |  (module/block scope only)                             |
-          +-------------------------------------------------------+
-          +-------------------------------------------------------+
-          |  SYSTEM DESIGN LOOP (20)                               |
-          |  see references/design-loop-system.md                  |
-          |  (system scope only -- replaces stages 2-9)            |
-          +-------------------------------------------------------+
-Stage 10: Vivado Synthesis                               AUTOMATED
-          references/constraints.md -- generate XDC before first synthesis
-          references/timing.md -- diagnose and fix if VIOLATED
-Stage 11: Bash Audit                                     AUTOMATED
-Stage 12: CLAUDE.md Documentation                        GUIDANCE
-Stage 13: SOCKS Self-Audit                               AUTOMATED
-          +-------------------------------------------------------+
-          |  HIL FLOW (14-19) -- see references/hil.md           |
-          |  requires hil.json in project root                    |
-          +-------------------------------------------------------+
-Stage 14: HIL: Vivado Project                            AUTOMATED
-Stage 15: HIL: Implementation                            AUTOMATED
-Stage 16: HIL: Firmware Build                            BOTH
-Stage 17: HIL: Program + Test (user gate)                AUTOMATED
-Stage 18: HIL: ILA Capture (VCD required)                   AUTOMATED
-Stage 19: HIL: ILA Verify (VCD required)                    AUTOMATED
+Stage  Scope          Name                                Type
+-----  -----          ----                                ----
+ 0     all            Environment Setup                   AUTOMATED
+                      dashboard -- check project.json on re-entry
+ 1     all            Architecture -> Plan Mode approval  BOTH
+                      +-------------------------------------------------------+
+                      |  DESIGN LOOP (2-9) -- see references/design-loop.md  |
+                      |  references/regmap.md -- after any register change    |
+                      +-------------------------------------------------------+
+ 2-9   module/block   Design Loop (RTL, TB, sim, verify)  BOTH
+                      +-------------------------------------------------------+
+                      |  SYSTEM DESIGN LOOP (20)                               |
+                      |  see references/design-loop-system.md                  |
+                      +-------------------------------------------------------+
+ 20    system         System Design Loop (TCL, XDC, arch) GUIDANCE
+10     all            Vivado Synthesis                     AUTOMATED
+                      references/constraints.md -- generate XDC before first synthesis
+                      references/timing.md -- diagnose and fix if VIOLATED
+11     all            Bash Audit                           AUTOMATED
+12     all            CLAUDE.md Documentation              GUIDANCE
+13     all            SOCKS Self-Audit                     AUTOMATED
+                      +-------------------------------------------------------+
+                      |  HIL FLOW (14-19) -- see references/hil.md           |
+                      |  requires hil.json in project root                    |
+                      +-------------------------------------------------------+
+14     all            HIL: Vivado Project                  AUTOMATED
+15     all            HIL: Implementation                  AUTOMATED
+16     all            HIL: Firmware Build                  BOTH
+17     all            HIL: Program + Test (user gate)      AUTOMATED
+18     module/block   HIL: ILA Capture (VCD required)      AUTOMATED
+18     system         HIL: ILA Capture (capture-only)      AUTOMATED
+19     module/block   HIL: ILA Verify (VCD required)       AUTOMATED
+19     system         (skipped -- no VCD baseline)
 ```
 
 **Entering the design loop:** Read `references/design-loop.md` before Stage 2.
@@ -132,7 +136,8 @@ plan authoring, and troubleshooting.
 | 0 | Environment Setup | `scripts/env.py` | -- |
 | 0+ | **Project Status** | Check `build/state/project.json` or run dashboard | *On re-entry to existing project* |
 | 1 | Architecture | `scripts/architecture.py` (module/block) or `scripts/architecture-system.py` (system) + guidance | `references/architecture-diagrams.md` |
-| 2-9 | **Design Loop** | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
+| 2-9 | **Design Loop** (module/block) | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
+| 20 | **System Design Loop** (system) | *Claude authors TCL/XDC/ARCHITECTURE.md* | `references/design-loop-system.md` |
 | 10a | **XDC Constraints** | Read `references/constraints.md`, generate XDC | *Before first synthesis or when missing XDC* |
 | 10b | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
 | 10c | **Timing Closure** | Read `references/timing.md`, diagnose + fix | *Only if Stage 10b shows VIOLATED* |
