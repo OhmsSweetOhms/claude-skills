@@ -631,15 +631,20 @@ def main() -> int:
 
         elif stage == 10:
             project_scope = get_scope(project_dir) or args.scope
-            synth_top = args.top
-            src_dir = os.path.join(project_dir, "src")
-            if not os.path.isdir(src_dir):
-                src_dir = project_dir
 
-            # System scope: read entity from socks.json
+            # System scope: pass --project-dir only (TCL-driven flow)
             if project_scope == "system":
-                synth_top = synth_top or get_entity(project_dir) or "system_wrapper"
+                synth_top = get_entity(project_dir) or "system_wrapper"
+                extra_args = ["--project-dir", project_dir]
+                if args.settings:
+                    extra_args.extend(["--settings", args.settings])
+                reason = f"Synthesise {synth_top} (system scope)"
             else:
+                synth_top = args.top
+                src_dir = os.path.join(project_dir, "src")
+                if not os.path.isdir(src_dir):
+                    src_dir = project_dir
+
                 # Auto-detect RTL entity: strip _tb suffix, or scan src/ for entities
                 if synth_top and synth_top.endswith("_tb"):
                     synth_top = synth_top[:-3]
@@ -659,22 +664,22 @@ def main() -> int:
                 if not synth_top:
                     return [], "--top not provided and no entity found in src/", 0
 
-            # Resolve part: CLI > socks.json > error
-            part = resolved_part
-            if not part:
-                return [], "No --part provided and no board.part in socks.json", 0
+                # Resolve part: CLI > socks.json > error
+                part = resolved_part
+                if not part:
+                    return [], "No --part provided and no board.part in socks.json", 0
 
-            out_dir = os.path.join(project_dir, "build", "synth")
-            os.makedirs(out_dir, exist_ok=True)
-            extra_args = [
-                "--top", synth_top,
-                "--part", part,
-                "--src-dir", src_dir,
-                "--out-dir", out_dir,
-            ]
-            if args.settings:
-                extra_args.extend(["--settings", args.settings])
-            reason = f"Synthesise {synth_top} for {part}"
+                out_dir = os.path.join(project_dir, "build", "synth")
+                os.makedirs(out_dir, exist_ok=True)
+                extra_args = [
+                    "--top", synth_top,
+                    "--part", part,
+                    "--src-dir", src_dir,
+                    "--out-dir", out_dir,
+                ]
+                if args.settings:
+                    extra_args.extend(["--settings", args.settings])
+                reason = f"Synthesise {synth_top} for {part}"
 
         elif stage == 11:
             extra_args = ["--project-dir", project_dir]
@@ -787,6 +792,10 @@ def main() -> int:
             project_scope = get_scope(project_dir) or args.scope
             if project_scope == "system":
                 script_override = "architecture-system.py"
+        elif stage == 10:
+            project_scope = get_scope(project_dir) or args.scope
+            if project_scope == "system":
+                script_override = "synth-system.py"
 
         t0 = _time.monotonic()
         rc = run_stage(stage, project_dir, extra_args, script_override=script_override)

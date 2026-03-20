@@ -49,11 +49,34 @@ Before Stage 1, run a discovery conversation to produce `docs/DESIGN-INTENT.md`.
    into `docs/DESIGN-INTENT.md` using the template in `references/discovery.md`
 5. Present the intent document to the user for approval
 6. If the user requests changes, iterate
-7. Once approved, run: `python scripts/socks.py --project-dir . --design --scope {scope}`
+7. Once approved, **immediately** run the orchestrator — do not author any
+   other files first:
+   `python scripts/socks.py --project-dir . --design --scope {scope}`
+8. The orchestrator creates `build/state/project.json` (pipeline state tracking),
+   runs automated stages, and prints guidance for manual stages. Only after the
+   orchestrator runs should you begin authoring deliverables for guidance stages.
 
 **Important:** Discovery is a conversation, not a script. Claude drives the
 questions and synthesis. The pipeline only starts after the user approves
 the design intent.
+
+### Guidance Stage Protocol
+
+When the orchestrator reaches a guidance-only stage (e.g. Stage 20, Stage 12),
+it prints `WAITING` with a list of required files and stops the pipeline.
+Claude's job is to fulfill that stage and then re-run the orchestrator so
+automated stages resume:
+
+1. Read the orchestrator output — it names the stage and missing files
+2. Read the reference document for that stage (see Stage Dispatch Table)
+3. Author all required deliverables for the stage
+4. Re-run the orchestrator with the same command — it detects the new files,
+   marks the guidance stage PASS, and continues to the next stage
+5. Repeat until the pipeline completes
+
+**Do not skip the re-run.** Automated stages after a guidance stage (e.g.
+Stage 10 after Stage 20) depend on deliverables authored during the guidance
+stage. The orchestrator validates these exist before proceeding.
 
 ### Other Workflows
 
@@ -292,8 +315,9 @@ XDC timing constraints. This ensures async inputs have `set_false_path` to
 sync1 registers (not just `get_ports`), clock definitions are correct, and
 monitor ports are excluded.
 
-**Stage 10b -- Synthesis:** Run `scripts/synth.py`. All timing checks must
-show MET.
+**Stage 10b -- Synthesis:** Run `scripts/synth.py` (module/block scope) or
+`scripts/synth-system.py` (system scope — runs user-authored TCL scripts
+from Stage 20). All timing checks must show MET.
 
 **Stage 10c -- Timing Closure:** If Stage 10b reports VIOLATED timing, read
 `references/timing.md` and follow the diagnostic procedure. Parse the critical
