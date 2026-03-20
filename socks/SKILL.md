@@ -90,10 +90,11 @@ stage. The orchestrator validates these exist before proceeding.
 - **`--hil`:** Read `references/hil.md` for prerequisites and `hil.json` schema.
   Requires board connected via JTAG + UART, `hil.json` in project root. Then run:
   `python scripts/socks.py --project-dir . --hil --top <entity>`
-- **`--migrate`:** Read `references/migration-module.md`. Classify the project
-  (legacy SOCKS vs flat/3rd-party), run `scripts/clean.py --project-dir . --all`
-  to remove generated artifacts, then follow the migration workflow. This is
-  Claude-driven — no pipeline stages run automatically.
+- **`--migrate`:** Read `references/migration-module.md` (module/block) or
+  `references/migration-system.md` (system scope). Classify the project,
+  follow the migration workflow, then validate with the SOCKS pipeline.
+  Use `--scope` to specify the target layout. This is Claude-driven — no
+  pipeline stages run automatically.
 
 ---
 
@@ -207,7 +208,7 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 - `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
 - `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13 (--top optional for system scope)
-- `--migrate` -- Claude-driven (`references/migration-module.md`), no automated stages
+- `--migrate` -- Claude-driven (`references/migration-module.md` or `references/migration-system.md`), no automated stages
 
 **Stage keywords:**
 - `--stages automated` -- all stages with scripts: 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19

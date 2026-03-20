@@ -410,6 +410,13 @@ def main() -> int:
 
     project_dir = os.path.abspath(args.project_dir)
 
+    # Scope conflict check: --scope must agree with socks.json if both present
+    json_scope = get_scope(project_dir)
+    if args.scope and json_scope and args.scope != json_scope:
+        print(f"ERROR: --scope {args.scope} conflicts with socks.json scope \"{json_scope}\".")
+        print(f"  A {json_scope}-scope project cannot be treated as {args.scope}.")
+        return 1
+
     # --summary: print and exit
     if args.summary:
         print_session_summary(project_dir)
@@ -419,16 +426,37 @@ def main() -> int:
     if args.migrate:
         print_header("SOCKS Migration")
         print(f"\n  Project: {project_dir}")
-        print()
-        print("  This is a Claude-driven workflow. Read references/migration-module.md")
-        print("  and follow the steps:")
-        print()
-        print("  1. Classify: legacy SOCKS or flat/3rd-party")
-        print("  2. Clean generated artifacts (scripts/clean.py --project-dir . --all)")
-        print("  3. Inventory and investigate")
-        print("  4. Present migration plan for approval")
-        print("  5. Apply migrations (use socks_lib.migrate_project() for state file stub)")
-        print("  6. Validate with SOCKS pipeline")
+
+        project_scope = args.scope or get_scope(project_dir)
+        if not project_scope:
+            print("\n  ERROR: Scope not determined. Use --scope or create socks.json first.")
+            print("  --scope module  (single entity or multi-module block)")
+            print("  --scope system  (Xilinx IP block design, no custom RTL)")
+            return 1
+
+        if project_scope == "system":
+            print(f"\n  Scope: system")
+            print(f"\n  This is a Claude-driven workflow. Read references/migration-system.md")
+            print(f"  and follow the steps:")
+            print()
+            print("  1. Classify: raw Vivado project or flat TCL/XDC")
+            print("  2. Inventory TCL scripts, XDC, C drivers")
+            print("  3. Present migration plan for approval")
+            print("  4. Create directory structure and move files")
+            print("  5. Update TCL path references (script_dir depth change)")
+            print("  6. Create socks.json, .gitignore, docs")
+            print("  7. Validate: python scripts/socks.py --project-dir . --design --scope system")
+        else:
+            print(f"\n  Scope: {project_scope}")
+            print(f"\n  This is a Claude-driven workflow. Read references/migration-module.md")
+            print(f"  and follow the steps:")
+            print()
+            print("  1. Classify: legacy SOCKS or flat/3rd-party")
+            print("  2. Clean generated artifacts (scripts/clean.py --project-dir . --all)")
+            print("  3. Inventory and investigate")
+            print("  4. Present migration plan for approval")
+            print("  5. Apply migrations (use socks_lib.migrate_project() for state file stub)")
+            print("  6. Validate with SOCKS pipeline")
         return 0
 
     # Determine stages from workflow flag or --stages
