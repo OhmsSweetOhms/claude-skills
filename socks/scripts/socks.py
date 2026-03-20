@@ -36,6 +36,7 @@ not by this orchestrator.
 
 import argparse
 import glob
+import json
 import os
 import subprocess
 import sys
@@ -57,36 +58,54 @@ _transition_log = []
 # Unified stage definitions
 # ---------------------------------------------------------------------------
 
-StageDef = namedtuple("StageDef", ["label", "script", "guidance"], defaults=[None, None])
+StageDef = namedtuple("StageDef",
+    ["label", "script", "guidance", "required_files"],
+    defaults=[None, None, None])
+
+# Exit code returned when a guidance stage is waiting for Claude to author files.
+WAITING = 2
 
 STAGES = {
     0:  StageDef("Environment Setup",       script="env.py"),
     1:  StageDef("Architecture Analysis",    script="architecture.py",
                  guidance="RTL + TB architecture, Mermaid diagrams, rate analysis (read references/architecture-diagrams.md). Enter plan mode for user approval before proceeding."),
-    2:  StageDef("Write/Modify RTL",         guidance="read VHDL coding patterns from training data"),
+    2:  StageDef("Write/Modify RTL",
+                 guidance="read VHDL coding patterns from training data",
+                 required_files=["src/*.vhd"]),
     3:  StageDef("VHDL Linter",              script="linter.py",
                  guidance="read references/linter.md"),
     4:  StageDef("Synthesis Audit",          script="audit.py"),
     5:  StageDef("Python Testbench",         script="python_rerun.py",
                  guidance="Write/update cycle-accurate Python model (read references/python-testbench.md)"),
-    6:  StageDef("Bare-Metal C Driver",      guidance="read references/baremetal.md"),
+    6:  StageDef("Bare-Metal C Driver",
+                 guidance="read references/baremetal.md",
+                 required_files=["sw/*.c", "sw/*.h"]),
     7:  StageDef("SV/Xsim Testbench",        script="xsim.py",
                  guidance="Write/update SV testbench (read references/xsim.md)"),
     8:  StageDef("VCD Verification",         script="vcd_verify.py"),
     9:  StageDef("CSV Cross-Check",          script="csv_crosscheck.py"),
     10: StageDef("Vivado Synthesis",         script="synth.py"),
     11: StageDef("Bash Audit",               script="bash_audit.py"),
-    12: StageDef("CLAUDE.md Documentation",  guidance="read references/project-structure.md"),
+    12: StageDef("CLAUDE.md Documentation",
+                 guidance="read references/project-structure.md, references/claude_notes.md",
+                 required_files=["CLAUDE.md"]),
     13: StageDef("SOCKS Self-Audit",         script="self_audit.py"),
     14: StageDef("HIL: Vivado Project",      script="hil/hil_project.py"),
     15: StageDef("HIL: Implementation",      script="hil/hil_impl.py"),
     16: StageDef("HIL: Firmware Build",      script="hil/hil_firmware.py",
-                 guidance="Claude writes sw/hil_test_main.c (read references/hil.md § Firmware Authoring Guide)"),
+                 guidance="Claude writes sw/hil_test_main.c (read references/hil.md § Firmware Authoring Guide)",
+                 required_files=["sw/hil_test_main.c"]),
     17: StageDef("HIL: Program + Test",      script="hil/hil_run.py"),
     18: StageDef("HIL: ILA Capture",         script="hil/hil_ila.py"),
     19: StageDef("HIL: ILA Verify",          script="hil/hil_verify.py"),
     20: StageDef("System Design Loop",
-                 guidance="read references/design-loop-system.md"),
+                 guidance="read references/design-loop-system.md",
+                 required_files=[
+                     "build/synth/create_bd.tcl",
+                     "build/synth/build_bitstream.tcl",
+                     "constraints/*.xdc",
+                     "docs/ARCHITECTURE.md",
+                 ]),
 }
 
 DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
@@ -233,10 +252,66 @@ def find_python_tb(project_dir):
     return None
 
 
+def _has_dynamic_required(project_dir, stage_num):
+    """True if project.json has required_files for this stage."""
+    state_file = os.path.join(project_dir, "build", "state", "project.json")
+    if not os.path.isfile(state_file):
+        return False
+    try:
+        with open(state_file) as f:
+            state = json.load(f)
+        return bool(state.get("stages", {})
+                         .get(str(stage_num), {})
+                         .get("required_files"))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def check_required_files(project_dir, stage_num):
+    """Check required files for a guidance stage.
+
+    Merges two sources:
+      1. Static glob patterns from StageDef.required_files
+      2. Dynamic file lists from project.json stages.<N>.required_files
+
+    Returns (present, missing) where each is a list of patterns/paths.
+    """
+    stage = STAGES.get(stage_num)
+    patterns = list(stage.required_files) if stage and stage.required_files else []
+
+    # Merge dynamic required_files from project.json
+    state_file = os.path.join(project_dir, "build", "state", "project.json")
+    if os.path.isfile(state_file):
+        try:
+            with open(state_file) as f:
+                state = json.load(f)
+            dynamic = (state.get("stages", {})
+                            .get(str(stage_num), {})
+                            .get("required_files", []))
+            # Dynamic files are exact paths, not globs — add without duplicates
+            for df in dynamic:
+                if df not in patterns:
+                    patterns.append(df)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    present = []
+    missing = []
+    for pattern in patterns:
+        if glob.glob(os.path.join(project_dir, pattern)):
+            present.append(pattern)
+        else:
+            missing.append(pattern)
+
+    return present, missing
+
+
 def run_stage(stage_num, project_dir, extra_args=None, script_override=None):
     """Run a pipeline stage. Returns exit code.
 
-    Guidance-only stages (no script) print their label and return 0.
+    Guidance-only stages gate on required files:
+      - All present -> PASS (0)
+      - Any missing -> WAITING (2), pipeline stops
     script_override: use this script instead of the STAGES default.
     """
     if stage_num not in STAGES:
@@ -248,8 +323,28 @@ def run_stage(stage_num, project_dir, extra_args=None, script_override=None):
     # Guidance-only stage with no script (and no override)
     if not stage.script and not script_override:
         print(f"\n  Stage {stage_num}: {stage.label}")
-        print(f"  (Guidance-only -- no automated script)")
-        return 0
+
+        # Check required files (static from StageDef + dynamic from project.json)
+        if stage.required_files or _has_dynamic_required(project_dir, stage_num):
+            present, missing = check_required_files(project_dir, stage_num)
+            if missing:
+                print(f"  {yellow('WAITING')} -- required files not found:")
+                for f in missing:
+                    print(f"    - {f}")
+                if present:
+                    print(f"  Already present:")
+                    for f in present:
+                        print(f"    + {f}")
+                if stage.guidance:
+                    print(f"\n  Action: {stage.guidance}")
+                print(f"\n  Re-run the orchestrator after authoring these files.")
+                return WAITING
+            else:
+                print(f"  All {len(present)} required file(s) present -- {pass_str()}")
+                return 0
+        else:
+            print(f"  (Guidance-only -- no required files defined)")
+            return 0
 
     script_path = os.path.join(SCRIPT_DIR, script_override or stage.script)
 
@@ -702,12 +797,30 @@ def main() -> int:
             print(f"\n  Stage 4: external module warnings only -- continuing pipeline")
             results[stage] = 0
             warnings.add(stage)
+        # Guidance stage WAITING (exit code 2) = files missing, stop pipeline
+        elif rc == WAITING:
+            results[stage] = WAITING
+            sess_status = "waiting"
+            append_session_entry(
+                project_dir, stage, sess_status, source="guidance",
+                note="Required files missing -- author and re-run")
+            if sm:
+                label = STAGES[stage].label if stage in STAGES else ""
+                sm.update_stage(stage, "WAITING",
+                                duration_seconds=elapsed,
+                                source="guidance", note="Required files missing",
+                                name=label)
+            print(f"\n  Stage {stage} {yellow('WAITING')} -- "
+                  f"author the required files and re-run the orchestrator")
+            break
         else:
             results[stage] = rc
 
         # Log result to session manifest
         if results[stage] == 0:
             sess_status = "pass"
+        elif results[stage] == WAITING:
+            continue  # already logged above
         else:
             sess_status = "fail"
         # Determine log file for this run
@@ -734,7 +847,12 @@ def main() -> int:
     print_header("Pipeline Summary")
     for stage in stages:
         if stage in results:
-            status = pass_str() if results[stage] == 0 else fail_str()
+            if results[stage] == 0:
+                status = pass_str()
+            elif results[stage] == WAITING:
+                status = yellow("WAIT")
+            else:
+                status = fail_str()
             label = STAGES[stage].label if stage in STAGES else f"Stage {stage}"
             print(f"  [{status}] Stage {stage:2d}: {label}")
 
