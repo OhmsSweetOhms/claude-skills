@@ -1,0 +1,167 @@
+# System Scope Project Structure
+
+System scope projects use Xilinx IP block designs with no custom RTL. There is
+no `src/` or `tb/` directory. The build flow is driven by user-authored TCL
+scripts, not VHDL source files.
+
+---
+
+## Directory layout
+
+```
+project_name/
+├── build/
+│   ├── synth/            # User-authored TCL + Vivado reports
+│   │   ├── create_bd.tcl       # Block design creation script
+│   │   ├── build_bitstream.tcl # Synthesis/impl/bitstream script
+│   │   ├── *_preset.tcl        # PS7/PS8 preset (local copy from board ref)
+│   │   ├── utilization.rpt     # Post-impl utilization report
+│   │   ├── timing.rpt          # Post-impl timing summary
+│   │   └── system_wrapper.xsa  # Hardware platform export
+│   ├── vivado_project/   # Vivado project directory (generated)
+│   │   └── system.xpr          # Project file
+│   ├── state/            # project.json (pipeline state)
+│   ├── logs/             # Pipeline logs
+│   └── artifacts/        # Claude scratch space
+├── constraints/          # XDC pin/timing constraints
+├── sw/                   # C/C++ bare-metal drivers
+├── docs/                 # Architecture diagrams + design intent
+│   ├── DESIGN-INTENT.md        # Discovery output
+│   └── ARCHITECTURE.md         # Mermaid diagrams + rate summary
+├── socks.json            # Project config (scope: "system")
+├── hil.json              # HIL config (optional)
+├── CLAUDE.md             # Project guide (Stage 12 output)
+└── .gitignore
+```
+
+### What's different from module/block scope
+
+| Feature | Module/Block | System |
+|---------|-------------|--------|
+| `src/` | VHDL source files | **Not used** |
+| `tb/` | Python TB, SV TB | **Not used** |
+| `build/sim/` | Xsim simulation artifacts | **Not used** |
+| `build/synth/` | Generated TCL + reports | **User-authored TCL** + reports |
+| `build/vivado_project/` | Not used | Vivado project (generated) |
+| `constraints/` | Generated or hand-written XDC | Hand-written XDC |
+| Stages 2-9 | Design loop (RTL, TB, sim) | **Stage 20** (system design loop) |
+| Stage 10 | `synth.py` (VHDL compile) | `synth-system.py` (run TCL scripts) |
+
+### `build/synth/` -- TCL scripts and reports
+
+System scope has two user-authored TCL scripts (created during Stage 20):
+
+**`create_bd.tcl`** -- Creates the Vivado block design:
+- Instantiates PS7/PS8 with board preset
+- Adds IP blocks (SPI, GPIO, UART, etc.)
+- Configures IP properties
+- Connects AXI interconnect
+- Validates and saves the design
+- Generates HDL wrapper
+
+**`build_bitstream.tcl`** -- Runs the full implementation:
+- Opens the Vivado project
+- Launches synthesis
+- Launches implementation (place + route)
+- Generates bitstream
+- Exports XSA (hardware platform)
+- Writes utilization and timing reports
+
+Both scripts use `[file dirname [info script]]` for path resolution and must
+be run with `cwd=project_dir`.
+
+### `constraints/` -- Pin assignments
+
+XDC files with pin locations and I/O standards. System scope constraints
+typically cover:
+- External I/O pins (SPI, GPIO, UART signals)
+- I/O standard (`LVCMOS33`, `LVCMOS25`, etc.)
+- No clock constraints (PS-generated clocks are auto-constrained)
+
+### `sw/` -- Bare-metal drivers
+
+C driver source and headers. System scope drivers interact with IP blocks
+via AXI memory-mapped registers:
+- Register map defines (`#define BASE_ADDR`, bit fields)
+- Init/config functions
+- Polling-based TX/RX
+- Slave select management (for SPI)
+
+### `docs/` -- Documentation
+
+- `DESIGN-INTENT.md` -- Discovery phase output with IP configuration,
+  pin assignment, memory map, and success criteria
+- `ARCHITECTURE.md` -- Mermaid diagrams (data flow, clocking) and rate summary
+
+### `build/vivado_project/` -- Generated project
+
+The entire Vivado project directory. Created by `create_bd.tcl`, contains
+the block design, IP catalog, synthesis/implementation runs. This is
+**fully gitignored** -- regenerated from TCL scripts.
+
+---
+
+## .gitignore template
+
+```gitignore
+# Build outputs (TCL scripts are tracked, everything else regenerates)
+build/vivado_project/
+build/synth/*.log
+build/synth/*.jou
+build/synth/*.rpt
+build/synth/*.xsa
+build/state/
+build/logs/
+build/artifacts/
+
+# Vivado temporaries
+*.Xil/
+vivado*.log
+vivado*.jou
+vivado*.backup.*
+
+# Claude local settings
+.claude/
+```
+
+System scope tracks the TCL scripts and PS7 preset in `build/synth/` but
+gitignores generated reports, logs, and the Vivado project directory.
+
+---
+
+## socks.json
+
+```json
+{
+    "name": "project-name",
+    "scope": "system",
+    "board": {
+        "preset": "microzed",
+        "part": "xc7z020clg400-1"
+    },
+    "dut": {
+        "entity": "system_wrapper"
+    }
+}
+```
+
+The `scope: "system"` field drives the orchestrator to use system-specific
+scripts (architecture-system.py, synth-system.py) and stage sequences
+(Stage 20 instead of Stages 2-9).
+
+---
+
+## CLAUDE.md template
+
+Generated by Stage 12. System scope CLAUDE.md should include:
+
+- Entity overview (what IPs, what bus topology)
+- Architecture (PS config, IP block list, interconnect)
+- Memory map table (base addresses, ranges)
+- Pin assignment table (signal, connector pin, FPGA ball)
+- File inventory (TCL scripts, XDC, drivers, docs)
+- Build commands (create_bd.tcl, build_bitstream.tcl)
+- Synthesis results (utilization + timing tables)
+- C driver API table
+- Known limitations
+- Decision boundaries (when to use sub-designs vs system scope)

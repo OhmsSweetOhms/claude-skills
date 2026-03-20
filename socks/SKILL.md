@@ -90,7 +90,7 @@ stage. The orchestrator validates these exist before proceeding.
 - **`--hil`:** Read `references/hil.md` for prerequisites and `hil.json` schema.
   Requires board connected via JTAG + UART, `hil.json` in project root. Then run:
   `python scripts/socks.py --project-dir . --hil --top <entity>`
-- **`--migrate`:** Read `references/project-migration.md`. Classify the project
+- **`--migrate`:** Read `references/migration-module.md`. Classify the project
   (legacy SOCKS vs flat/3rd-party), run `scripts/clean.py --project-dir . --all`
   to remove generated artifacts, then follow the migration workflow. This is
   Claude-driven — no pipeline stages run automatically.
@@ -162,10 +162,10 @@ plan authoring, and troubleshooting.
 | 2-9 | **Design Loop** (module/block) | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
 | 20 | **System Design Loop** (system) | *Claude authors TCL/XDC/ARCHITECTURE.md* | `references/design-loop-system.md` |
 | 10a | **XDC Constraints** | Read `references/constraints.md`, generate XDC | *Before first synthesis or when missing XDC* |
-| 10b | Vivado Synthesis | `scripts/synth.py` | `references/synthesis.md` |
+| 10b | Vivado Synthesis | `scripts/synth.py` (module/block) or `scripts/synth-system.py` (system) | `references/synthesis.md` |
 | 10c | **Timing Closure** | Read `references/timing.md`, diagnose + fix | *Only if Stage 10b shows VIOLATED* |
 | 11 | Bash Audit | `scripts/bash_audit.py` | -- |
-| 12 | CLAUDE.md | *Claude writes docs* | `references/project-structure.md`, `references/claude_notes.md` |
+| 12 | CLAUDE.md | *Claude writes docs* | `references/structure-module.md` or `references/structure-system.md`, `references/claude_notes.md` |
 | 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
 | 14-19 | **HIL Flow** | *See `references/hil.md`* | *Requires `hil.json` in project root* |
 | 14 | HIL: Vivado Project | `scripts/hil/hil_project.py` | `references/hil.md` |
@@ -207,7 +207,7 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 - `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
 - `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13 (--top optional for system scope)
-- `--migrate` -- Claude-driven (`references/project-migration.md`), no automated stages
+- `--migrate` -- Claude-driven (`references/migration-module.md`), no automated stages
 
 **Stage keywords:**
 - `--stages automated` -- all stages with scripts: 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19
@@ -248,7 +248,8 @@ project_name/
 └── .gitignore         # Vivado/Xsim artifact ignores
 ```
 
-See `references/project-structure.md` for full conventions.
+See `references/structure-module.md` for module/block conventions,
+`references/structure-system.md` for system scope conventions.
 
 ---
 

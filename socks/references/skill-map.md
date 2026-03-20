@@ -34,8 +34,10 @@ under `socks/references/` — no external skill dependencies.
 │    hil.md ────────── (Stages 14-19: HIL flow)            │
 │    test-discovery-system.md (system scope test discovery) │
 │    dpll.md               (DPLL/PLL designs)              │
-│    project-structure.md  (directory conventions)          │
-│    project-migration.md  (legacy + flat→SOCKS migration) │
+│    structure-module.md   (module/block directory layout)  │
+│    structure-system.md   (system scope directory layout)  │
+│    migration-module.md   (legacy + flat→SOCKS migration) │
+│    migration-system.md   (Vivado project→SOCKS migration)│
 │    session.md            (state file & dashboard)        │
 │    skill-map.md          (this file)                     │
 │    boards/               (board reference assets)         │

@@ -87,7 +87,7 @@ STAGES = {
     10: StageDef("Vivado Synthesis",         script="synth.py"),
     11: StageDef("Bash Audit",               script="bash_audit.py"),
     12: StageDef("CLAUDE.md Documentation",
-                 guidance="read references/project-structure.md, references/claude_notes.md",
+                 guidance="read references/structure-module.md, references/claude_notes.md",
                  required_files=["CLAUDE.md"]),
     13: StageDef("SOCKS Self-Audit",         script="self_audit.py"),
     14: StageDef("HIL: Vivado Project",      script="hil/hil_project.py"),
@@ -420,7 +420,7 @@ def main() -> int:
         print_header("SOCKS Migration")
         print(f"\n  Project: {project_dir}")
         print()
-        print("  This is a Claude-driven workflow. Read references/project-migration.md")
+        print("  This is a Claude-driven workflow. Read references/migration-module.md")
         print("  and follow the steps:")
         print()
         print("  1. Classify: legacy SOCKS or flat/3rd-party")
