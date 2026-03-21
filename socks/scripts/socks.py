@@ -875,6 +875,15 @@ def main() -> int:
                             duration_seconds=elapsed,
                             source="script", note=reason, name=label)
 
+        # After Stage 0 passes, show project status dashboard
+        if stage == 0 and results.get(stage) == 0:
+            status_script = os.path.join(SCRIPT_DIR, "status.py")
+            if os.path.isfile(status_script):
+                subprocess.run(
+                    [sys.executable, status_script,
+                     "--project-dir", project_dir],
+                    cwd=project_dir)
+
         if results[stage] != 0:
             print(f"\n  Stage {stage} {yellow('FAILED')} -- stopping pipeline")
             break

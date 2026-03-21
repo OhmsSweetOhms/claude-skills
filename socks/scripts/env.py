@@ -81,6 +81,7 @@ REQUIRED_SCRIPTS = [
     "build.py",
     "log_stage.py",
     "dashboard.py",
+    "status.py",
 ]
 
 # Reference files that must exist
