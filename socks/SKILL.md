@@ -5,9 +5,65 @@ description: "System-On-a-Chip Kit for Synthesis. Use this skill for any FPGA/So
 
 # SOCKS -- System-On-a-Chip Kit for Synthesis
 
+## Entry Point: `/socks [directory]`
+
+When invoked as `/socks` or `/socks <path>`:
+
+1. Resolve directory (default: cwd)
+2. If `socks.json` exists in directory → **single-project mode**
+3. Else if any immediate subdirectory has `socks.json` → **multi-project mode**
+4. Else → **new project mode** (offer to run discovery)
+
+### Single-project mode
+
+Run: `python3 scripts/status.py --project-dir <dir>` (human output)
+Then: `python3 scripts/status.py --json --project-dir <dir>` (parse for options)
+
+Present a numbered menu based on the `suggestions` array from JSON output.
+Example:
+
+> What would you like to do?
+> 1. Re-run from Stage 13 (SOCKS Self-Audit) — last run FAILED
+> 2. Rebuild (sources changed since last build)
+> 3. Run full design workflow
+> 4. Run tests
+> 5. Run HIL
+> → I recommend option 1 because Stage 13 failed and no source
+>   files have changed, so a re-run should resolve it.
+
+Map suggestion actions to orchestrator commands:
+- `rerun_stage` → `python scripts/socks.py --project-dir <dir> --stages <stage>`
+- `rebuild` → `python scripts/socks.py --project-dir <dir> --design --scope <scope>`
+- `design` → `python scripts/socks.py --project-dir <dir> --design --scope <scope>`
+- `test` → `python scripts/socks.py --project-dir <dir> --test`
+- `hil` → `python scripts/socks.py --project-dir <dir> --hil --top <entity>`
+
+### Multi-project mode
+
+Run: `python3 scripts/status.py --scan --project-dir <dir>`
+
+Display summary table from JSON output:
+
+| Project | Scope | Pass | Warn | Fail | Last Workflow |
+|---------|-------|------|------|------|---------------|
+
+Ask user to pick a project, then enter single-project mode for that project.
+
+### New project mode
+
+No `socks.json` found in directory or subdirectories. Offer:
+
+> No SOCKS project found here. Want to create one?
+> → This starts the `--design` discovery workflow.
+
+Then proceed with the `--design` flow (ask scope, run discovery).
+
+---
+
 ## Workflows
 
-Six entry points. Parse the user's `/socks` message for flags:
+Six workflow entry points. These are the execution paths that the entry point
+routes into. Parse the user's `/socks` message for flags:
 
 | Invocation | What happens |
 |---|---|
@@ -17,24 +73,13 @@ Six entry points. Parse the user's `/socks` message for flags:
 | `/socks --bughunt [scope]` | Ask what bug, then sim+synth stages (3-10) |
 | `/socks --hil --top <entity>` | Hardware-in-the-loop: build, program, test on Zynq-7000 (0,10,14-19) |
 | `/socks --migrate` | Claude-driven project migration (legacy SOCKS or flat/3rd-party) |
-| `/socks` *(no flags)* | Ask the user which workflow they want |
+| `/socks` *(no flags)* | Status-first entry point (see above) |
 
 **Scope** is `module`, `block`, or `system`. If the user doesn't specify
 scope, ask: "What scope? (module / block / system)". Scope definitions:
 - **module** -- single VHDL entity (e.g. CRC engine, edge detector)
 - **block** -- multi-module subsystem (e.g. UART controller with TX, RX, FIFO, reg map)
 - **system** -- SoC integration (Xilinx IP + optional custom blocks/modules from separate designs)
-
-**Bare `/socks`:** When the user types `/socks` with no flags, present:
-> Which workflow?
-> 1. `--design` -- New design from scratch (includes discovery phase)
-> 2. `--test` -- Edit and run testbenches
-> 3. `--architecture` -- Change architecture, re-run full pipeline
-> 4. `--bughunt` -- Fix a bug, verify with sim + synthesis
-> 5. `--hil` -- Hardware-in-the-loop test on FPGA board (requires `hil.json`)
-> 6. `--migrate` -- Migrate a project to SOCKS layout (legacy or flat/3rd-party)
-
-Then proceed with their choice.
 
 ### Discovery Phase (`--design` only)
 
