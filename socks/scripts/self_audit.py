@@ -123,8 +123,11 @@ def check_stale_stage_numbers(verbose=False):
     return errors
 
 
-def check_absolute_paths(verbose=False):
-    """Check for PII, secrets, and absolute paths in skill files using fingerprint engine."""
+def check_absolute_paths(scan_dir, verbose=False):
+    """Check for PII, secrets, and absolute paths in a directory using fingerprint engine.
+
+    scan_dir: directory to scan (project dir when run as pipeline stage).
+    """
     engine_path = os.path.join(
         os.path.expanduser("~"), ".claude", "hooks", "fingerprint_engine.py"
     )
@@ -137,14 +140,18 @@ def check_absolute_paths(verbose=False):
             (r'/media/\w+/', "Absolute media path"),
             (r'/Users/\w+/', "Absolute macOS user path"),
         ]
-        for root, _, files in os.walk(SKILL_DIR):
-            if ".git" in root:
+        for root, _, files in os.walk(scan_dir):
+            if ".git" in root or "build" in root.split(os.sep):
                 continue
             for fname in files:
-                if not (fname.endswith(".md") or fname.endswith(".py") or fname.endswith(".yml")):
+                if not (fname.endswith(".md") or fname.endswith(".py") or
+                        fname.endswith(".yml") or fname.endswith(".c") or
+                        fname.endswith(".h") or fname.endswith(".vhd") or
+                        fname.endswith(".sv") or fname.endswith(".tcl") or
+                        fname.endswith(".xdc")):
                     continue
                 fpath = os.path.join(root, fname)
-                rel = os.path.relpath(fpath, SKILL_DIR)
+                rel = os.path.relpath(fpath, scan_dir)
                 with open(fpath, "r") as f:
                     for lineno, line in enumerate(f, 1):
                         for pat, desc in patterns:
@@ -161,7 +168,7 @@ def check_absolute_paths(verbose=False):
         engine = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(engine)
 
-        findings = engine.scan_single_repo(SKILL_DIR)
+        findings = engine.scan_single_repo(scan_dir)
         errors = []
         for f in findings:
             detail = f.replace("BLOCKED: ", "")
@@ -225,25 +232,32 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="SOCKS Skill Self-Audit")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show passing checks too")
+    parser.add_argument("--project-dir", type=str, default=None,
+                        help="Project directory for fingerprint scan (default: skill dir)")
     args = parser.parse_args()
+
+    # Fingerprint scans the project; all other checks scan the skill
+    fingerprint_dir = os.path.abspath(args.project_dir) if args.project_dir else SKILL_DIR
 
     print_header("SOCKS Self-Audit")
     print(f"\n  Skill directory: {SKILL_DIR}")
+    if args.project_dir:
+        print(f"  Fingerprint scan: {fingerprint_dir}")
 
     all_errors = []
     checks = [
-        ("SKILL.md script references", check_skill_md_script_refs),
-        ("SKILL.md reference file references", check_skill_md_reference_refs),
-        ("Expected reference files", check_expected_reference_files),
-        ("Reference → script cross-references", check_reference_script_refs),
-        ("Stale stage-numbered names", check_stale_stage_numbers),
-        ("PII / secrets / absolute paths", check_absolute_paths),
-        ("Orchestrator dispatch consistency", check_orchestrator_consistency),
+        ("SKILL.md script references", lambda v: check_skill_md_script_refs(v)),
+        ("SKILL.md reference file references", lambda v: check_skill_md_reference_refs(v)),
+        ("Expected reference files", lambda v: check_expected_reference_files(v)),
+        ("Reference → script cross-references", lambda v: check_reference_script_refs(v)),
+        ("Stale stage-numbered names", lambda v: check_stale_stage_numbers(v)),
+        ("PII / secrets / absolute paths", lambda v: check_absolute_paths(fingerprint_dir, v)),
+        ("Orchestrator dispatch consistency", lambda v: check_orchestrator_consistency(v)),
     ]
 
     for name, check_fn in checks:
         print(f"\n  {name}:")
-        errors = check_fn(verbose=args.verbose)
+        errors = check_fn(args.verbose)
         if errors:
             for loc, msg in errors:
                 print(f"    [{fail_str()}] {loc}: {msg}")

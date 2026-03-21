@@ -26,23 +26,36 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from socks_lib import print_header, print_separator, pass_str, fail_str, yellow
 
 
-# Known install locations for vhdl-linter CLI
-LINTER_CANDIDATES = [
-    os.path.expanduser("~/vhdl-linter/dist/lib/cli/cli.js"),
-]
+# Relative path from a project tree root to the linter CLI
+LINTER_REL = os.path.join("3rdparty", "vhdl-linter", "dist", "lib", "cli", "cli.js")
 
 
-def find_linter():
+def _find_linter_by_ancestor(start_dir):
+    """Walk up from start_dir looking for 3rdparty/vhdl-linter/."""
+    d = os.path.abspath(start_dir)
+    for _ in range(10):  # cap traversal depth
+        candidate = os.path.join(d, LINTER_REL)
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
+def find_linter(search_from=None):
     """Find vhdl-linter CLI. Returns path or None."""
     # Check if globally installed via npm
     npx = shutil.which("vhdl-linter")
     if npx:
         return npx
 
-    # Check known locations
-    for candidate in LINTER_CANDIDATES:
-        if os.path.isfile(candidate):
-            return candidate
+    # Walk up from project/cwd looking for 3rdparty/vhdl-linter
+    start = search_from or os.getcwd()
+    found = _find_linter_by_ancestor(start)
+    if found:
+        return found
 
     # Try npm global list
     try:
@@ -99,8 +112,9 @@ def main() -> int:
 
     print_header("SOCKS Stage 3 -- VHDL Linter")
 
-    # Find linter
-    linter_path = find_linter()
+    # Find linter (search up from first file/cwd for 3rdparty/vhdl-linter)
+    search_from = os.path.abspath(args.files[0]) if args.files else None
+    linter_path = find_linter(search_from=search_from)
     if not linter_path:
         print(f"\n  {fail_str()} vhdl-linter not found")
         print(f"  Install: npm install -g vhdl-linter")

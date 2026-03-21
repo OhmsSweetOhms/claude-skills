@@ -573,6 +573,7 @@ def compute_suggestions(project_dir, sections):
                     suggestions.append({
                         "action": "rerun_stage",
                         "stage": snum,
+                        "priority": "recommended",
                         "reason": f"Stage {snum} ({stage_name}) FAILED"
                     })
                     seen_actions.add("rerun_stage")
@@ -588,6 +589,7 @@ def compute_suggestions(project_dir, sections):
                 suggestions.append({
                     "action": "rerun_stage",
                     "stage": re_entry,
+                    "priority": "recommended",
                     "reason": f"Inputs changed ({', '.join(changed_dirs)}) — re-run from Stage {re_entry}"
                 })
                 seen_actions.add("rerun_changed")
@@ -599,6 +601,7 @@ def compute_suggestions(project_dir, sections):
             if "rebuild" not in seen_actions:
                 suggestions.append({
                     "action": "rebuild",
+                    "priority": "recommended",
                     "reason": f"Sources changed since last build ({r['detail']})"
                 })
                 seen_actions.add("rebuild")
@@ -608,29 +611,50 @@ def compute_suggestions(project_dir, sections):
         if "design" not in seen_actions:
             suggestions.append({
                 "action": "design",
+                "priority": "recommended",
                 "reason": "No pipeline runs yet — start design workflow"
             })
             seen_actions.add("design")
 
-    # All green — suggest next steps
+    # All green — promote test/hil to recommended
     if has_pipeline and all_stages_pass:
+        suggestions.append({
+            "action": "test",
+            "priority": "recommended",
+            "reason": "All stages passing — run tests?"
+        })
+        seen_actions.add("test")
         if has_hil_config:
             suggestions.append({
                 "action": "hil",
-                "reason": "All stages passing — ready for hardware-in-the-loop"
+                "priority": "recommended",
+                "reason": "All stages passing — ready for HIL"
             })
-        else:
-            suggestions.append({
-                "action": "test",
-                "reason": "All stages passing — run tests?"
-            })
+            seen_actions.add("hil")
 
-    # Always-available options
-    if "design" not in seen_actions:
-        suggestions.append({
-            "action": "design",
-            "reason": "Run full design workflow"
-        })
+    # Always-available workflows — all orchestrator commands, unfiltered
+    available = [
+        {"action": "test", "priority": "available",
+         "reason": "Run simulation tests"},
+        {"action": "design", "priority": "available",
+         "reason": "Run full design workflow"},
+        {"action": "architecture", "priority": "available",
+         "reason": "Re-architecture workflow"},
+        {"action": "bughunt", "priority": "available",
+         "reason": "Bug hunt + verify"},
+        {"action": "hil", "priority": "available",
+         "reason": "Hardware-in-the-loop test"},
+        {"action": "validate", "priority": "available",
+         "reason": "Full end-to-end validation"},
+        {"action": "migrate", "priority": "available",
+         "reason": "Migrate project layout"},
+    ]
+
+    # Deduplicate: don't repeat actions already in recommendations
+    for a in available:
+        if a["action"] not in seen_actions:
+            suggestions.append(a)
+            seen_actions.add(a["action"])
 
     return suggestions
 
@@ -770,8 +794,6 @@ def main():
         print(json.dumps(result, indent=2))
         if result["summary"]["fail"]:
             return 2
-        if result["summary"]["warn"]:
-            return 2
         return 0
 
     # Terminal mode (default, unchanged behavior)
@@ -781,54 +803,90 @@ def main():
     total_warns = 0
     total_fails = 0
 
+    # Collect section output, then print header with result color
+    import io as _io
+    buf = _io.StringIO()
+    _real_print = print  # keep ref to builtin
+
+    def _buf_print(*args, **kwargs):
+        kwargs["file"] = buf
+        _real_print(*args, **kwargs)
+
+    # Temporarily redirect check output to buffer
+    import builtins
+    _orig = builtins.print
+    builtins.print = _buf_print
+
+    try:
+        # 1. Config
+        _buf_print(f"\n  {bold('Config (socks.json):')}")
+        _, w, f = check_config(project_dir, output="terminal")
+        total_warns += w
+        total_fails += f
+
+        # If no config, skip remaining checks
+        if cfg is None:
+            builtins.print = _orig
+            _real_print()
+            print_header(f"SOCKS Project Status \u2014 {project_name}")
+            _real_print(buf.getvalue(), end="")
+            _real_print()
+            print_separator()
+            _real_print(f"  {bold('RESULT:')} Cannot proceed without socks.json")
+            print_separator()
+            _real_print()
+            return 2
+
+        # 2. Directory
+        scope = cfg.get("scope", "module")
+        _buf_print(f"\n  {bold(f'Directory ({scope} scope):')}")
+        _, w, f = check_directory(project_dir, output="terminal")
+        total_warns += w
+        total_fails += f
+
+        # 3. Build Artifacts
+        _buf_print(f"\n  {bold('Build Artifacts:')}")
+        _, w, f = check_build(project_dir, output="terminal")
+        total_warns += w
+        total_fails += f
+
+        # 4. Pipeline
+        _buf_print(f"\n  {bold('Pipeline (project.json):')}")
+        _, w, f = check_pipeline(project_dir, output="terminal")
+        total_warns += w
+        total_fails += f
+
+        # 5. Run History
+        _buf_print(f"\n  {bold('Run History:')}")
+        _, w, f = check_history(project_dir, output="terminal")
+        total_warns += w
+        total_fails += f
+
+        # 6. Git
+        _buf_print(f"\n  {bold('Git:')}")
+        _, w, f = check_git(project_dir, output="terminal")
+        total_warns += w
+        total_fails += f
+    finally:
+        builtins.print = _orig
+
+    # Now print header with color based on result
+    title = f"SOCKS Project Status \u2014 {project_name}"
+    sep = "=" * 72
+    if total_fails:
+        color = red
+    elif total_warns:
+        color = yellow
+    else:
+        color = green
+
     print()
-    print_header(f"SOCKS Project Status \u2014 {project_name}")
+    print(color(sep))
+    print(f"  {color(title)}")
+    print(color(sep))
 
-    # 1. Config
-    print(f"\n  {bold('Config (socks.json):')}")
-    _, w, f = check_config(project_dir, output="terminal")
-    total_warns += w
-    total_fails += f
-
-    # If no config, skip remaining checks
-    if cfg is None:
-        print()
-        print_separator()
-        print(f"  {bold('RESULT:')} Cannot proceed without socks.json")
-        print_separator()
-        print()
-        return 2
-
-    # 2. Directory
-    scope = cfg.get("scope", "module")
-    print(f"\n  {bold(f'Directory ({scope} scope):')}")
-    _, w, f = check_directory(project_dir, output="terminal")
-    total_warns += w
-    total_fails += f
-
-    # 3. Build Artifacts
-    print(f"\n  {bold('Build Artifacts:')}")
-    _, w, f = check_build(project_dir, output="terminal")
-    total_warns += w
-    total_fails += f
-
-    # 4. Pipeline
-    print(f"\n  {bold('Pipeline (project.json):')}")
-    _, w, f = check_pipeline(project_dir, output="terminal")
-    total_warns += w
-    total_fails += f
-
-    # 5. Run History
-    print(f"\n  {bold('Run History:')}")
-    _, w, f = check_history(project_dir, output="terminal")
-    total_warns += w
-    total_fails += f
-
-    # 6. Git
-    print(f"\n  {bold('Git:')}")
-    _, w, f = check_git(project_dir, output="terminal")
-    total_warns += w
-    total_fails += f
+    # Print buffered section output
+    print(buf.getvalue(), end="")
 
     # Summary
     print()
@@ -839,14 +897,13 @@ def main():
         parts.append(f"{total_fails} failure{'s' if total_fails != 1 else ''}")
     if not parts:
         parts.append("all checks passed")
-    print_separator()
-    print(f"  {bold('RESULT:')} {', '.join(parts)}")
-    print_separator()
+    print(color(sep))
+    summary_str = ", ".join(parts)
+    print(f"  {bold('RESULT:')} {color(summary_str)}")
+    print(color(sep))
     print()
 
     if total_fails:
-        return 2
-    if total_warns:
         return 2
     return 0
 

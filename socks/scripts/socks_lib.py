@@ -22,7 +22,7 @@ from typing import List, Tuple, Dict, Optional, Iterator
 # Colored output
 # ---------------------------------------------------------------------------
 
-USE_COLOR = sys.stdout.isatty()
+USE_COLOR = sys.stdout.isatty() or os.environ.get("NO_COLOR") is None
 
 def _color(code: str, text: str) -> str:
     if USE_COLOR:

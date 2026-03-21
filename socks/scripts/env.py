@@ -470,9 +470,33 @@ def main() -> int:
             all_passed = False
         all_warnings.extend(fp_warn)
 
-    # --- Section 6: HIL Tool Checks (if project has hil.json) ---
+    # --- Section 6: HIL Tool Checks (auto-generate hil.json if missing) ---
     if args.project_dir:
         hil_json = os.path.join(os.path.abspath(args.project_dir), "hil.json")
+        if not os.path.isfile(hil_json):
+            # Auto-generate from socks.json + VHDL port analysis
+            socks_json = os.path.join(os.path.abspath(args.project_dir), "socks.json")
+            if os.path.isfile(socks_json):
+                sys.path.insert(0, SCRIPT_DIR)
+                from project_config import get_entity, get_part
+                _top = get_entity(args.project_dir)
+                _part = get_part(args.project_dir)
+                if _top and _part:
+                    hil_lib_dir = os.path.join(SCRIPT_DIR, "hil")
+                    sys.path.insert(0, hil_lib_dir)
+                    from hil_prep import maybe_generate_artifacts
+                    maybe_generate_artifacts(args.project_dir, _top, _part)
+                    if os.path.isfile(hil_json):
+                        print_result(f"{'hil.json':24s} auto-generated from socks.json", True)
+                    else:
+                        print_result(f"{'hil.json':24s} generation failed", False)
+                        all_warnings.append("hil.json auto-generation failed")
+
+        uart_ok = False
+        jtag_ok = False
+        serial_port = None
+        first_target = None
+
         if os.path.isfile(hil_json):
             print(f"\n  HIL Tools (hil.json detected):")
             # Import hil_lib for tool discovery
@@ -511,6 +535,7 @@ def main() -> int:
                 serial_port = find_serial_port(hil_cfg)
                 if serial_port and os.path.exists(serial_port):
                     print_result(f"{'UART port':24s} {serial_port}", True)
+                    uart_ok = True
                 elif serial_port:
                     print_info(f"{'UART port':24s} {serial_port} (not present)")
                     all_warnings.append(
@@ -536,6 +561,7 @@ def main() -> int:
                         if target_lines and not has_error:
                             first_target = target_lines[0].strip()
                             print_result(f"{'JTAG target':24s} {first_target}", True)
+                            jtag_ok = True
                         else:
                             detail = "none detected"
                             if has_error:
@@ -553,6 +579,17 @@ def main() -> int:
                         print_info(f"{'JTAG target':24s} error: {e}")
                 else:
                     print_info(f"{'JTAG target':24s} skipped (no xsdb)")
+
+                # Persist hardware capabilities to project.json
+                from state_manager import StateManager
+                _sm = StateManager(args.project_dir)
+                if _sm.load() is not None:
+                    _sm.set_hardware_capabilities(
+                        jtag_detected=jtag_ok,
+                        uart_detected=uart_ok,
+                        uart_port=serial_port if uart_ok else None,
+                        jtag_target=first_target if jtag_ok else None,
+                    )
 
             except ImportError:
                 print_result(f"{'HIL library':24s} hil_lib.py import failed", False)

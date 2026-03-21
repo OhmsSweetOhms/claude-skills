@@ -323,3 +323,32 @@ class StateManager:
         state["next_action"] = None
         self._state = state
         self.save()
+
+    # ------------------------------------------------------------------
+    # Hardware capabilities
+    # ------------------------------------------------------------------
+
+    def set_hardware_capabilities(self, jtag_detected: bool,
+                                  uart_detected: bool,
+                                  uart_port: Optional[str] = None,
+                                  jtag_target: Optional[str] = None) -> None:
+        """Persist hardware detection results from Stage 0."""
+        state = self.load()
+        if state is None:
+            return
+        state["hardware"] = {
+            "jtag_detected": jtag_detected,
+            "uart_detected": uart_detected,
+            "uart_port": uart_port,
+            "jtag_target": jtag_target,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._state = state
+        self.save()
+
+    def get_hardware_capabilities(self) -> Optional[dict]:
+        """Read hardware capabilities. Returns None if never probed."""
+        state = self.load()
+        if state is None:
+            return None
+        return state.get("hardware")

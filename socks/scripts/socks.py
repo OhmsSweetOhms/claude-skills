@@ -11,6 +11,7 @@ Workflow entry points:
     python scripts/socks.py --project-dir . --bughunt
     python scripts/socks.py --project-dir . --migrate
     python scripts/socks.py --project-dir . --hil --top usart_frame_ctrl
+    python scripts/socks.py --project-dir . --validate
 
 Legacy / explicit stage control:
     python scripts/socks.py --project-dir . --stages automated
@@ -24,6 +25,7 @@ Workflows:
     --bughunt       Bug fix + verify: stages 3,4,5,7,8,9,10
     --migrate       Migrate old log-based project to state file format
     --hil           Hardware-in-the-loop: stages 0,10,14,15,16,17,18,19 (requires --top)
+    --validate      Full validation: env + sim + synth + audit + HIL (skips HIL if no hardware)
 
 Stage keywords:
     automated   All stages with scripts (default)
@@ -117,7 +119,9 @@ WORKFLOW_STAGES = {
     "test":          [4, 5, 7, 8, 9],
     "architecture":  [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13],
     "bughunt":       [3, 4, 5, 7, 8, 9, 10],
-    "hil":           [0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13],
+    "hil":              [0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13],
+    "validate":         [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    "validate_system":  [0, 1, 20, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
 }
 
 
@@ -384,6 +388,8 @@ def main() -> int:
                           help="Migrate old log-based project to state file format")
     workflow.add_argument("--hil", action="store_true",
                           help="Hardware-in-the-loop: stages 0,10,14-19 (requires --top)")
+    workflow.add_argument("--validate", action="store_true",
+                          help="Full validation: all stages including HIL (skips if no hardware)")
 
     parser.add_argument("--scope", type=str, default=None,
                         choices=["module", "block", "system"],
@@ -445,7 +451,7 @@ def main() -> int:
             print("  4. Create directory structure and move files")
             print("  5. Update TCL path references (script_dir depth change)")
             print("  6. Create socks.json, .gitignore, docs")
-            print("  7. Validate: python scripts/socks.py --project-dir . --design --scope system")
+            print(f"  7. Validate: python scripts/socks.py --project-dir {project_dir} --validate --clean")
         else:
             print(f"\n  Scope: {project_scope}")
             print(f"\n  This is a Claude-driven workflow. Read references/migration-module.md")
@@ -456,7 +462,10 @@ def main() -> int:
             print("  3. Inventory and investigate")
             print("  4. Present migration plan for approval")
             print("  5. Apply migrations (use socks_lib.migrate_project() for state file stub)")
-            print("  6. Validate with SOCKS pipeline")
+            print(f"  6. Validate: python scripts/socks.py --project-dir {project_dir} --validate --clean")
+
+        print(f"\n  After completing all steps, run validation:")
+        print(f"    python scripts/socks.py --project-dir {project_dir} --validate --clean")
         return 0
 
     # Determine stages from workflow flag or --stages
@@ -477,15 +486,17 @@ def main() -> int:
             print("ERROR: --top is required for --hil (unless scope is system). "
                   "Provide the DUT entity name (e.g. --top uart_axi).")
             return 1
+    elif args.validate:
+        active_workflow = "validate"
 
     if active_workflow:
-        # System scope uses design_system stage list
-        if active_workflow == "design":
+        # System scope uses *_system stage list
+        if active_workflow in ("design", "validate"):
             project_scope = args.scope or get_scope(project_dir)
             if project_scope == "system":
-                stages = WORKFLOW_STAGES["design_system"]
+                stages = WORKFLOW_STAGES[f"{active_workflow}_system"]
             else:
-                stages = WORKFLOW_STAGES["design"]
+                stages = WORKFLOW_STAGES[active_workflow]
         else:
             stages = WORKFLOW_STAGES[active_workflow]
     else:
@@ -522,7 +533,7 @@ def main() -> int:
     # Resolve part: CLI override > socks.json > None
     resolved_part = args.part or get_part(project_dir)
 
-    # --- State file & hash check (workflow paths only) ---
+    # --- State file & hash check ---
     sm = None
     if active_workflow:
         sm = StateManager(project_dir)
@@ -551,6 +562,13 @@ def main() -> int:
             print(f"  Stages after filter: "
                   f"{', '.join(str(s) for s in stages)}")
 
+    # For explicit --stages runs, still load StateManager if state exists
+    # so stage results get recorded in project.json
+    if sm is None:
+        _test_sm = StateManager(project_dir)
+        if _test_sm.load() is not None:
+            sm = _test_sm
+
     # --- Session manifest (legacy, always maintained) ---
     if args.new_session:
         create_session(project_dir, max_iterations=args.max_iter)
@@ -566,10 +584,20 @@ def main() -> int:
         reason = ""
         skip = None  # None = run, 0 = skip-pass, 1 = skip-fail
 
+        # Hardware capability gate: skip hardware-dependent HIL stages
+        if stage in (15, 17, 18, 19) and sm:
+            hw = sm.get_hardware_capabilities()
+            if hw is not None:
+                if not hw.get("jtag_detected") and stage in (15, 17, 18, 19):
+                    return [], "No JTAG target detected — skipped", 0
+                if not hw.get("uart_detected") and stage in (17, 18):
+                    return [], "No UART port detected — skipped", 0
+
         if stage == 0:
             reason = "Discover Vivado/Xsim tools"
+            extra_args = ["--project-dir", project_dir]
             if args.settings:
-                extra_args = ["--settings", args.settings]
+                extra_args.extend(["--settings", args.settings])
                 reason += f" (user-specified: {args.settings})"
 
         elif stage == 1:
@@ -714,7 +742,8 @@ def main() -> int:
             reason = "Scan project for raw EDA tool calls"
 
         elif stage == 13:
-            reason = "Validate SOCKS skill internal consistency"
+            extra_args = ["--project-dir", project_dir]
+            reason = "Validate SOCKS skill + scan project for PII"
 
         elif stage == 14:
             project_scope = get_scope(project_dir) or args.scope
@@ -934,7 +963,7 @@ def main() -> int:
         self_audit_path = os.path.join(SCRIPT_DIR, "self_audit.py")
         if os.path.isfile(self_audit_path):
             sa_rc = subprocess.run(
-                [sys.executable, self_audit_path],
+                [sys.executable, self_audit_path, "--project-dir", project_dir],
                 cwd=project_dir,
             ).returncode
             if sa_rc != 0:

@@ -20,6 +20,10 @@ Run: `python3 scripts/status.py --project-dir <dir>` (human output)
 Then: `python3 scripts/status.py --json --project-dir <dir>` (parse for options)
 
 Present a numbered menu based on the `suggestions` array from JSON output.
+Each suggestion has a `priority` field: `"recommended"` (state-driven) or
+`"available"` (always-present workflow). Present recommended items first,
+then available items. Mark the top recommended item with "→ I recommend..."
+
 Example:
 
 > What would you like to do?
@@ -27,7 +31,10 @@ Example:
 > 2. Rebuild (sources changed since last build)
 > 3. Run full design workflow
 > 4. Run tests
-> 5. Run HIL
+> 5. Architecture workflow
+> 6. Bug hunt + verify
+> 7. Run HIL
+> 8. Migrate project layout
 > → I recommend option 1 because Stage 13 failed and no source
 >   files have changed, so a re-run should resolve it.
 
@@ -37,6 +44,10 @@ Map suggestion actions to orchestrator commands:
 - `design` → `python scripts/socks.py --project-dir <dir> --design --scope <scope>`
 - `test` → `python scripts/socks.py --project-dir <dir> --test`
 - `hil` → `python scripts/socks.py --project-dir <dir> --hil --top <entity>`
+- `architecture` → `python scripts/socks.py --project-dir <dir> --architecture --scope <scope>`
+- `bughunt` → `python scripts/socks.py --project-dir <dir> --bughunt`
+- `validate` → `python scripts/socks.py --project-dir <dir> --validate`
+- `migrate` → `python scripts/socks.py --project-dir <dir> --migrate`
 
 ### Multi-project mode
 
@@ -62,7 +73,7 @@ Then proceed with the `--design` flow (ask scope, run discovery).
 
 ## Workflows
 
-Six workflow entry points. These are the execution paths that the entry point
+Seven workflow entry points. These are the execution paths that the entry point
 routes into. Parse the user's `/socks` message for flags:
 
 | Invocation | What happens |
@@ -72,6 +83,7 @@ routes into. Parse the user's `/socks` message for flags:
 | `/socks --architecture [scope]` | Ask what architecture changes, then full pipeline (0-13) |
 | `/socks --bughunt [scope]` | Ask what bug, then sim+synth stages (3-10) |
 | `/socks --hil --top <entity>` | Hardware-in-the-loop: build, program, test on Zynq-7000 (0,10,14-19) |
+| `/socks --validate [scope]` | Full validation: env + sim + synth + audit + HIL (skips HIL if no hardware) |
 | `/socks --migrate` | Claude-driven project migration (legacy SOCKS or flat/3rd-party) |
 | `/socks` *(no flags)* | Status-first entry point (see above) |
 
@@ -135,11 +147,30 @@ stage. The orchestrator validates these exist before proceeding.
 - **`--hil`:** Read `references/hil.md` for prerequisites and `hil.json` schema.
   Requires board connected via JTAG + UART, `hil.json` in project root. Then run:
   `python scripts/socks.py --project-dir . --hil --top <entity>`
+- **`--validate`:** Full end-to-end validation: runs the union of design + HIL
+  stages. HIL stages (15, 17, 18, 19) gracefully skip when no hardware is
+  detected (Stage 0 persists hardware capabilities). `hil.json` is auto-generated
+  by Stage 0 if missing.
+
+  **Missing generated files:** When `--validate` stops because a generated file
+  is missing (guidance stage WAITING or a script that expects a Claude-authored
+  deliverable like `docs/TEST-INTENT.md`), Claude should:
+  1. Identify the missing file(s) from the orchestrator output
+  2. Ask the user: "Stage N needs `<file>` — should I generate it?"
+  3. If yes, read the relevant reference doc and author the file
+  4. Warn the user: "I'll re-run `--validate --clean` to get a fresh run. This
+     deletes build artifacts (sim, synth, py cache). OK?"
+  5. On confirmation, run: `python scripts/socks.py --project-dir . --validate --clean`
+  6. Repeat until the pipeline completes or hits a real failure
+
+  Run: `python scripts/socks.py --project-dir . --validate`
 - **`--migrate`:** Read `references/migration-module.md` (module/block) or
   `references/migration-system.md` (system scope). Classify the project,
   follow the migration workflow, then validate with the SOCKS pipeline.
   Use `--scope` to specify the target layout. This is Claude-driven — no
-  pipeline stages run automatically.
+  pipeline stages run automatically. After completing migration steps, always
+  run `--validate --clean` to confirm the migrated project is sound:
+  `python scripts/socks.py --project-dir . --validate --clean`
 
 ---
 
@@ -236,6 +267,7 @@ python scripts/socks.py --project-dir . --architecture --scope module
 python scripts/socks.py --project-dir . --bughunt
 python scripts/socks.py --project-dir . --migrate   # Claude-driven, no automated stages
 python scripts/socks.py --project-dir . --hil --top <entity>
+python scripts/socks.py --project-dir . --validate
 ```
 
 **Explicit stage control (legacy):**
@@ -253,6 +285,8 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 - `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
 - `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13 (--top optional for system scope)
+- `--validate` (module/block) -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 (HIL stages skip if no hardware)
+- `--validate --scope system` -- 0, 1, 20, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
 - `--migrate` -- Claude-driven (`references/migration-module.md` or `references/migration-system.md`), no automated stages
 
 **Stage keywords:**
