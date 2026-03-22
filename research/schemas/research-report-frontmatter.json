@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["title", "type", "date", "query", "status", "mode", "sources_searched", "total_results_evaluated", "tier1_recommendations", "tier2_recommendations", "gaps_identified", "tags"],
+  "properties": {
+    "title": { "type": "string", "pattern": "^Research: .+" },
+    "type": { "type": "string", "const": "research_report" },
+    "date": { "type": "string", "format": "date" },
+    "query": { "type": "string", "description": "Original user query verbatim" },
+    "status": { "type": "string", "enum": ["initial_sweep", "deep_dive", "complete"] },
+    "mode": { "type": "string", "enum": ["single_instance", "multi_instance"] },
+    "sources_searched": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["ieee_xplore", "semantic_scholar", "github", "web"] }
+    },
+    "total_results_evaluated": { "type": "integer" },
+    "tier1_recommendations": { "type": "integer" },
+    "tier2_recommendations": { "type": "integer" },
+    "gaps_identified": { "type": "integer" },
+    "tags": { "type": "array", "items": { "type": "string" } }
+  }
+}

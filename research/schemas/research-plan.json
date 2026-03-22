@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["core_question", "sub_questions", "search_strategy", "effort_level", "roles_to_execute"],
+  "properties": {
+    "core_question": { "type": "string" },
+    "domain": { "type": "string" },
+    "implementation_target": { "type": "string" },
+    "sub_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": { "type": "string" },
+          "assigned_role": { "type": "string" },
+          "priority": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "search_strategy": {
+      "type": "object",
+      "properties": {
+        "known_conferences": { "type": "array", "items": { "type": "string" } },
+        "known_journals": { "type": "array", "items": { "type": "string" } },
+        "known_authors": { "type": "array", "items": { "type": "string" } },
+        "known_repos": { "type": "array", "items": { "type": "string" } },
+        "vendor_sources": { "type": "array", "items": { "type": "string" } },
+        "seed_papers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "effort_level": { "type": "string", "enum": ["targeted", "focused", "broad", "field_mapping"] },
+    "roles_to_execute": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["ieee_searcher", "web_searcher", "code_searcher", "citation_tracer"] }
+    },
+    "execution_order_notes": {
+      "type": "string",
+      "description": "Any sequencing dependencies (e.g., citation_tracer needs ieee_searcher results first)"
+    }
+  }
+}
