@@ -73,9 +73,14 @@ Read the role document for each role before executing it. The role docs are in `
 3. Also take any `handoff_items` targeting this role from previously-completed roles
 4. Execute the search strategy per `references/search-strategy.md`
 5. For each result found, assess relevance (high/medium/low) with rationale
-6. Produce output JSON per `schemas/subagent-result.json`
-7. Write to `.research/session-{id}/results/{role}.json`
-8. Collect `handoff_items` for subsequent roles
+6. **MANDATORY: Save fetched content.** For every URL where you used WebFetch or found a downloadable resource:
+   - **PDF URLs:** Run `python3 scripts/fetch_and_save.py "<url>" .research/session-{id} --name <sanitized-name>`. This downloads the PDF to `pdfs/` and extracts text to `fetched/` in one call.
+   - **HTML pages fetched via WebFetch:** Save the extracted content to `.research/session-{id}/fetched/{sanitized-name}.md` using the Write tool. Include the source URL at the top of the file.
+   - Do NOT skip this step. The fetched content is the audit trail — without it, results cannot be verified after the conversation ends.
+   - The `scripts/fetch_and_save.py` script auto-detects PDF vs HTML, sanitizes filenames, and handles pymupdf extraction.
+7. Produce output JSON per `schemas/subagent-result.json`
+8. Write to `.research/session-{id}/results/{role}.json`
+9. Collect `handoff_items` for subsequent roles
 
 ### Tool Availability Check
 
