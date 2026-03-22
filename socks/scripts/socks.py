@@ -942,8 +942,11 @@ def main() -> int:
 
     # --- Update state file hashes and next-action ---
     if sm:
-        sm.update_hashes()
+        # Only update hashes if all stages passed. On failure, stale hashes
+        # ensure the next run re-enters at the correct stage instead of
+        # incorrectly reporting CACHED.
         if all_passed:
+            sm.update_hashes()
             sm.clear_next_action()
         else:
             # Find the failed stage
