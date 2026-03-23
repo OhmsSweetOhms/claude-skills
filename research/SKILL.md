@@ -36,7 +36,7 @@ Read `references/decomposition.md` for methodology.
 8. Create the session directory and write the plan:
 
 ```bash
-mkdir -p .research/session-$(date +%Y%m%d-%H%M%S)/{results,pdfs,fetched}
+mkdir -p .research/session-$(date +%Y%m%d-%H%M%S)/{results,pdfs,fetched,repos}
 ```
 
 Write `plan.json` to the session directory.
@@ -90,6 +90,12 @@ Read the role document for each role before executing it. The role docs are in `
    **c) PDF URLs:** Run `python3 scripts/fetch_and_save.py "<url>" .research/session-{id} --name <sanitized-name>`. This downloads the PDF to `pdfs/` and extracts text to `fetched/` in one call.
 
    **d) gh API results:** Save raw JSON output from GitHub API calls to `.research/session-{id}/fetched/gh-{query-summary}.json`.
+
+   **e) Git repos:** For any repo with `recommended_action: "clone_repo"`, clone it into `.research/session-{id}/repos/`:
+   ```bash
+   git clone --depth 1 <url> .research/session-{id}/repos/<repo-name>
+   ```
+   Use `--depth 1` to keep it lightweight. The code is then available for inspection in future sessions without re-cloning.
 
    Do NOT skip this step. The session directory is the audit trail — without it, results cannot be verified after the conversation ends. If it came from a tool call, it goes on disk.
 7. Produce output JSON per `schemas/subagent-result.json`

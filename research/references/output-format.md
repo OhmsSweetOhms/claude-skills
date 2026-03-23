@@ -15,8 +15,12 @@ All outputs for a single research run go to:
 │   └── citations.json           # Stage 2: citation-tracer output
 ├── pdfs/                        # Downloaded PDF papers and theses
 │   └── {sanitized-filename}.pdf
-├── fetched/                     # WebFetch extracted content (HTML→markdown)
-│   └── {sanitized-filename}.md
+├── fetched/                     # Extracted text, search logs, WebFetch content
+│   ├── search-log.md            # Append-only log of all WebSearch queries + results
+│   ├── {sanitized-filename}.md  # Extracted PDF text or WebFetch HTML content
+│   └── gh-{query}.json          # GitHub API raw results
+├── repos/                       # Cloned git repos (shallow, --depth 1)
+│   └── {repo-name}/
 └── report.md                    # Stage 4: final report
 ```
 
@@ -35,6 +39,7 @@ Every piece of information gathered during a research session must be saved to t
 | PDF downloads | `pdfs/{sanitized-name}.pdf` | Binary via `scripts/fetch_and_save.py` |
 | PDF text extractions | `fetched/{sanitized-name}.md` | Auto-extracted by `scripts/fetch_and_save.py` |
 | gh API JSON results | `fetched/gh-{query-summary}.json` | Raw JSON |
+| Git repos (clone_repo) | `repos/{repo-name}/` | Shallow clone (`--depth 1`) |
 | Per-role structured results | `results/{role}.json` | Per `schemas/subagent-result.json` |
 
 **Filename sanitization:** lowercase, hyphens for spaces, no special chars, max 80 chars. Example: `leclere-comparison-framework-taes-2013.pdf`
