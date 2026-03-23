@@ -73,31 +73,35 @@ Read the role document for each role before executing it. The role docs are in `
 3. Also take any `handoff_items` targeting this role from previously-completed roles
 4. Execute the search strategy per `references/search-strategy.md`
 5. For each result found, assess relevance (high/medium/low) with rationale
-6. **MANDATORY: Save ALL content to the session directory.** Nothing should exist only in conversation context. The session directory is the permanent record.
+6. **MANDATORY: Save ALL content to the session directory** using `scripts/fetch_and_save.py`. Nothing should exist only in conversation context. The script handles all content types — use it for everything.
 
-   **a) WebSearch results:** After each WebSearch call, append the results to `.research/session-{id}/fetched/search-log.md`. Format:
-   ```
-   ## {role} — {query}
-   Date: {timestamp}
-
-   1. [{title}]({url})
-   2. [{title}]({url})
-   ...
-   ```
-
-   **b) WebFetch extractions:** After each WebFetch call, save the extracted content to `.research/session-{id}/fetched/{sanitized-name}.md` using the Write tool. Include the source URL at the top of the file.
-
-   **c) PDF URLs:** Run `python3 scripts/fetch_and_save.py "<url>" .research/session-{id} --name <sanitized-name>`. This downloads the PDF to `pdfs/` and extracts text to `fetched/` in one call.
-
-   **d) gh API results:** Save raw JSON output from GitHub API calls to `.research/session-{id}/fetched/gh-{query-summary}.json`.
-
-   **e) Git repos:** For any repo with `recommended_action: "clone_repo"`, clone it into `.research/session-{id}/repos/`:
+   **a) WebSearch results** — after each WebSearch call, pipe the results list:
    ```bash
-   git clone --depth 1 <url> .research/session-{id}/repos/<repo-name>
+   echo "1. [Title](url)
+   2. [Title](url)" | python3 scripts/fetch_and_save.py search-log .research/session-{id} --role "{role}" --query "{query}"
    ```
-   Use `--depth 1` to keep it lightweight. The code is then available for inspection in future sessions without re-cloning.
 
-   Do NOT skip this step. The session directory is the audit trail — without it, results cannot be verified after the conversation ends. If it came from a tool call, it goes on disk.
+   **b) WebFetch extractions** — after each WebFetch call, pipe the content:
+   ```bash
+   echo "{extracted content}" | python3 scripts/fetch_and_save.py webfetch .research/session-{id} --name "{name}" --url "{source_url}"
+   ```
+
+   **c) PDF downloads** — auto-detects PDF, downloads, extracts text:
+   ```bash
+   python3 scripts/fetch_and_save.py fetch "<url>" .research/session-{id} --name "{name}"
+   ```
+
+   **d) gh API results** — pipe JSON output:
+   ```bash
+   gh api search/repositories ... | python3 scripts/fetch_and_save.py gh-json .research/session-{id} --name "{query-summary}"
+   ```
+
+   **e) Git repos** — shallow clone repos marked `clone_repo`:
+   ```bash
+   python3 scripts/fetch_and_save.py clone "<repo_url>" .research/session-{id} [--name "{name}"]
+   ```
+
+   Do NOT skip this step. Do NOT use Write tool as an alternative — always use the script. The script creates directories, sanitizes names, and produces consistent output. If it came from a tool call, it goes through the script to disk.
 7. Produce output JSON per `schemas/subagent-result.json`
 8. Write to `.research/session-{id}/results/{role}.json`
 9. Collect `handoff_items` for subsequent roles
