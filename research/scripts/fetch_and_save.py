@@ -137,7 +137,7 @@ def cmd_fetch(args):
         with open(pdf_path, "wb") as f:
             f.write(data)
         text = extract_pdf_text(pdf_path)
-        text_path = os.path.join(session_dir, "fetched", f"{name}.md")
+        text_path = os.path.join(session_dir, "pdfs", f"{name}.md")
         with open(text_path, "w") as f:
             f.write(f"# {name}\n# Source: {url}\n\n{text}")
         size_kb = len(data) / 1024
@@ -160,7 +160,7 @@ def cmd_search_log(args):
     ensure_dirs(session_dir)
 
     content = sys.stdin.read()
-    log_path = os.path.join(session_dir, "fetched", "search-log.md")
+    log_path = os.path.join(session_dir, "search-log.md")
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(log_path, "a") as f:
@@ -196,7 +196,7 @@ def cmd_gh_json(args):
     ensure_dirs(session_dir)
 
     content = sys.stdin.read()
-    out_path = os.path.join(session_dir, "fetched", f"gh-{name}.json")
+    out_path = os.path.join(session_dir, "repos", f"gh-{name}.json")
     # Validate it's JSON, pretty-print if so
     try:
         parsed = json.loads(content)

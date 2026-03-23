@@ -42,7 +42,8 @@ gh api repos/{owner}/{name}/readme --jq '.content' | base64 -d | head -100
 4. Run with AND without language filter — `language:VHDL` narrows results dramatically
 5. Try topic-based queries if relevant, but topic tagging is sparse in FPGA/GNSS domain
 6. For top 3-5 repos found, inspect: directory structure, README summary, license, last commit date
-7. Record every query and result count
+7. **Clone repos you mark as `clone_repo`** using `scripts/fetch_and_save.py clone`. For large repos (>50 MB), selectively download the relevant subdirectories instead of a full shallow clone.
+8. Record every query and result count
 
 ## Important: Code Search Limitations
 

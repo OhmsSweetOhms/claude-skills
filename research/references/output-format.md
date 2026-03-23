@@ -7,21 +7,24 @@ Final report structure, YAML frontmatter schema, and file organization.
 All outputs for a single research run go to:
 ```
 .research/session-{YYYYMMDD-HHMMSS}/
+├── CLAUDE.md                    # Quick-reference index for future conversations
 ├── plan.json                    # Stage 1: research plan
+├── search-log.md                # Append-only log of all WebSearch queries + results
+├── report.md                    # Stage 4: final report
 ├── results/
 │   ├── ieee.json                # Stage 2: ieee-searcher output
 │   ├── web.json                 # Stage 2: web-searcher output
 │   ├── code.json                # Stage 2: code-searcher output
 │   └── citations.json           # Stage 2: citation-tracer output
-├── pdfs/                        # Downloaded PDF papers and theses
-│   └── {sanitized-filename}.pdf
-├── fetched/                     # Extracted text, search logs, WebFetch content
-│   ├── search-log.md            # Append-only log of all WebSearch queries + results
-│   ├── {sanitized-filename}.md  # Extracted PDF text or WebFetch HTML content
+├── pdfs/                        # Downloaded PDFs and their text extractions
+│   ├── {sanitized-filename}.pdf
+│   └── {sanitized-filename}.md  # Auto-extracted text (lives next to its PDF)
+├── fetched/                     # WebFetch HTML content extractions
+│   └── {sanitized-filename}.md  # Extracted HTML content from WebFetch
+├── repos/                       # Cloned git repos and GitHub API metadata
+│   ├── {repo-name}/             # Shallow clones (--depth 1)
 │   └── gh-{query}.json          # GitHub API raw results
-├── repos/                       # Cloned git repos (shallow, --depth 1)
-│   └── {repo-name}/
-└── report.md                    # Stage 4: final report
+└──
 ```
 
 `report.md` is the deliverable. `results/` is the structured audit trail. `pdfs/` and `fetched/` are raw source material for reference.
@@ -34,17 +37,17 @@ Every piece of information gathered during a research session must be saved to t
 
 | Source | Save To | Format |
 |--------|---------|--------|
-| WebSearch results | `fetched/search-log.md` | Append: role, query, numbered list of `[title](url)` |
+| WebSearch results | `search-log.md` (session root) | Append: role, query, numbered list of `[title](url)` |
 | WebFetch HTML extractions | `fetched/{sanitized-name}.md` | Markdown with source URL header |
 | PDF downloads | `pdfs/{sanitized-name}.pdf` | Binary via `scripts/fetch_and_save.py` |
-| PDF text extractions | `fetched/{sanitized-name}.md` | Auto-extracted by `scripts/fetch_and_save.py` |
-| gh API JSON results | `fetched/gh-{query-summary}.json` | Raw JSON |
+| PDF text extractions | `pdfs/{sanitized-name}.md` | Auto-extracted alongside the PDF by `scripts/fetch_and_save.py` |
+| gh API JSON results | `repos/gh-{query-summary}.json` | Raw JSON |
 | Git repos (clone_repo) | `repos/{repo-name}/` | Shallow clone (`--depth 1`) |
 | Per-role structured results | `results/{role}.json` | Per `schemas/subagent-result.json` |
 
 **Filename sanitization:** lowercase, hyphens for spaces, no special chars, max 80 chars. Example: `leclere-comparison-framework-taes-2013.pdf`
 
-**PDF workflow:** Use `scripts/fetch_and_save.py` — one command handles download, PDF detection, text extraction, and saving to both `pdfs/` and `fetched/`. Supports SSL fallback for ESA/government sites with expired certs.
+**PDF workflow:** Use `scripts/fetch_and_save.py` — one command handles download, PDF detection, text extraction, and saving both files to `pdfs/` (the `.pdf` and its `.md` text extraction live side-by-side). Supports SSL fallback for ESA/government sites with expired certs.
 
 ## Report Frontmatter
 

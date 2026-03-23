@@ -82,7 +82,7 @@ WebFetch downloads PDFs but cannot parse them — it returns raw binary data. To
 
 1. **Detect PDF URLs:** URLs ending in `.pdf`, or from known PDF hosts (`digitalcommons`, `arxiv.org`, `yorkspace`, `etd.auburn.edu`, etc.)
 2. **Download:** Use `curl -sL -o` via Bash to download to `.research/session-{id}/pdfs/{sanitized-name}.pdf`
-3. **Extract text:** Use `pymupdf` via Bash to extract all text to `.research/session-{id}/fetched/{sanitized-name}.md`
+3. **Extract text:** Use `pymupdf` via Bash to extract all text to `.research/session-{id}/pdfs/{sanitized-name}.md` (keep the `.md` next to the `.pdf` it came from)
 4. **Read the text:** Use `Read` on the `.md` file to scan structure, find relevant sections, extract metadata. This is cheap and sufficient for ranking.
 5. **View images (only when needed):** Use `Read` on the `.pdf` file with `pages` parameter to see specific figures, block diagrams, equations, or tables that don't survive text extraction. This is expensive — only do it when the text references a diagram you need to understand.
 
@@ -95,7 +95,7 @@ curl -sL -o .research/session-{id}/pdfs/smith-gps-thesis-2020.pdf "https://examp
 python3 -c "
 import pymupdf
 doc = pymupdf.open('.research/session-{id}/pdfs/smith-gps-thesis-2020.pdf')
-with open('.research/session-{id}/fetched/smith-gps-thesis-2020.md', 'w') as f:
+with open('.research/session-{id}/pdfs/smith-gps-thesis-2020.md', 'w') as f:
     for i, page in enumerate(doc):
         text = page.get_text()
         if text.strip():
@@ -104,7 +104,7 @@ with open('.research/session-{id}/fetched/smith-gps-thesis-2020.md', 'w') as f:
 ```
 ```
 # Read text (cheap — do this first)
-Read(.research/session-{id}/fetched/smith-gps-thesis-2020.md)
+Read(.research/session-{id}/pdfs/smith-gps-thesis-2020.md)
 
 # View a specific figure (expensive — only when needed)
 Read(.research/session-{id}/pdfs/smith-gps-thesis-2020.pdf, pages="14-15")

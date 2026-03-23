@@ -156,7 +156,34 @@ Read `templates/research-report.md` for the skeleton.
    - **Suggested Next Steps:** Specific actionable follow-ups
    - **Raw Results Index:** Pointers to session directory files
 3. Write `report.md` to the session directory
-4. Present the report to the user
+4. Write `CLAUDE.md` to the session directory (see below)
+5. Present the report to the user
+
+### Session CLAUDE.md
+
+Write a short `CLAUDE.md` at the session root for fast context loading in future conversations. This file should be **under 30 lines** and contain:
+
+```markdown
+# Session {YYYYMMDD-HHMMSS}
+
+**Query:** {one-line summary of the query}
+**Date:** {YYYY-MM-DD}
+**Status:** {complete | partial}
+**Effort:** {effort_level} ({roles executed summary})
+
+## Key Findings
+- {3-5 bullet points: the most important takeaways}
+
+## Top Resources
+- `pdfs/{filename}` — {one-line description}
+- `pdfs/{filename}` — {one-line description}
+- `pdfs/{filename}` — {one-line description}
+
+## Caveats
+- {any limitations, fallback modes used, missing data}
+```
+
+Keep it factual and terse. This is an index, not a summary — point to files, don't repeat content. The report has the detail; this file exists so future conversations can orient in seconds.
 
 ### Final Output
 
