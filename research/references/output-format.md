@@ -8,6 +8,7 @@ All outputs for a single research run go to:
 ```
 .research/session-{YYYYMMDD-HHMMSS}/
 ├── CLAUDE.md                    # Quick-reference index for future conversations
+├── session-manifest.json        # Structured content inventory for vault generators
 ├── plan.json                    # Stage 1: research plan
 ├── search-log.md                # Append-only log of all WebSearch queries + results
 ├── report.md                    # Stage 4: final report
@@ -31,7 +32,7 @@ All outputs for a single research run go to:
 └──
 ```
 
-`report.md` is the deliverable. `results/` is the structured audit trail. `pdfs/`, `blogs/`, `app-notes/`, and `html/` are raw source material for reference.
+`report.md` is the deliverable. `results/` is the structured audit trail. `pdfs/`, `blogs/`, `app-notes/`, and `html/` are raw source material for reference. `session-manifest.json` is the programmatic content inventory per `schemas/session-manifest.json`.
 
 ### Content Persistence — Nothing Lives Only in Context
 

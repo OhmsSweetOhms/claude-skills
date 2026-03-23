@@ -158,7 +158,8 @@ Read `templates/research-report.md` for the skeleton.
    - **Raw Results Index:** Pointers to session directory files
 3. Write `report.md` to the session directory
 4. Write `CLAUDE.md` to the session directory (see below)
-5. Present the report to the user
+5. Generate `session-manifest.json` (see below)
+6. Present the report to the user
 
 ### Session CLAUDE.md
 
@@ -185,6 +186,18 @@ Write a short `CLAUDE.md` at the session root for fast context loading in future
 ```
 
 Keep it factual and terse. This is an index, not a summary — point to files, don't repeat content. The report has the detail; this file exists so future conversations can orient in seconds.
+
+### Session Manifest
+
+Generate `session-manifest.json` by running the manifest generator script. This file is the single source of truth for vault generators and other tools that consume session output programmatically.
+
+```bash
+python3 scripts/gen_manifest.py .research/session-{id} \
+  --title "{report title from frontmatter}" \
+  --query "{original user query verbatim}"
+```
+
+The script scans `pdfs/`, `blogs/`, `app-notes/`, `html/`, and `repos/` directories, extracts metadata from file headers and GitHub API JSON, and writes the structured manifest. Schema: `schemas/session-manifest.json`.
 
 ### Final Output
 

@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["session_id", "title", "date", "query", "status", "content"],
+  "properties": {
+    "session_id": { "type": "string", "description": "Session directory name (session-YYYYMMDD-HHMMSS)" },
+    "title": { "type": "string", "description": "Report title from frontmatter" },
+    "date": { "type": "string", "format": "date" },
+    "query": { "type": "string", "description": "Original user query verbatim" },
+    "status": { "type": "string", "enum": ["complete", "partial"] },
+    "content": {
+      "type": "object",
+      "properties": {
+        "pdfs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "title"],
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string", "description": "Relative path to .md text extraction" },
+              "pdf": { "type": "string", "description": "Relative path to .pdf file" },
+              "title": { "type": "string" },
+              "authors": { "type": "array", "items": { "type": "string" } },
+              "year": { "type": "integer" }
+            }
+          }
+        },
+        "blogs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "title"],
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string", "description": "Relative path to .md file" },
+              "url": { "type": "string", "description": "Source URL" },
+              "title": { "type": "string" }
+            }
+          }
+        },
+        "app-notes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "title"],
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string" },
+              "url": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          }
+        },
+        "html": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "title"],
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string" },
+              "url": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          }
+        },
+        "repos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "github_url"],
+            "properties": {
+              "name": { "type": "string", "description": "owner/repo format" },
+              "github_url": { "type": "string" },
+              "description": { "type": "string" },
+              "language": { "type": "string" },
+              "stars": { "type": ["integer", "null"] },
+              "license": { "type": ["string", "null"] },
+              "cloned": { "type": "boolean" },
+              "cloned_to": { "type": "string", "description": "Relative path to cloned repo dir" },
+              "metadata_file": { "type": "string", "description": "Relative path to gh-*.json" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
