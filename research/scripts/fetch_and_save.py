@@ -17,6 +17,7 @@ Examples:
 import argparse
 import os
 import re
+import ssl
 import sys
 import urllib.request
 import urllib.error
@@ -68,10 +69,23 @@ def download(url: str) -> tuple:
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (research-skill fetch_and_save.py)"
     })
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = resp.read()
-        headers = dict(resp.headers)
-        final_url = resp.url
+    # Try with SSL verification first, fall back to unverified if cert fails
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+            headers = dict(resp.headers)
+            final_url = resp.url
+    except urllib.error.URLError as e:
+        if "CERTIFICATE_VERIFY_FAILED" in str(e):
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+                data = resp.read()
+                headers = dict(resp.headers)
+                final_url = resp.url
+        else:
+            raise
     return data, headers, final_url
 
 

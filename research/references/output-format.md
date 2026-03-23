@@ -22,12 +22,24 @@ All outputs for a single research run go to:
 
 `report.md` is the deliverable. `results/` is the structured audit trail. `pdfs/` and `fetched/` are raw source material for reference.
 
-### PDF and WebFetch Content Storage
+### Content Persistence — Nothing Lives Only in Context
 
-When a role encounters a URL worth extracting:
-- **HTML pages:** Use WebFetch, save the extracted markdown to `fetched/{name}.md`
-- **PDF URLs** (ending in `.pdf` or known PDF sources like `digitalcommons`, `arxiv`): Use WebFetch to download (it saves to a temp file), then copy to `pdfs/` and use the `Read` tool on the local file to extract text content. The Read tool can parse PDFs natively (up to 20 pages per request).
-- Filename should be sanitized from the title or URL: lowercase, hyphens for spaces, no special chars. Example: `leclere-comparison-framework-taes-2013.pdf`
+Every piece of information gathered during a research session must be saved to the session directory. The conversation context is ephemeral — it compacts, it ends. The session directory is permanent.
+
+**What gets saved and where:**
+
+| Source | Save To | Format |
+|--------|---------|--------|
+| WebSearch results | `fetched/search-log.md` | Append: role, query, numbered list of `[title](url)` |
+| WebFetch HTML extractions | `fetched/{sanitized-name}.md` | Markdown with source URL header |
+| PDF downloads | `pdfs/{sanitized-name}.pdf` | Binary via `scripts/fetch_and_save.py` |
+| PDF text extractions | `fetched/{sanitized-name}.md` | Auto-extracted by `scripts/fetch_and_save.py` |
+| gh API JSON results | `fetched/gh-{query-summary}.json` | Raw JSON |
+| Per-role structured results | `results/{role}.json` | Per `schemas/subagent-result.json` |
+
+**Filename sanitization:** lowercase, hyphens for spaces, no special chars, max 80 chars. Example: `leclere-comparison-framework-taes-2013.pdf`
+
+**PDF workflow:** Use `scripts/fetch_and_save.py` — one command handles download, PDF detection, text extraction, and saving to both `pdfs/` and `fetched/`. Supports SSL fallback for ESA/government sites with expired certs.
 
 ## Report Frontmatter
 

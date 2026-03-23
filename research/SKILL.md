@@ -73,11 +73,25 @@ Read the role document for each role before executing it. The role docs are in `
 3. Also take any `handoff_items` targeting this role from previously-completed roles
 4. Execute the search strategy per `references/search-strategy.md`
 5. For each result found, assess relevance (high/medium/low) with rationale
-6. **MANDATORY: Save fetched content.** For every URL where you used WebFetch or found a downloadable resource:
-   - **PDF URLs:** Run `python3 scripts/fetch_and_save.py "<url>" .research/session-{id} --name <sanitized-name>`. This downloads the PDF to `pdfs/` and extracts text to `fetched/` in one call.
-   - **HTML pages fetched via WebFetch:** Save the extracted content to `.research/session-{id}/fetched/{sanitized-name}.md` using the Write tool. Include the source URL at the top of the file.
-   - Do NOT skip this step. The fetched content is the audit trail — without it, results cannot be verified after the conversation ends.
-   - The `scripts/fetch_and_save.py` script auto-detects PDF vs HTML, sanitizes filenames, and handles pymupdf extraction.
+6. **MANDATORY: Save ALL content to the session directory.** Nothing should exist only in conversation context. The session directory is the permanent record.
+
+   **a) WebSearch results:** After each WebSearch call, append the results to `.research/session-{id}/fetched/search-log.md`. Format:
+   ```
+   ## {role} — {query}
+   Date: {timestamp}
+
+   1. [{title}]({url})
+   2. [{title}]({url})
+   ...
+   ```
+
+   **b) WebFetch extractions:** After each WebFetch call, save the extracted content to `.research/session-{id}/fetched/{sanitized-name}.md` using the Write tool. Include the source URL at the top of the file.
+
+   **c) PDF URLs:** Run `python3 scripts/fetch_and_save.py "<url>" .research/session-{id} --name <sanitized-name>`. This downloads the PDF to `pdfs/` and extracts text to `fetched/` in one call.
+
+   **d) gh API results:** Save raw JSON output from GitHub API calls to `.research/session-{id}/fetched/gh-{query-summary}.json`.
+
+   Do NOT skip this step. The session directory is the audit trail — without it, results cannot be verified after the conversation ends. If it came from a tool call, it goes on disk.
 7. Produce output JSON per `schemas/subagent-result.json`
 8. Write to `.research/session-{id}/results/{role}.json`
 9. Collect `handoff_items` for subsequent roles
