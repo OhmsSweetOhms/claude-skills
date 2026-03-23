@@ -36,7 +36,7 @@ Read `references/decomposition.md` for methodology.
 8. Create the session directory and write the plan:
 
 ```bash
-mkdir -p .research/session-$(date +%Y%m%d-%H%M%S)/{results,pdfs,fetched,repos}
+mkdir -p .research/session-$(date +%Y%m%d-%H%M%S)/{results,pdfs,blogs,app-notes,html,repos}
 ```
 
 Write `plan.json` to the session directory.
@@ -81,10 +81,11 @@ Read the role document for each role before executing it. The role docs are in `
    2. [Title](url)" | python3 scripts/fetch_and_save.py search-log .research/session-{id} --role "{role}" --query "{query}"
    ```
 
-   **b) WebFetch extractions** — after each WebFetch call, pipe the content:
+   **b) WebFetch extractions** — after each WebFetch call, pipe the content with content type:
    ```bash
-   echo "{extracted content}" | python3 scripts/fetch_and_save.py webfetch .research/session-{id} --name "{name}" --url "{source_url}"
+   echo "{extracted content}" | python3 scripts/fetch_and_save.py webfetch .research/session-{id} --name "{name}" --url "{source_url}" --type "{content_type}"
    ```
+   Content types: `blog_post`, `tutorial`, `forum_thread` → `blogs/`; `app_note`, `trade_article` → `app-notes/`; anything else → `html/`
 
    **c) PDF downloads** — auto-detects PDF, downloads, extracts text:
    ```bash

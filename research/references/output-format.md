@@ -19,15 +19,19 @@ All outputs for a single research run go to:
 ├── pdfs/                        # Downloaded PDFs and their text extractions
 │   ├── {sanitized-filename}.pdf
 │   └── {sanitized-filename}.md  # Auto-extracted text (lives next to its PDF)
-├── fetched/                     # WebFetch HTML content extractions
-│   └── {sanitized-filename}.md  # Extracted HTML content from WebFetch
+├── blogs/                       # Blog posts, tutorials, forum threads (.md)
+│   └── {sanitized-filename}.md
+├── app-notes/                   # Vendor app notes, trade articles (.md)
+│   └── {sanitized-filename}.md
+├── html/                        # Other HTML content extractions (.md)
+│   └── {sanitized-filename}.md
 ├── repos/                       # Cloned git repos and GitHub API metadata
 │   ├── {repo-name}/             # Shallow clones (--depth 1)
 │   └── gh-{query}.json          # GitHub API raw results
 └──
 ```
 
-`report.md` is the deliverable. `results/` is the structured audit trail. `pdfs/` and `fetched/` are raw source material for reference.
+`report.md` is the deliverable. `results/` is the structured audit trail. `pdfs/`, `blogs/`, `app-notes/`, and `html/` are raw source material for reference.
 
 ### Content Persistence — Nothing Lives Only in Context
 
@@ -38,7 +42,9 @@ Every piece of information gathered during a research session must be saved to t
 | Source | Save To | Format |
 |--------|---------|--------|
 | WebSearch results | `search-log.md` (session root) | Append: role, query, numbered list of `[title](url)` |
-| WebFetch HTML extractions | `fetched/{sanitized-name}.md` | Markdown with source URL header |
+| WebFetch blog posts/tutorials | `blogs/{sanitized-name}.md` | Markdown with source URL header |
+| WebFetch app notes/trade articles | `app-notes/{sanitized-name}.md` | Markdown with source URL header |
+| WebFetch other HTML | `html/{sanitized-name}.md` | Markdown with source URL header |
 | PDF downloads | `pdfs/{sanitized-name}.pdf` | Binary via `scripts/fetch_and_save.py` |
 | PDF text extractions | `pdfs/{sanitized-name}.md` | Auto-extracted alongside the PDF by `scripts/fetch_and_save.py` |
 | gh API JSON results | `repos/gh-{query-summary}.json` | Raw JSON |

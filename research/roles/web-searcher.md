@@ -114,4 +114,20 @@ Do NOT waste tool calls attempting WebFetch content extraction prompts on PDF UR
 
 ## Saving WebFetch Content
 
-For HTML pages fetched via WebFetch, save the extracted content to `.research/session-{id}/fetched/{sanitized-name}.md` for reference. This preserves the extracted content beyond the conversation context.
+For HTML pages fetched via WebFetch, save the extracted content using `fetch_and_save.py webfetch` with the `--type` flag matching the content type you assigned during evaluation:
+
+| Content Type | `--type` value | Saved to |
+|-------------|---------------|----------|
+| Blog post | `blog_post` | `blogs/` |
+| Tutorial | `tutorial` | `blogs/` |
+| Forum thread | `forum_thread` | `blogs/` |
+| App note | `app_note` | `app-notes/` |
+| Trade article | `trade_article` | `app-notes/` |
+| Everything else | (omit or any other value) | `html/` |
+
+Example:
+```bash
+echo "{content}" | python3 scripts/fetch_and_save.py webfetch .research/session-{id} --name "xilinx-xapp1209" --url "https://..." --type app_note
+```
+
+This preserves the extracted content beyond the conversation context, organized by type for easy browsing.

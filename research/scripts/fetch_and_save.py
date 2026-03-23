@@ -10,7 +10,10 @@ Modes:
     echo "<content>" | python3 fetch_and_save.py search-log <session_dir> --role <role> --query "<query>"
 
   Save WebFetch extraction (pipe extracted content via stdin):
-    echo "<content>" | python3 fetch_and_save.py webfetch <session_dir> --name <name> --url <source_url>
+    echo "<content>" | python3 fetch_and_save.py webfetch <session_dir> --name <name> --url <source_url> --type <content_type>
+    Content types: blog_post, tutorial, forum_thread → blogs/
+                   app_note, trade_article          → app-notes/
+                   anything else                    → html/
 
   Save gh API JSON (pipe JSON via stdin):
     gh api ... | python3 fetch_and_save.py gh-json <session_dir> --name <name>
@@ -57,8 +60,23 @@ def sanitize_name(text: str) -> str:
 
 def ensure_dirs(session_dir: str):
     """Create all session subdirectories."""
-    for subdir in ["results", "pdfs", "fetched", "repos"]:
+    for subdir in ["results", "pdfs", "blogs", "app-notes", "html", "repos"]:
         os.makedirs(os.path.join(session_dir, subdir), exist_ok=True)
+
+
+# Content type → subdirectory mapping
+CONTENT_TYPE_DIRS = {
+    "blog_post": "blogs",
+    "tutorial": "blogs",
+    "forum_thread": "blogs",
+    "app_note": "app-notes",
+    "trade_article": "app-notes",
+}
+
+
+def content_type_dir(content_type: str) -> str:
+    """Map a content type string to its session subdirectory."""
+    return CONTENT_TYPE_DIRS.get(content_type, "html")
 
 
 def detect_pdf(url: str, headers: dict) -> bool:
@@ -178,14 +196,16 @@ def cmd_webfetch(args):
     session_dir = args.session_dir
     name = args.name or "webfetch-content"
     url = args.url or "unknown"
+    ctype = args.type or "html"
     ensure_dirs(session_dir)
 
+    subdir = content_type_dir(ctype)
     content = sys.stdin.read()
-    out_path = os.path.join(session_dir, "fetched", f"{name}.md")
+    out_path = os.path.join(session_dir, subdir, f"{name}.md")
     with open(out_path, "w") as f:
         f.write(f"# {name}\n# Source: {url}\n\n{content}")
 
-    print(f"WebFetch: {out_path} ({content.count(chr(10))} lines)")
+    print(f"WebFetch ({subdir}): {out_path} ({content.count(chr(10))} lines)")
 
 
 # ── Mode: gh-json (save GitHub API results) ──────────────────────────────────
@@ -272,6 +292,7 @@ def main():
     p_wf.add_argument("session_dir", help="Session directory path")
     p_wf.add_argument("--name", help="Sanitized filename")
     p_wf.add_argument("--url", help="Source URL")
+    p_wf.add_argument("--type", help="Content type (blog_post, tutorial, forum_thread, app_note, trade_article, etc.)", default="html")
 
     # gh-json
     p_gh = subparsers.add_parser("gh-json", help="Save GitHub API JSON (stdin)")
