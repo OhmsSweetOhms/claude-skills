@@ -29,11 +29,12 @@ every section of the DESIGN-INTENT template can be filled without guessing.
 
 ---
 
-## Core Questions by Scope
+## Core Questions
 
 ### Module Scope
 
-A single VHDL entity (e.g. a UART transmitter, CRC engine, edge detector).
+One or more VHDL entities forming a self-contained peripheral (e.g. a CRC
+engine, SPI master with AXI-Lite wrapper, UART controller with TX/RX cores).
 
 1. **What are you building?** Name, one-sentence purpose.
 2. **What are the inputs and outputs?** Signal names, widths, directions.
@@ -43,20 +44,11 @@ A single VHDL entity (e.g. a UART transmitter, CRC engine, edge detector).
 6. **What are the success criteria?** Timing MET, test pass count, coverage target.
 7. **Any existing code or constraints to integrate with?**
 
-### Block Scope
+If the module will be used on a SoC (typical), also ask:
 
-A multi-module subsystem (e.g. a UART controller with TX, RX, FIFO, register map).
-
-1. **What are you building?** Name, purpose, role in the larger system.
-2. **What sub-modules do you expect?** Names and rough responsibilities.
-3. **What external interfaces?** AXI-Lite, SPI, UART, GPIO, custom -- direction and widths.
-4. **What clock domain(s)?** Primary clock, any derived clocks, CDC crossings.
-5. **What is the target frequency?** And FPGA part.
-6. **What register map do you need?** Addresses, fields, access types (RW/RO/W1C).
-7. **What protocol or timing constraints?** Bit rates, throughput, latency.
-8. **What are the success criteria?** Timing, coverage, test counts, resource budget.
-9. **What does the bare-metal C driver need to do?** Init, configure, poll, IRQ?
-10. **Any existing code, IP, or constraints to integrate with?**
+8. **What sub-modules do you expect?** Names and rough responsibilities (or single entity).
+9. **Will it have an AXI-Lite interface?** If yes, what register map? See `references/regmap.md` for the standard layout.
+10. **What does the bare-metal C driver need to do?** Init, configure, poll, IRQ?
 
 ---
 
@@ -68,8 +60,8 @@ Claude synthesizes discovery answers into this structure:
 # Design Intent: {name}
 
 ## What Are We Building?
-- **Name:** {entity/block/project name}
-- **Scope:** {module | block | system}
+- **Name:** {entity/project name}
+- **Scope:** {module | system}
 - **Purpose:** {one paragraph}
 
 ## Design Space Constraints
@@ -95,15 +87,17 @@ Claude synthesizes discovery answers into this structure:
 - {questions for the design loop to resolve}
 ```
 
-For **block** scope, add:
+For modules with an AXI-Lite interface, add:
 
 ```markdown
-## Register Map (Block/Project)
+## Register Map
 | Address | Name | Access | Description |
 |---------|------|--------|-------------|
-| 0x00    | ...  | RW     | ...         |
+| 0x00    | STATUS | RO/W1C | ... |
+| 0x04    | CTRL   | RW     | ... |
+(see references/regmap.md for standard layout)
 
-## Sub-Module Decomposition (Block/Project)
+## Sub-Module Decomposition
 | Module | Responsibility | Interfaces |
 |--------|---------------|------------|
 | ...    | ...           | ...        |

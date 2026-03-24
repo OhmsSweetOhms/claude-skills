@@ -87,17 +87,16 @@ routes into. Parse the user's `/socks` message for flags:
 | `/socks --migrate` | Claude-driven project migration (legacy SOCKS or flat/3rd-party) |
 | `/socks` *(no flags)* | Status-first entry point (see above) |
 
-**Scope** is `module`, `block`, or `system`. If the user doesn't specify
-scope, ask: "What scope? (module / block / system)". Scope definitions:
-- **module** -- single VHDL entity (e.g. CRC engine, edge detector)
-- **block** -- multi-module subsystem (e.g. UART controller with TX, RX, FIFO, reg map)
-- **system** -- SoC integration (Xilinx IP + optional custom blocks/modules from separate designs)
+**Scope** is `module` or `system`. If the user doesn't specify
+scope, ask: "What scope? (module / system)". Scope definitions:
+- **module** -- one or more VHDL entities forming a self-contained peripheral (e.g. CRC engine, SPI master with AXI-Lite wrapper and register map, UART controller with TX/RX cores)
+- **system** -- SoC integration (Xilinx IP + optional custom modules from separate designs)
 
 ### Discovery Phase (`--design` only)
 
 Before Stage 1, run a discovery conversation to produce `docs/DESIGN-INTENT.md`.
 
-1. Read `references/discovery.md` for module/block scope, or
+1. Read `references/discovery.md` for module scope, or
    `references/discovery-system.md` for system scope
 2. Ask each core question, one at a time or in small batches
 3. Analyze the user's answers and ask generative follow-up questions
@@ -164,7 +163,7 @@ stage. The orchestrator validates these exist before proceeding.
   6. Repeat until the pipeline completes or hits a real failure
 
   Run: `python scripts/socks.py --project-dir . --validate`
-- **`--migrate`:** Read `references/migration-module.md` (module/block) or
+- **`--migrate`:** Read `references/migration-module.md` (module) or
   `references/migration-system.md` (system scope). Classify the project,
   follow the migration workflow, then validate with the SOCKS pipeline.
   Use `--scope` to specify the target layout. This is Claude-driven — no
@@ -186,7 +185,7 @@ Stage  Scope          Name                                Type
                       |  DESIGN LOOP (2-9) -- see references/design-loop.md  |
                       |  references/regmap.md -- after any register change    |
                       +-------------------------------------------------------+
- 2-9   module/block   Design Loop (RTL, TB, sim, verify)  BOTH
+ 2-9   module         Design Loop (RTL, TB, sim, verify)  BOTH
                       +-------------------------------------------------------+
                       |  SYSTEM DESIGN LOOP (20)                               |
                       |  see references/design-loop-system.md                  |
@@ -206,9 +205,9 @@ Stage  Scope          Name                                Type
 15     all            HIL: Implementation                  AUTOMATED
 16     all            HIL: Firmware Build                  BOTH
 17     all            HIL: Program + Test (user gate)      AUTOMATED
-18     module/block   HIL: ILA Capture (VCD required)      AUTOMATED
+18     module         HIL: ILA Capture (VCD required)      AUTOMATED
 18     system         HIL: ILA Capture (capture-only)      AUTOMATED
-19     module/block   HIL: ILA Verify (VCD required)       AUTOMATED
+19     module         HIL: ILA Verify (VCD required)       AUTOMATED
 19     system         (skipped -- no VCD baseline)
 ```
 
@@ -235,11 +234,11 @@ plan authoring, and troubleshooting.
 |-------|------|----------------|-----------|
 | 0 | Environment Setup | `scripts/env.py` | -- |
 | 0+ | **Project Status** | Check `build/state/project.json` or run dashboard | *On re-entry to existing project* |
-| 1 | Architecture | `scripts/architecture.py` (module/block) or `scripts/architecture-system.py` (system) + guidance | `references/architecture-diagrams.md` |
-| 2-9 | **Design Loop** (module/block) | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
+| 1 | Architecture | `scripts/architecture.py` (module) or `scripts/architecture-system.py` (system) + guidance | `references/architecture-diagrams.md` |
+| 2-9 | **Design Loop** (module) | *See `references/design-loop.md`* | *`references/regmap.md` after register changes* |
 | 20 | **System Design Loop** (system) | *Claude authors TCL/XDC/ARCHITECTURE.md* | `references/design-loop-system.md` |
 | 10a | **XDC Constraints** | Read `references/constraints.md`, generate XDC | *Before first synthesis or when missing XDC* |
-| 10b | Vivado Synthesis | `scripts/synth.py` (module/block) or `scripts/synth-system.py` (system) | `references/synthesis.md` |
+| 10b | Vivado Synthesis | `scripts/synth.py` (module) or `scripts/synth-system.py` (system) | `references/synthesis.md` |
 | 10c | **Timing Closure** | Read `references/timing.md`, diagnose + fix | *Only if Stage 10b shows VIOLATED* |
 | 11 | Bash Audit | `scripts/bash_audit.py` | -- |
 | 12 | CLAUDE.md | *Claude writes docs* | `references/structure-module.md` or `references/structure-system.md`, `references/claude_notes.md` |
@@ -261,7 +260,6 @@ plan authoring, and troubleshooting.
 **Workflow entry points (required — always use these, never call stage scripts directly):**
 ```bash
 python scripts/socks.py --project-dir . --design --scope system
-python scripts/socks.py --project-dir . --design --scope block
 python scripts/socks.py --project-dir . --test
 python scripts/socks.py --project-dir . --architecture --scope module
 python scripts/socks.py --project-dir . --bughunt
@@ -279,13 +277,13 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 ```
 
 **Workflows map to stages:**
-- `--design` (module/block) -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13
+- `--design` (module) -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13
 - `--design --scope system` -- 0, 1, 20, 10, 11, 12, 13 (Stage 20 replaces 2-9)
 - `--test` -- 4, 5, 7, 8, 9 (sim only)
 - `--architecture` -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 5, 7, 8, 9, 10 (sim + synthesis)
 - `--hil` -- 0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13 (--top optional for system scope)
-- `--validate` (module/block) -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 (HIL stages skip if no hardware)
+- `--validate` (module) -- 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 (HIL stages skip if no hardware)
 - `--validate --scope system` -- 0, 1, 20, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
 - `--migrate` -- Claude-driven (`references/migration-module.md` or `references/migration-system.md`), no automated stages
 
@@ -328,7 +326,7 @@ project_name/
 └── .gitignore         # Vivado/Xsim artifact ignores
 ```
 
-See `references/structure-module.md` for module/block conventions,
+See `references/structure-module.md` for module conventions,
 `references/structure-system.md` for system scope conventions.
 
 ---
@@ -343,7 +341,7 @@ Run `scripts/env.py` to verify everything the pipeline needs:
    (`xvhdl`, `xvlog`, `xelab`, `xsim`, `vivado`), warns if version != 2023.2
 2. **Python** -- version >= 3.8, all stdlib modules used by SOCKS scripts
 3. **SOCKS skill** -- all scripts and reference files exist, SKILL.md valid
-4. **Project structure** (with `--project-dir`) -- `src/` required for module/block
+4. **Project structure** (with `--project-dir`) -- `src/` required for module
    (optional for system scope); `tb/`, `build/`, `sw/`, `docs/`, `CLAUDE.md`,
    `.gitignore` checked if present. Reads `socks.json` for scope and `board.part`.
 
@@ -374,7 +372,7 @@ two Mermaid diagrams into `docs/ARCHITECTURE.md`:
 
 Every frequency must appear with its derivation (e.g. "100 MHz / 100 = 1 MHz tick").
 
-**2. Resource analysis** (module/block scope) -- widest intermediates, integer
+**2. Resource analysis** (module scope) -- widest intermediates, integer
 overflow risk, DSP48E1 count per multiply, critical path depth.
 
 **System scope variant:** When scope is `system`, Stage 1 runs
@@ -396,7 +394,7 @@ XDC timing constraints. This ensures async inputs have `set_false_path` to
 sync1 registers (not just `get_ports`), clock definitions are correct, and
 monitor ports are excluded.
 
-**Stage 10b -- Synthesis:** Run `scripts/synth.py` (module/block scope) or
+**Stage 10b -- Synthesis:** Run `scripts/synth.py` (module scope) or
 `scripts/synth-system.py` (system scope — runs user-authored TCL scripts
 from Stage 20). All timing checks must show MET.
 

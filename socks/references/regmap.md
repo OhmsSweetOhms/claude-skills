@@ -22,6 +22,108 @@ layers must match it exactly.
 | C source | `sw/*.c` | Driver functions that access registers |
 | Documentation | `docs/README.md` | Register map tables |
 
+## Standard Register Layout
+
+All SOCKS AXI-Lite peripherals follow this standard layout. STATUS is at
+offset 0x00 so firmware can read address 0 for a quick health check.
+
+```
+Offset  Name           Access  Description
+------  ----           ------  -----------
+0x00    STATUS         RO/W1C  Peripheral status (busy, done, error flags)
+0x04    CTRL           RW      Control (enable, mode select, config bits)
+0x08    IRQ_STATUS     W1C     Interrupt status (set by HW, cleared by SW write-1)
+0x0C    IRQ_ENABLE     RW      Interrupt enable mask
+0x10+   (module-specific)      Config registers, counters, etc.
+0x40+   TX_DATA[]      RW      TX data buffer (if applicable)
+0x80+   RX_DATA[]      RO      RX data buffer (if applicable)
+```
+
+**Naming conventions:**
+- Entity: `<module>_axi` (e.g. `spi_master_axi`, `sdlc_axi`)
+- AXI ports: `s_axi_awaddr`, `s_axi_wdata`, etc. (standard AXI-Lite)
+- Monitor ports: `mon_*` prefix (directly from core, no register decode)
+- IRQ output: `irq` (active-high, directly on entity port)
+
+---
+
+## AXI-Lite Decode Template
+
+Standard VHDL patterns for the register decode logic.
+
+### Write Process
+
+```vhdl
+p_axi_write : process(clk)
+begin
+    if rising_edge(clk) then
+        if rst_n = '0' then
+            ctrl_r       <= (others => '0');
+            irq_enable_r <= (others => '0');
+            -- module-specific resets
+        else
+            -- W1C: clear status bits that hardware hasn't re-set
+            -- (hardware sets are in a separate process)
+
+            if wr_en = '1' then
+                case to_integer(unsigned(wr_addr)) is
+                    when 16#00# =>  -- STATUS (W1C)
+                        for i in status_r'range loop
+                            if s_axi_wdata(i) = '1' then
+                                status_r(i) <= '0';
+                            end if;
+                        end loop;
+                    when 16#04# =>  -- CTRL
+                        ctrl_r <= s_axi_wdata(ctrl_r'range);
+                    when 16#08# =>  -- IRQ_STATUS (W1C)
+                        for i in irq_status_r'range loop
+                            if s_axi_wdata(i) = '1' then
+                                irq_status_r(i) <= '0';
+                            end if;
+                        end loop;
+                    when 16#0C# =>  -- IRQ_ENABLE
+                        irq_enable_r <= s_axi_wdata(irq_enable_r'range);
+                    -- module-specific registers from 0x10+
+                    when others => null;
+                end case;
+            end if;
+        end if;
+    end if;
+end process;
+```
+
+### Read Process
+
+```vhdl
+p_axi_read : process(clk)
+begin
+    if rising_edge(clk) then
+        rd_data <= (others => '0');  -- default: unimplemented bits read 0
+        if rd_en = '1' then
+            case to_integer(unsigned(rd_addr)) is
+                when 16#00# => rd_data(status_r'range)     <= status_r;
+                when 16#04# => rd_data(ctrl_r'range)       <= ctrl_r;
+                when 16#08# => rd_data(irq_status_r'range) <= irq_status_r;
+                when 16#0C# => rd_data(irq_enable_r'range) <= irq_enable_r;
+                -- module-specific registers
+                when others => null;
+            end case;
+        end if;
+    end if;
+end process;
+```
+
+### IRQ Generation
+
+```vhdl
+irq <= '1' when (irq_status_r and irq_enable_r) /= zeros else '0';
+```
+
+Where `zeros` is a constant of matching width. The IRQ output directly
+drives the PS interrupt controller via the block design concat.
+
+---
+
 ## Step 1: Parse the VHDL Register Map
 
 Read the VHDL source and extract:
@@ -44,10 +146,13 @@ VHDL Register Map (source of truth)
 ====================================
 Offset  Name           Bits    Access  Reset
 ------  ----           ----    ------  -----
-0x00    CTRL           [3:0]   RW      0x00
-0x04    STATUS         [4:0]   mixed   0x00
+0x00    STATUS         [4:0]   mixed   0x00
   [0]   tx_busy                RO
   [1]   rx_frame_valid         W1C
+  ...
+0x04    CTRL           [3:0]   RW      0x00
+  [0]   tx_en                  RW
+  [1]   rx_en                  RW
   ...
 ```
 

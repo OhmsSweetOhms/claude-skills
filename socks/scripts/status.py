@@ -85,7 +85,7 @@ def check_config(project_dir, output="terminal"):
 
     # scope
     scope = cfg.get("scope")
-    valid_scopes = ("module", "block", "system")
+    valid_scopes = ("module", "system")
     if scope in valid_scopes:
         results.append(_result("scope", "PASS", scope))
     elif scope:
@@ -175,7 +175,7 @@ def check_directory(project_dir, output="terminal"):
             results.append(_result("constraints/", "WARN", "missing"))
             warns += 1
     else:
-        # Module/block scope: src/*.vhd
+        # Module scope: src/*.vhd
         src_dir = os.path.join(project_dir, "src")
         if os.path.isdir(src_dir):
             vhd_count = _count_files(src_dir, "*.vhd")
