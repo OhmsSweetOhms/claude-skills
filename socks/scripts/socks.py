@@ -392,8 +392,8 @@ def main() -> int:
                           help="Full validation: all stages including HIL (skips if no hardware)")
 
     parser.add_argument("--scope", type=str, default=None,
-                        choices=["module", "block", "system"],
-                        help="Design scope (module/block/system)")
+                        choices=["module", "system"],
+                        help="Design scope (module/system)")
     parser.add_argument("--stages", type=str, default="automated",
                         help="Stages to run: 'automated' or comma-separated (e.g. '0,4,9')")
     parser.add_argument("--files", type=str, nargs="*", default=None,
@@ -436,7 +436,7 @@ def main() -> int:
         project_scope = args.scope or get_scope(project_dir)
         if not project_scope:
             print("\n  ERROR: Scope not determined. Use --scope or create socks.json first.")
-            print("  --scope module  (single entity or multi-module block)")
+            print("  --scope module  (self-contained peripheral, optionally with AXI wrapper)")
             print("  --scope system  (Xilinx IP block design, no custom RTL)")
             return 1
 
@@ -649,6 +649,9 @@ def main() -> int:
             # Always enable VCD generation
             extra_args.append("--vcd")
             reason += " + VCD"
+            # Pass sim_timeout from socks.json if set
+            if socks_cfg.get("sim_timeout"):
+                extra_args.extend(["--timeout", str(socks_cfg["sim_timeout"])])
             # Pass signal map if found in tb/
             sig_maps = glob.glob(os.path.join(project_dir, "tb", "*signal*map*.json"))
             if sig_maps:

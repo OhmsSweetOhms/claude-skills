@@ -61,14 +61,33 @@ def build_externalize_tcl(hil_config):
 
 
 def build_sources_tcl(project_dir, hil_config):
-    """Generate TCL add_files command for DUT sources."""
+    """Generate TCL add_files command for DUT sources, with VHDL 2008 property."""
     dut = hil_config["dut"]
     sources = dut.get("sources", [])
     resolved = resolve_sources(project_dir, sources)
     if not resolved:
         return ""
     files_tcl = " \\\n    ".join(f'"{s}"' for s in resolved)
-    return f'add_files -norecurse [list \\\n    {files_tcl}\n]'
+    tcl = f'add_files -norecurse [list \\\n    {files_tcl}\n]'
+    # Set VHDL 2008 file type on non-top .vhd files (Vivado module reference
+    # does not allow VHDL 2008 as the top file, so only set it on sub-entities)
+    top_entity = hil_config["dut"]["entity"]
+    vhd_non_top = [s for s in resolved
+                   if s.endswith(".vhd") and
+                   os.path.splitext(os.path.basename(s))[0] != top_entity]
+    if vhd_non_top:
+        vhd_tcl = " \\\n    ".join(f'"{s}"' for s in vhd_non_top)
+        tcl += f'\nset_property file_type {{VHDL 2008}} [get_files [list \\\n    {vhd_tcl}\n]]'
+    return tcl
+
+
+def write_sources_tcl(build_dir, project_dir, hil_config):
+    """Write add_sources.tcl to build_dir and return a 'source' command string."""
+    tcl_content = build_sources_tcl(project_dir, hil_config)
+    path = os.path.join(build_dir, "add_sources.tcl")
+    with open(path, "w") as f:
+        f.write(tcl_content + "\n")
+    return path
 
 
 def build_import_tcl(hil_config):
@@ -170,6 +189,9 @@ def main() -> int:
         return 1
     loopback_out = loopback[0][0]
     loopback_in = loopback[0][1]
+    # Build extra loopback pairs (index 1+) and tie_low as space-separated lists
+    extra_lb_pairs = " ".join(f"{p[0]}:{p[1]}" for p in loopback[1:])
+    tie_low_ports = " ".join(wiring.get("tie_low", []))
     monitor = wiring.get("monitor", {})
     monitor_prefixes = " ".join(monitor.get("prefixes", []))
 
@@ -184,7 +206,7 @@ def main() -> int:
             "{{PROJECT_NAME}}": project_name,
             "{{BUILD_DIR}}": build_dir,
             "{{PART}}": board["part"],
-            "{{SOURCES_TCL}}": build_sources_tcl(project_dir, hil_config),
+            "{{SOURCES_TCL}}": write_sources_tcl(build_dir, project_dir, hil_config),
             "{{GEN_HIL_TOP_TCL}}": os.path.join(tcl_dir(), "gen_hil_top.tcl"),
             "{{BLOCK_DESIGN_TCL}}": bd_tcl,
             "{{BASE_XDC}}": os.path.join(xdc_dir(), "microzed.xdc"),
@@ -192,6 +214,8 @@ def main() -> int:
             "{{HIL_TOP_PATH}}": hil_top_path,
             "{{LOOPBACK_OUT}}": loopback_out,
             "{{LOOPBACK_IN}}": loopback_in,
+            "{{EXTRA_LB_PAIRS}}": extra_lb_pairs,
+            "{{TIE_LOW_PORTS}}": tie_low_ports,
             "{{MONITOR_PREFIXES}}": monitor_prefixes,
         },
     )
