@@ -244,7 +244,7 @@ plan authoring, and troubleshooting.
 | 12 | CLAUDE.md | *Claude writes docs* | `references/structure-module.md` or `references/structure-system.md`, `references/claude_notes.md` |
 | 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
 | 14-19 | **HIL Flow** | *See `references/hil.md`* | *Requires `hil.json` in project root* |
-| 14 | HIL: Vivado Project | `scripts/hil/hil_project.py` | `references/hil.md` |
+| 14 | HIL: Vivado Project + trigger validation | `scripts/hil/hil_project.py` | `references/hil.md` |
 | 15 | HIL: Implementation | `scripts/hil/hil_impl.py` | `references/hil.md` |
 | 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` + guidance | `references/hil.md` (§ Firmware Authoring Guide) |
 | 17 | HIL: Program + Test | `scripts/hil/hil_run.py` | `references/hil.md` |

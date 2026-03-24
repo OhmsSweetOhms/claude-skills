@@ -91,6 +91,7 @@ from discovery that survive `build/` clean:
 | `board.part` | no | FPGA part. Required for Stage 10 and `--hil` |
 | `board.preset` | no | Board name matching `references/boards/<preset>/` |
 | `sub_designs` | no | Custom RTL sub-designs: `[{"name": "...", "scope": "block", "path": "..."}]` |
+| `sim_timeout` | no | Xsim wallclock timeout in seconds. Default 600. Set higher for long simulations (e.g., DPLL frequency hop tests: `1800`) |
 
 Created during `--design` discovery. Read by orchestrator and HIL scripts for
 scope-conditional logic.

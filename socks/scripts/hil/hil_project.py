@@ -29,6 +29,7 @@ from hil_lib import (
     expand_template, resolve_sources,
 )
 from hil_prep import maybe_generate_artifacts
+from validate_trigger_plan import validate_trigger_plan
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import (
@@ -250,6 +251,12 @@ def main() -> int:
     if not os.path.isfile(hil_top_path):
         print(f"\n  {fail_str()}: hil_top.vhd not generated")
         return 1
+
+    # Validate trigger plan against MARK_DEBUG signals in hil_top.vhd
+    trigger_plan_path = os.path.join(build_dir, "ila_trigger_plan.json")
+    if os.path.isfile(trigger_plan_path):
+        if not validate_trigger_plan(hil_top_path, trigger_plan_path):
+            return 1
 
     print(f"\n  {pass_str()}: HIL Vivado project created")
     print(f"    Project: {xpr_files[0]}")

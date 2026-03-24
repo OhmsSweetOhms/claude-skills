@@ -105,7 +105,11 @@ hand-written.
     "fclk_mhz": 100
   },
   "wiring": {
-    "loopback": [["txd", "rxd"]],
+    "loopback": [
+      ["txd", "rxd"],
+      ["clk_out_n", "data_in_a"]
+    ],
+    "tie_low": ["scl_t", "sda_t", "rx_in_b", "ref_clk_in_b"],
     "monitor": {
       "prefixes": ["irq", "mon_"],
       "ports": ["irq", "mon_tx_state", "mon_rx_state"]
@@ -140,7 +144,8 @@ hand-written.
 | `board.serial_fallback` | -- | Fallback serial port path |
 | `axi.range` | `4K` | AXI address range |
 | `axi.fclk_mhz` | `100` | PS FCLK frequency in MHz |
-| `wiring.loopback` | `[]` | Port pairs to connect externally (e.g. TX->RX) |
+| `wiring.loopback` | `[]` | Port pairs `[out, in]` to connect in hil_top. First pair is primary; extras passed as `extra_lb_pairs` to `gen_hil_top.tcl` |
+| `wiring.tie_low` | `[]` | Input ports connected to constant `'0'` / `(others => '0')` in hil_top.vhd. Use for unused tristate enables, channel B inputs, etc. |
 | `wiring.monitor.prefixes` | `[]` | Port name prefixes for MARK_DEBUG |
 | `wiring.monitor.ports` | `[]` | Explicit ports to externalize/monitor |
 | `firmware.test_src` | -- | Main test C file |
@@ -178,9 +183,29 @@ absolute path in `board.preset`.
 
 ### Loopback
 External connections between DUT ports. Each entry is a `[output, input]` pair.
-These ports are externalized from the block design and connected at the top
-level. Use for self-test (e.g. UART TX -> RX loopback via board wiring or
-jumper wire).
+The first pair is the primary loopback (used by `gen_hil_top.tcl` for the main
+`{{LOOPBACK_OUT}}`/`{{LOOPBACK_IN}}` template variables). Additional pairs are
+passed as `extra_lb_pairs` (colon-separated `out:in` pairs).
+
+Multiple loopback pairs are needed when the DUT has more than one I/O channel:
+- **DPLL:** `clk_out` → `ref_in_a`, `clk_out_n` → `data_in_a`
+- **I2C:** `scl_o` → `scl_i`, `sda_o` → `sda_i`
+- **SPI:** `mosi` → `miso` (single pair is sufficient)
+
+### Tie Low
+Input ports that should be connected to constant `'0'` (scalar) or
+`(others => '0')` (vector) in `hil_top.vhd`. Use for:
+- Unused tristate enables (e.g. `scl_t`, `sda_t`)
+- Inactive channel B inputs (e.g. `rx_in_b`, `ref_clk_in_b`)
+- Any DUT input that must be held inactive for the loopback test
+
+Without `tie_low`, unmatched DUT input ports become top-level PL I/O pins
+requiring IOSTANDARD/LOC constraints. This causes DRC NSTD-1/UCIO-1 errors
+during bitstream generation.
+
+### IRQ Auto-Capture
+Any DUT port matching `irq*` is automatically captured as an internal
+`MARK_DEBUG` signal — no need to list it in `wiring.monitor`.
 
 ### Monitor
 Ports to observe via ILA. Two mechanisms:
@@ -245,6 +270,21 @@ different problems in sequence:
 
 ---
 
+## Known Vivado Limitations
+
+### Module reference top file must be plain VHDL (not 2008)
+
+`create_bd_cell -type module -reference` fails with `ERROR [filemgmt 56-195]`
+if the top entity file is marked as VHDL 2008. The SOCKS HIL flow automatically
+sets `file_type {VHDL 2008}` only on sub-entity files (via `build_sources_tcl()`
+in `hil_project.py`). If your AXI wrapper uses VHDL 2008 features (e.g.,
+`process(all)`), move them to a sub-entity or rewrite using VHDL-93 equivalents.
+
+**Affected modules from migration:** spi (`process(all)` in spi_master.vhd),
+sdlc (VHDL 2008 aggregate assignments).
+
+---
+
 ## HIL Prep -- Artifact Generation
 
 `scripts/hil/hil_prep.py` auto-generates HIL artifacts from VHDL sources and
@@ -289,10 +329,48 @@ the firmware during Stage 16's guidance phase.
    test pattern, and verification criteria
 2. Read the actual driver header (`sw/*.h`) — do not assume API shape. Use
    the real function signatures, struct types, and register defines.
-3. Follow the `HIL_DEBUG_MODE` pattern with `wait_for_go()`:
-   - `#ifdef HIL_DEBUG_MODE` guards all ILA pacing code
-   - `wait_for_go()` reads one byte from PS UART1 RX FIFO (ILA go signal)
-   - The number of `wait_for_go()` calls must equal the ILA capture count
+3. **REQUIRED: ILA debug mode pacing (`wait_for_go()`).** `hil_ila.py`
+   rebuilds firmware with `-DHIL_DEBUG_MODE` and sends a `G` byte over PS
+   UART1 before each ILA capture. Without this pattern, firmware runs once
+   at boot and finishes before ILA is armed — the trigger never fires and
+   the capture hangs forever. This is the #1 cause of stuck ILA captures.
+
+   The firmware MUST:
+   - Print `HIL_PASS` or `HIL_FAIL` from the normal (non-debug) test path
+   - Enter a `wait_for_go()` → `run_test()` loop gated by `HIL_DEBUG_MODE`
+   - The number of `wait_for_go()` iterations must equal the ILA capture count
+
+   ```c
+   /* ---- ILA pacing: PS UART1 "go" byte protocol ---- */
+   #ifdef HIL_DEBUG_MODE
+   #define UART1_BASE       0xE0001000U
+   #define UART1_SR         (*(volatile uint32_t *)(UART1_BASE + 0x2CU))
+   #define UART1_FIFO       (*(volatile uint32_t *)(UART1_BASE + 0x30U))
+   #define UART_SR_RXEMPTY  (1U << 1)
+
+   static void wait_for_go(void) {
+       while (UART1_SR & UART_SR_RXEMPTY) {}
+       (void)UART1_FIFO;  /* consume the 'G' byte */
+   }
+   #endif
+
+   int main(void) {
+       /* ... normal test ... */
+       printf(pass ? "HIL_PASS\n" : "HIL_FAIL\n");
+
+   #ifdef HIL_DEBUG_MODE
+       while (1) {
+           wait_for_go();
+           run_test();  /* must exercise the trigger condition */
+       }
+   #endif
+       return 0;
+   }
+   ```
+
+   The `run_test()` function must exercise whatever bus activity the ILA
+   trigger plan expects (e.g., SPI transfer, I2C START/STOP, SDLC frame TX).
+
 4. Use `XTime` for all timeouts (never busy-wait with loop counters)
 5. Print `HIL_PASS` or `HIL_FAIL` as the **last line** of UART output
 6. Stage 16 guidance happens **before** build scripts run. Route through
@@ -326,7 +404,7 @@ ERROR: sw/hil_test_main.c not found. Claude must write firmware before Stage 16 
 `{{EXTERNALIZE_TCL}}`, `{{GEN_HIL_TOP_TCL}}`, `{{BLOCK_DESIGN_TCL}}`,
 `{{BASE_XDC}}`, `{{DEBUG_XDC}}`, `{{HIL_TOP_PATH}}`, `{{BUILD_DIR}}`,
 `{{PROJECT_NAME}}`, `{{LOOPBACK_OUT}}`, `{{LOOPBACK_IN}}`,
-`{{MONITOR_PREFIXES}}`.
+`{{MONITOR_PREFIXES}}`, `{{EXTRA_LB_PAIRS}}`, `{{TIE_LOW_PORTS}}`.
 
 ### Stage 15: HIL Implementation (`scripts/hil/hil_impl.py`)
 
