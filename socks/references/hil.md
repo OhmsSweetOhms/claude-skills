@@ -45,10 +45,16 @@ The HIL flow is standalone (`--hil --top <entity>`), not auto-appended to
 Before the HIL flow, run test discovery to produce `docs/TEST-INTENT.md`.
 This is a Claude-guided conversation (like `discovery.md` → `DESIGN-INTENT.md`).
 
-Read `references/test_discovery.md` for the full conversation guide.
+**Scope routing:**
+- **Module/block scope** → read `references/test_discovery.md`
+  (seeds from SV TB, VCD signal map, `sw/*.h`, VHDL FSM types)
+- **System scope** → read `references/test-discovery-system.md`
+  (seeds from DESIGN-INTENT.md and hil.json, no simulation artifacts)
+
+Determine scope from `socks.json` (`get_scope()`) or `--scope` CLI arg.
 
 **Flow:**
-1. Claude reads SV TB, signal map, driver API, and VHDL sources
+1. Claude reads scope-appropriate artifacts (see routing above)
 2. Claude asks core questions about test scenarios, ILA captures, pass/fail criteria
 3. Claude synthesizes answers into `docs/TEST-INTENT.md`
 4. User approves
@@ -285,13 +291,47 @@ sdlc (VHDL 2008 aggregate assignments).
 
 ---
 
+## Auto-Generating Trigger Plans from VCD
+
+`scripts/hil/gen_trigger_plan.py` generates `ila_trigger_plan.json` from VCD
+simulation data instead of the TEST-INTENT.md capture plan table. Every trigger
+value in the output was observed in simulation — guaranteed to fire on hardware.
+
+**Requires:** VCD from Stage 7, `tb/vcd_signal_map.json`, `build/hil/hil_top.vhd`
+from Stage 14.
+
+```bash
+# After Stage 7 (VCD exists) and Stage 14 (hil_top.vhd exists):
+python scripts/hil/gen_trigger_plan.py --project-dir .
+python scripts/hil/gen_trigger_plan.py --project-dir . --max-captures 4
+python scripts/hil/gen_trigger_plan.py --project-dir . --signals mon_tx_state locked
+```
+
+**How it works:**
+1. Parses `hil_top.vhd` for MARK_DEBUG signals (names + widths)
+2. Maps MARK_DEBUG signals to VCD paths via `vcd_signal_map.json`
+3. Streams VCD, collects all unique values each signal takes
+4. Selects trigger points: one per non-zero FSM state, rising edge for scalars
+5. Self-validates output with `validate_trigger_plan.py` before writing
+
+**Selection heuristics when over `--max-captures`:** Prefers signals with fewer
+observed values (FSM states over counters). Within a signal, prefers rare states.
+Output is sorted by first-seen time in VCD (natural state sequence).
+
+**Replaces** the TEST-INTENT.md → `hil_prep.py` path for trigger plan generation.
+`hil_prep.py` skips trigger plan generation if the file already exists, so running
+`gen_trigger_plan.py` first takes priority. TEST-INTENT.md is still needed for
+firmware intent (test scenarios, init params, pass/fail criteria).
+
+---
+
 ## HIL Prep -- Artifact Generation
 
 `scripts/hil/hil_prep.py` auto-generates HIL artifacts from VHDL sources and
 `docs/TEST-INTENT.md`. Called by Stage 14 before Vivado project creation.
 
 **Only generates files that don't already exist** -- existing hand-written
-artifacts are preserved.
+artifacts (including VCD-generated trigger plans) are preserved.
 
 ### Generated artifacts
 
