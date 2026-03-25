@@ -274,6 +274,16 @@ def generate_hil_json(project_dir, top, part="xc7z020clg484-1"):
     ports = extract_ports(top_lines)
     classified = classify_ports(ports)
 
+    # Warn if DUT has no AXI-Lite interface -- the HIL block design creates
+    # an AXI interconnect and connects dut/s_axi, which will fail if the
+    # DUT doesn't have s_axi_* ports.  The user must author an AXI wrapper
+    # (e.g. my_module_axi.vhd) and update hil.json entity/sources.
+    if not classified["axi"]:
+        print(f"\n  WARNING: '{top}' has no AXI-Lite ports (no s_axi_* signals).")
+        print(f"  The HIL block design expects an AXI-Lite slave interface.")
+        print(f"  Author an AXI wrapper and set hil.json dut.entity to the wrapper.")
+        print(f"  See references/hil.md \u00a7 'Modules Without AXI-Lite'.\n")
+
     # Build monitor lists
     monitor_names = [n for n, d, t in classified["monitor"]]
     monitor_prefixes = []

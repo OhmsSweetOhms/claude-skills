@@ -122,10 +122,11 @@ def validate_trigger_plan(hil_top_path, trigger_plan_path):
             errors += 1
             continue
 
-        # Check 4: compare is eq
-        if compare != "eq":
+        # Check 4: compare is a valid ILA comparator
+        valid_compares = ("eq", "neq", "gt", "lt", "gteq", "lteq")
+        if compare not in valid_compares:
             print(f"    {fail_str()} {name}: trigger_compare '{compare}' "
-                  f"must be 'eq' (only supported ILA basic trigger mode)")
+                  f"not valid (must be one of: {', '.join(valid_compares)})")
             errors += 1
             continue
 

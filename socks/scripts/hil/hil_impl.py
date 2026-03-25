@@ -73,13 +73,27 @@ def main() -> int:
            f'-tclargs "{build_dir}" "{project_name}"')
 
     print(f"\n  Running synthesis + implementation...")
-    result = subprocess.run(
-        ["bash", "-c", cmd],
-        cwd=build_dir,
-    )
+    vivado_log = os.path.join(build_dir, "stage15_vivado.log")
+    with open(vivado_log, "w") as log_f:
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            cwd=build_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        log_f.write(result.stdout)
+    # Always show Vivado output on terminal
+    print(result.stdout)
 
     if result.returncode != 0:
         print(f"\n  {fail_str()}: Implementation failed (rc={result.returncode})")
+        print(f"  Log: {vivado_log}")
+        lines = result.stdout.strip().splitlines()
+        if len(lines) > 20:
+            print(f"\n  --- last 20 lines ---")
+            for ln in lines[-20:]:
+                print(f"  {ln}")
         return 1
 
     # Verify outputs

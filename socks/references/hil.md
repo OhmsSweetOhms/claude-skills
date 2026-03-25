@@ -163,6 +163,49 @@ hand-written.
 
 ---
 
+## Modules Without AXI-Lite
+
+The HIL block design creates a PS7 + AXI interconnect + DUT topology.
+The DUT entity **must** have an AXI-Lite slave interface (`s_axi_*` ports)
+for the block design to connect. `hil_prep.py` warns when it detects a DUT
+without `s_axi_*` ports.
+
+Modules with only discrete ports (e.g., `tx_start`, `tx_data`, `can_tx`)
+need an **AXI-Lite wrapper** before they can be used in HIL. The wrapper:
+
+1. **Register map** -- memory-mapped access to TX/RX control and data ports.
+   Follow the standard layout in `references/regmap.md` (STATUS at 0x00,
+   CTRL at 0x04, IRQ at 0x08/0x0C, module-specific from 0x10+).
+
+2. **TX start handshake** -- hold the core's `tx_start` signal until
+   `tx_busy` asserts, then auto-clear. A single-cycle pulse from an AXI
+   write will miss the core's sample window if the core uses enable-gated
+   FSM transitions (e.g., CAN bit timing ticks every 100 clocks).
+
+3. **Two-node internal loopback** -- protocols where the RX FSM blocks
+   during TX (e.g., CAN: `tx_busy_i = '0'` gate on RX SOF detection)
+   require a second passive core instance for self-receive. The wrapper
+   instantiates a TX core (register-driven) and an RX core (`tx_start`
+   tied to `'0'`), connected by an internal wired-AND bus. The RX core
+   provides the ACK bit and produces `rx_valid`. Monitor ports are split:
+   TX-side monitors from `u_tx_core`, RX-side from `u_rx_core`.
+
+4. **RX data latching** -- capture RX frame fields on `rx_valid` pulse
+   into holding registers so firmware can read them at leisure.
+
+**Naming:** `<module>_axi` (e.g., `can_core_axi`, `uart_axi`).
+
+**hil.json:** Set `dut.entity` to the wrapper and include both wrapper
+and core in `dut.sources`:
+```json
+"dut": {
+  "entity": "can_core_axi",
+  "sources": ["src/can_core_axi.vhd", "src/can_core.vhd"]
+}
+```
+
+---
+
 ## Board Presets
 
 Board presets are TCL scripts that configure PS7 block design properties.
@@ -322,6 +365,25 @@ Output is sorted by first-seen time in VCD (natural state sequence).
 `hil_prep.py` skips trigger plan generation if the file already exists, so running
 `gen_trigger_plan.py` first takes priority. TEST-INTENT.md is still needed for
 firmware intent (test scenarios, init params, pass/fail criteria).
+
+### Trigger Compare Operators
+
+The ILA core is configured with advanced trigger mode (`C_ADV_TRIGGER true`),
+enabling all Vivado ILA comparators. Valid `trigger_compare` values in
+`ila_trigger_plan.json`:
+
+| Operator | Meaning | Example use |
+|----------|---------|-------------|
+| `eq` | Equal | FSM state == specific value |
+| `neq` | Not equal | Any non-idle state |
+| `gt` | Greater than | Counter above threshold |
+| `lt` | Less than | Counter below threshold |
+| `gteq` | Greater or equal | At or above threshold |
+| `lteq` | Less or equal | At or below threshold |
+
+Auto-generated trigger plans (`gen_trigger_plan.py`) default to `eq`.
+Hand-authored plans can use any operator. `validate_trigger_plan.py`
+checks that the operator is one of the six above.
 
 ---
 

@@ -233,13 +233,28 @@ def main() -> int:
            f'-source "{cp_tcl}" -tclargs --debug')
 
     print(f"\n  Running Vivado project creation...")
-    result = subprocess.run(
-        ["bash", "-c", cmd],
-        cwd=build_dir,
-    )
+    vivado_log = os.path.join(build_dir, "stage14_vivado.log")
+    with open(vivado_log, "w") as log_f:
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            cwd=build_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        log_f.write(result.stdout)
+    # Always show Vivado output on terminal
+    print(result.stdout)
 
     if result.returncode != 0:
         print(f"\n  {fail_str()}: Vivado project creation failed (rc={result.returncode})")
+        print(f"  Log: {vivado_log}")
+        # Show last 20 lines for quick diagnosis
+        lines = result.stdout.strip().splitlines()
+        if len(lines) > 20:
+            print(f"\n  --- last 20 lines ---")
+            for ln in lines[-20:]:
+                print(f"  {ln}")
         return 1
 
     # Verify outputs

@@ -16,7 +16,14 @@ open_project [file join $proj_dir ${project_name}.xpr]
 set generics [get_property generic [current_fileset]]
 set is_debug [expr {[string match *DEBUG=true* $generics]}]
 
-# Reset stale runs before launching
+# Reset stale runs before launching (including DUT OOC synthesis).
+# Module references in the block design get their own OOC synthesis run
+# (e.g. system_dut_0_synth_1). If RTL sources change after Stage 14,
+# the OOC checkpoint goes stale while reset_run synth_1 only resets the
+# top-level run. Without this, Vivado silently reuses the old DUT netlist.
+foreach run [get_runs -filter {IS_SYNTHESIS && NAME != synth_1}] {
+    catch {reset_run $run}
+}
 reset_run synth_1
 catch {reset_run impl_1}
 
