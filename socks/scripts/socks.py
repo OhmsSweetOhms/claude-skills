@@ -10,7 +10,6 @@ Workflow entry points:
     python scripts/socks.py --project-dir . --architecture --scope module
     python scripts/socks.py --project-dir . --bughunt
     python scripts/socks.py --project-dir . --migrate
-    python scripts/socks.py --project-dir . --hil --top usart_frame_ctrl
     python scripts/socks.py --project-dir . --validate
 
 Legacy / explicit stage control:
@@ -19,13 +18,12 @@ Legacy / explicit stage control:
     python scripts/socks.py --project-dir . --stages 4 --files src/*.vhd
 
 Workflows:
-    --design        Full design: stages 0,1,3,4,5,7,8,9,10,11,13
-    --test          Simulation only: stages 4,5,7,8,9
-    --architecture  Re-architecture: stages 0,1,3,4,5,7,8,9,10,11,13
-    --bughunt       Bug fix + verify: stages 3,4,5,7,8,9,10
+    --design        Full design: stages 0,1,3,4,21,5,7,8,9,10,11,12,13
+    --test          Simulation only: stages 4,21,5,7,8,9
+    --architecture  Re-architecture: stages 0,1,3,4,21,5,7,8,9,10,11,12,13
+    --bughunt       Bug fix + verify: stages 3,4,21,5,7,8,9,10
     --migrate       Migrate old log-based project to state file format
-    --hil           Hardware-in-the-loop: stages 0,10,14,15,16,17,18,19 (requires --top)
-    --validate      Full validation: env + sim + synth + audit + HIL (skips HIL if no hardware)
+    --validate      Full validation: all stages including HIL (skips HIL if no hardware)
 
 Stage keywords:
     automated   All stages with scripts (default)
@@ -108,19 +106,21 @@ STAGES = {
                      "constraints/*.xdc",
                      "docs/ARCHITECTURE.md",
                  ]),
+    21: StageDef("IP Packaging",            script="ip_package.py"),
 }
 
-DESIGN_LOOP = [2, 3, 4, 5, 6, 7, 8, 9]  # informational only, not mechanical
+DESIGN_LOOP = [2, 3, 4, 21, 5, 6, 7, 8, 9]  # informational only, not mechanical
 
 # Workflow-to-stages mapping (automated stages only; guidance stages handled by Claude)
+# NOTE: --hil removed as standalone workflow. HIL stages require IP packaging (stage 21),
+# which is only available through --validate or --design workflows.
 WORKFLOW_STAGES = {
-    "design":        [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13],
-    "design_system": [0, 1, 20, 10, 11, 12, 13],
-    "test":          [4, 5, 7, 8, 9],
-    "architecture":  [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13],
-    "bughunt":       [3, 4, 5, 7, 8, 9, 10],
-    "hil":              [0, 10, 14, 15, 16, 17, 18, 19, 11, 12, 13],
-    "validate":         [0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    "design":           [0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13],
+    "design_system":    [0, 1, 20, 10, 11, 12, 13],
+    "test":             [4, 21, 5, 7, 8, 9],
+    "architecture":     [0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13],
+    "bughunt":          [3, 4, 21, 5, 7, 8, 9, 10],
+    "validate":         [0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     "validate_system":  [0, 1, 20, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
 }
 
@@ -386,8 +386,6 @@ def main() -> int:
                           help="Bug hunt workflow: sim + synthesis (3-10)")
     workflow.add_argument("--migrate", action="store_true",
                           help="Migrate old log-based project to state file format")
-    workflow.add_argument("--hil", action="store_true",
-                          help="Hardware-in-the-loop: stages 0,10,14-19 (requires --top)")
     workflow.add_argument("--validate", action="store_true",
                           help="Full validation: all stages including HIL (skips if no hardware)")
 
@@ -478,14 +476,6 @@ def main() -> int:
         active_workflow = "architecture"
     elif args.bughunt:
         active_workflow = "bughunt"
-    elif args.hil:
-        active_workflow = "hil"
-        # --top is optional for system scope (uses dut.entity from socks.json)
-        project_scope = args.scope or get_scope(project_dir)
-        if not args.top and project_scope != "system":
-            print("ERROR: --top is required for --hil (unless scope is system). "
-                  "Provide the DUT entity name (e.g. --top uart_axi).")
-            return 1
     elif args.validate:
         active_workflow = "validate"
 
@@ -630,6 +620,15 @@ def main() -> int:
                 return [], "No VHDL files found", 0
             extra_args = files
             reason = f"Run 13 static synthesis checks on {len(files)} file(s)"
+
+        elif stage == 21:
+            project_scope = get_scope(project_dir) or args.scope
+            if project_scope == "system":
+                return [], "System scope — IP packaging not applicable", 0
+            extra_args = ["--project-dir", project_dir]
+            if args.settings:
+                extra_args.extend(["--settings", args.settings])
+            reason = "Package VHDL design as Vivado IP (ipx::)"
 
         elif stage == 5:
             tb_path = find_python_tb(project_dir)

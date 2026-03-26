@@ -36,7 +36,7 @@ from socks_lib import (
     find_vivado_settings, print_header, print_separator,
     pass_str, fail_str, yellow, bold,
 )
-from project_config import get_scope
+from project_config import get_scope, load_project_config
 
 
 def build_externalize_tcl(hil_config):
@@ -129,6 +129,23 @@ def main() -> int:
               f"Run Stage 7 to generate a VCD and fix any simulation errors.")
         return 1
 
+    # Verify IP packaging (Stage 21) has run — component.xml must exist
+    ip_dir = os.path.join(project_dir, "build", "ip")
+    component_xml = os.path.join(ip_dir, "component.xml")
+    if project_scope != "system" and not os.path.isfile(component_xml):
+        print(f"\n  ERROR: build/ip/component.xml not found. "
+              f"Stage 21 (IP Packaging) must run before Stage 14.")
+        print(f"  Run: python scripts/socks.py --project-dir {project_dir} --stages 4,21")
+        return 1
+
+    # Compute VLNV from socks.json ip section
+    socks_cfg = load_project_config(project_dir)
+    ip_cfg = socks_cfg.get("ip", {}) if socks_cfg else {}
+    ip_vlnv = ""
+    if ip_cfg and project_scope != "system":
+        ip_vlnv = (f"{ip_cfg.get('vendor', 'socks')}:{ip_cfg.get('library', 'socks')}:"
+                   f"{args.top}:{ip_cfg.get('version', '1.0')}")
+
     # Run hil_prep to generate missing artifacts
     if not maybe_generate_artifacts(project_dir, args.top, args.part):
         return 1
@@ -176,6 +193,7 @@ def main() -> int:
             "{{PRESET_TCL}}": preset_path,
             "{{FCLK_MHZ}}": fclk,
             "{{DUT_ENTITY}}": dut["entity"],
+            "{{IP_VLNV}}": ip_vlnv,
             "{{EXTERNALIZE_TCL}}": build_externalize_tcl(hil_config),
             "{{AXI_RANGE}}": axi.get("range", "4K"),
             "{{AXI_BASE_ADDRESS}}": axi["base_address"],
@@ -218,6 +236,7 @@ def main() -> int:
             "{{EXTRA_LB_PAIRS}}": extra_lb_pairs,
             "{{TIE_LOW_PORTS}}": tie_low_ports,
             "{{MONITOR_PREFIXES}}": monitor_prefixes,
+            "{{IP_REPO_DIR}}": ip_dir if ip_vlnv else "",
         },
     )
 

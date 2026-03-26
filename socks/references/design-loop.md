@@ -26,6 +26,7 @@ Stage 1 approval
   │     regmap check if reg map changed│
   │  3: VHDL Linter                 │
   │  4: Synthesis Audit             │
+  │ 21: IP Packaging                │
   │  5: Python Testbench            │
   │  6: Bare-Metal C Driver         │
   │  7: SV/Xsim Testbench          │
@@ -70,10 +71,12 @@ Reason about the root cause. Re-enter at the producing stage:
 
 | Root cause | Re-entry | Propagates through |
 |---|---|---|
-| RTL bug | Stage 2 | 3 → 4 → 5 → 6 (if reg map changed) → 7 → 8 → 9 |
+| RTL bug | Stage 2 | 3 → 4 → 21 → 5 → 6 (if reg map changed) → 7 → 8 → 9 |
+| IP packaging failure (port issue) | Stage 2 | 3 → 4 → 21 → 5 → ... |
+| IP packaging failure (synthesis) | Stage 4 | 21 → 5 → ... |
 | Python model bug | Stage 5 | 7 → 8 → 9 |
 | SV testbench bug | Stage 7 | 8 → 9 |
-| Register map change | Stage 2 | **regmap check** (`references/regmap.md`) → 3 → 4 → 5 → 6 → 7 → 8 → 9 |
+| Register map change | Stage 2 | **regmap check** (`references/regmap.md`) → 3 → 4 → 21 → 5 → 6 → 7 → 8 → 9 |
 | C driver bug | Stage 6 | 7 → 8 → 9 |
 
 **Carry-forward rule:** Every fix must propagate through all downstream stages.
@@ -177,6 +180,20 @@ own code. Ignore read-only external module warnings.
 
 Run `scripts/audit.py src/*.vhd`. 13 static checks. All must pass before
 proceeding. External module audit warnings are non-blocking (exit code 2).
+
+### Stage 21 -- IP Packaging
+
+Run through orchestrator after Stage 4 passes. Packages the VHDL design as
+a Vivado IP using `ipx::` API. Read `references/ip-packaging.md` for
+interface detection rules, generic mapping, and troubleshooting.
+
+Requires `ip` section in `socks.json` (mandatory for module scope).
+Uses hash-based skip logic — skips Vivado when sources are unchanged.
+
+**Re-entry on failure:** IP packaging failures are generative/case-by-case.
+Re-entry is always at a stage before 21:
+- Port type or naming issue -> re-enter at Stage 2 (fix RTL)
+- Synthesis-related issue -> re-enter at Stage 4
 
 ### Stage 5 -- Python Testbench
 
