@@ -132,6 +132,23 @@ foreach p [get_hw_probes -of_objects $ila] {
 set_property CONTROL.DATA_DEPTH 4096 $ila
 set_property CONTROL.TRIGGER_POSITION 512 $ila
 
+# --- Helper: JTAG-to-AXI register dump (bypasses ARM core) ---
+proc dump_axi_via_jtag {base_addr num_regs csv_path} {
+    set fp [open $csv_path w]
+    puts $fp "offset,value"
+    for {set i 0} {$i < $num_regs} {incr i} {
+        set addr [format 0x%08X [expr {$base_addr + $i * 4}]]
+        set txn [create_hw_axi_txn rd_txn -address $addr \
+                     -len 1 -type READ -force]
+        run_hw_axi $txn
+        set val [get_property DATA $txn]
+        puts $fp "[format 0x%02X [expr {$i * 4}]],$val"
+        delete_hw_axi_txn $txn
+    }
+    close $fp
+    puts "DUMP_AXI_DONE $csv_path"
+}
+
 # --- Helper: arm ILA on a signal-name probe, wait, readback CSV ---
 proc arm_and_capture {ila probe_name value compare csv_path {timeout 15}} {
     # Reset ALL probes to don't-care
@@ -186,12 +203,6 @@ proc arm_and_capture {ila probe_name value compare csv_path {timeout 15}} {
     return 1
 }
 
-# Write sentinel: FPGA is programmed, ILA is ready
-set ready_file [file join $build_dir .ila_ready]
-set fp [open $ready_file w]
-puts $fp "ready"
-close $fp
-
 if {$interactive} {
     # --- Interactive mode: read commands from stdin ---
     puts "ILA_READY"
@@ -209,6 +220,17 @@ if {$interactive} {
             puts "ILA_QUIT"
             flush stdout
             break
+        } elseif {$cmd eq "DUMP_AXI"} {
+            if {[llength $parts] < 4} {
+                puts "ILA_ERROR usage: DUMP_AXI <base_addr> <num_regs> <csv_path>"
+                flush stdout
+                continue
+            }
+            set base [expr [lindex $parts 1]]
+            set nregs [lindex $parts 2]
+            set csv [lindex $parts 3]
+            dump_axi_via_jtag $base $nregs $csv
+            flush stdout
         } elseif {$cmd eq "ARM"} {
             if {[llength $parts] < 5} {
                 puts "ILA_ERROR usage: ARM <probe> <value> <compare> <output_csv>"
@@ -243,15 +265,6 @@ if {$interactive} {
     set captures [parse_trigger_plan $plan_file]
     puts "  [llength $captures] captures defined"
 
-    # Wait for CPU boot (sentinel file written by orchestrator)
-    set boot_file [file join $build_dir .cpu_booted]
-    puts "=== Waiting for CPU boot (sentinel: $boot_file) ==="
-    while {![file exists $boot_file]} {
-        after 500
-    }
-    file delete $boot_file
-    puts "=== CPU booted — starting captures ==="
-
     set cap_num 0
     foreach cap $captures {
         incr cap_num
@@ -285,7 +298,6 @@ if {$interactive} {
 }
 
 # Cleanup
-catch {file delete [file join $build_dir .ila_ready]}
 close_hw_target
 disconnect_hw_server
 close_hw_manager

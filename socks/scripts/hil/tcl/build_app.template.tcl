@@ -31,10 +31,12 @@ app create -name hil_app -platform hil_platform \
 # Import test sources
 {{IMPORT_SOURCES_TCL}}
 
-# Add HIL_DEBUG_MODE define if --debug
+# Add debug symbols and disable optimization if --debug
 if {$debug_mode} {
-    app config -name hil_app -add compiler-misc {-DHIL_DEBUG_MODE}
-    puts "=== Debug mode: HIL_DEBUG_MODE defined ==="
+    configapp -app hil_app build-config Debug
+    configapp -app hil_app -set compiler-misc {-g -O0 -fno-omit-frame-pointer}
+    configapp -app hil_app define-compiler-symbols {HIL_DEBUG_MODE}
+    puts "=== Debug mode: -g -O0 -fno-omit-frame-pointer + HIL_DEBUG_MODE ==="
 }
 
 # Build

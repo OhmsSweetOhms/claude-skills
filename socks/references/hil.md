@@ -159,7 +159,10 @@ hand-written.
 | `firmware.pass_marker` | `HIL_PASS` | UART string indicating test passed |
 | `firmware.fail_marker` | `HIL_FAIL` | UART string indicating test failed |
 | `firmware.timeout_s` | `30` | Seconds to wait for pass/fail marker |
-| `firmware.debug_iterations` | -- | Number of `wait_for_go()` calls in debug firmware. **Must equal ILA capture count.** Required when `hil.json` exists and ILA captures are planned. |
+| `firmware.debug_iterations` | -- | Number of test phases in debug firmware. **Must equal ILA capture count.** Required when `hil.json` exists and ILA captures are planned. |
+| `debug.watch_vars` | `[]` | C global variable names to read with XSDB `print` on failure |
+| `debug.watch_addrs` | `{}` | Labelled AXI register addresses to read with `mrd` on failure |
+| `debug.jtag_axi_dump` | `{}` | Named register regions for JTAG-to-AXI dump on CPU fault |
 
 ---
 
@@ -431,46 +434,39 @@ the firmware during Stage 16's guidance phase.
    test pattern, and verification criteria
 2. Read the actual driver header (`sw/*.h`) — do not assume API shape. Use
    the real function signatures, struct types, and register defines.
-3. **REQUIRED: ILA debug mode pacing (`wait_for_go()`).** `hil_ila.py`
-   rebuilds firmware with `-DHIL_DEBUG_MODE` and sends a `G` byte over PS
-   UART1 before each ILA capture. Without this pattern, firmware runs once
-   at boot and finishes before ILA is armed — the trigger never fires and
-   the capture hangs forever. This is the #1 cause of stuck ILA captures.
+3. **REQUIRED: Breakpoint-paced test phases.** Stage 18 uses XSDB breakpoints
+   to synchronize firmware execution with ILA captures. Python holds the CPU
+   at a breakpoint, arms the ILA, then resumes — no serial handshake needed.
+   UART is a pure debug log channel.
 
    The firmware MUST:
-   - Print `HIL_PASS` or `HIL_FAIL` from the normal (non-debug) test path
-   - Enter a `wait_for_go()` → `run_test()` loop gated by `HIL_DEBUG_MODE`
-   - The number of `wait_for_go()` iterations must equal the ILA capture count
+   - Print `HIL_PASS` or `HIL_FAIL` from the normal test path
+   - Structure test phases as separate functions (one per ILA capture)
+   - Each capture in `ila_trigger_plan.json` specifies `break_before` (function
+     name) and/or `break_before_addr` (hex address) for the breakpoint
+   - Use `printf()` for debug output — it goes to UART and is logged to file
 
    ```c
-   /* ---- ILA pacing: PS UART1 "go" byte protocol ---- */
-   #ifdef HIL_DEBUG_MODE
-   #define UART1_BASE       0xE0001000U
-   #define UART1_SR         (*(volatile uint32_t *)(UART1_BASE + 0x2CU))
-   #define UART1_FIFO       (*(volatile uint32_t *)(UART1_BASE + 0x30U))
-   #define UART_SR_RXEMPTY  (1U << 1)
+   void run_test_phase_1(void) {
+       printf("Phase 1: TX loopback test\n");
+       /* ... drive AXI registers, exercise trigger condition ... */
+       printf("Phase 1: status=0x%08x\n", read_status());
+   }  /* <-- XSDB breakpoint set here */
 
-   static void wait_for_go(void) {
-       while (UART1_SR & UART_SR_RXEMPTY) {}
-       (void)UART1_FIFO;  /* consume the 'G' byte */
-   }
-   #endif
+   void run_test_phase_2(void) {
+       printf("Phase 2: RX validation\n");
+       /* ... */
+   }  /* <-- XSDB breakpoint set here */
 
    int main(void) {
-       /* ... normal test ... */
+       init_platform();
+       int pass = run_all_tests();
        printf(pass ? "HIL_PASS\n" : "HIL_FAIL\n");
-
-   #ifdef HIL_DEBUG_MODE
-       while (1) {
-           wait_for_go();
-           run_test();  /* must exercise the trigger condition */
-       }
-   #endif
        return 0;
    }
    ```
 
-   The `run_test()` function must exercise whatever bus activity the ILA
+   The test phase functions must exercise whatever bus activity the ILA
    trigger plan expects (e.g., SPI transfer, I2C START/STOP, SDLC frame TX).
 
 4. Use `XTime` for all timeouts (never busy-wait with loop counters)
@@ -579,7 +575,7 @@ counts captures in `ila_trigger_plan.json` and compares to
 ```
 ERROR: ila_trigger_plan.json has N captures but firmware.debug_iterations is M. These must match.
 ```
-This is a **hard-fail**, not a warning. The firmware `wait_for_go()` count
+This is a **hard-fail**, not a warning. The firmware test phase count
 must equal the ILA capture count or the last capture will timeout.
 
 **What it does:**
@@ -588,10 +584,11 @@ must equal the ILA capture count or the last capture will timeout.
 3. Boot CPU via XSDB (`boot_cpu.tcl` -- no FPGA reprogram)
 4. Open serial port
 5. For each capture in `ila_trigger_plan.json`:
+   - Stop CPU, set breakpoint at `break_before` function
    - ARM ILA with trigger probe and value
-   - Send "G" byte to serial (firmware go signal)
+   - Resume CPU (runs until breakpoint or trigger)
    - Wait for ILA trigger
-   - Read UART line
+   - On failure: dump backtrace, watch vars, AXI status
 6. Export ILA data to CSV
 
 **Outputs:** `build/hil/ila_*.csv` (one per capture)
@@ -683,7 +680,7 @@ Using them produces: `ERROR: ila_trigger_plan.json uses deprecated probe/value f
 
 5. **Capture count coupling:** The number of captures in the trigger plan
    **must equal** `firmware.debug_iterations` in `hil.json`. Each capture
-   sends one "G" byte, triggering one `wait_for_go()` call in the firmware.
+   corresponds to one breakpoint-paced test phase in the firmware.
    Mismatch = hard-fail before any capture runs.
 
 ---
@@ -771,7 +768,7 @@ environment variable to the XSCT binary path.
 ### ILA trigger timeout
 - Verify signal name matches `gen_hil_top.tcl` convention (port `mon_x` → signal `mon_x_s`)
 - Check trigger value matches signal encoding and width
-- Ensure firmware sends "G" response (ILA pacing protocol)
+- Ensure firmware has breakpoint targets for each capture (function names in `break_before`)
 
 ### "ERROR: ila_trigger_plan.json uses deprecated probe/value fields"
 Update the trigger plan to use `trigger_probe`/`trigger_value`/`trigger_compare`
@@ -832,8 +829,8 @@ to verify simulation, then re-enter HIL at 14.
 - **Stage 17 (Program + Test):** Functional validation with non-debug firmware.
   Full-speed execution, no ILA pacing. Confirms basic pass/fail.
 - **Stage 18 (ILA Capture):** Observability with debug firmware (`HIL_DEBUG_MODE`).
-  ILA-paced execution, one capture per `wait_for_go()`. Confirms hardware
-  waveforms match simulation.
+  Breakpoint-paced execution, one capture per test phase. XSDB debug session
+  provides backtrace, variable inspection, and AXI fault diagnostics on failure.
 
 ### Circular Logic Detection
 

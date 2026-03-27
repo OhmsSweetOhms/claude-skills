@@ -240,6 +240,7 @@ def generate_hil_json(project_dir, top, part="xc7z020clg484-1"):
                 "timeout_s": 30,
             },
         }
+        hil_config["debug"] = generate_debug_section(project_dir, hil_config)
         hil_json_path = os.path.join(project_dir, "hil.json")
         with open(hil_json_path, "w") as f:
             json.dump(hil_config, f, indent=2)
@@ -347,6 +348,9 @@ def generate_hil_json(project_dir, top, part="xc7z020clg484-1"):
     if loopback_note:
         hil_config["wiring"]["_loopback_note"] = loopback_note
 
+    # Generate debug section
+    hil_config["debug"] = generate_debug_section(project_dir, hil_config)
+
     # Write
     with open(hil_json_path, "w") as f:
         json.dump(hil_config, f, indent=2)
@@ -357,10 +361,99 @@ def generate_hil_json(project_dir, top, part="xc7z020clg484-1"):
     print(f"    Sources:  {len(sources)} files")
     print(f"    Loopback: {loopback_pairs or '(none -- add manually)'}")
     print(f"    Monitor:  {monitor_names}")
+    debug = hil_config["debug"]
+    print(f"    Debug:    {len(debug['watch_vars'])} vars, "
+          f"{len(debug['watch_addrs'])} addrs, "
+          f"{len(debug['jtag_axi_dump'])} dump regions")
     if loopback_note:
         print(f"    NOTE: {loopback_note}")
 
     return hil_config
+
+
+# ---------------------------------------------------------------------------
+# Debug Section Generation
+# ---------------------------------------------------------------------------
+
+def _parse_register_defines(project_dir):
+    """Parse #define *_REG_* offset macros from sw/*.h headers.
+
+    Returns list of (label, hex_offset_str) tuples.
+    """
+    regs = []
+    for hfile in sorted(glob.glob(os.path.join(project_dir, "sw", "*.h"))):
+        with open(hfile, "r") as f:
+            for line in f:
+                m = re.match(
+                    r'\s*#define\s+(\w*REG\w*)\s+(?:0x)?([0-9A-Fa-f]+)',
+                    line)
+                if m:
+                    label = m.group(1)
+                    offset = int(m.group(2), 16)
+                    regs.append((label, offset))
+    return regs
+
+
+def _parse_global_vars(project_dir, test_src="sw/hil_test_main.c"):
+    """Parse global variable declarations from the test source.
+
+    Returns list of variable names.
+    """
+    src_path = os.path.join(project_dir, test_src)
+    if not os.path.isfile(src_path):
+        return []
+
+    vars_found = []
+    with open(src_path, "r") as f:
+        in_function = 0
+        for line in f:
+            stripped = line.strip()
+            # Track brace depth to skip function-local vars
+            in_function += stripped.count("{") - stripped.count("}")
+            if in_function > 0:
+                continue
+            # Match global var declarations (static or not)
+            m = re.match(
+                r'(?:static\s+)?(?:volatile\s+)?(?:uint\d+_t|int\d*_t|int|unsigned|char|float|double)'
+                r'\s+(\w+)\s*[=;]', stripped)
+            if m:
+                vars_found.append(m.group(1))
+    return vars_found
+
+
+def generate_debug_section(project_dir, hil_config):
+    """Generate the debug section for hil.json.
+
+    Derives watch_addrs from register headers, watch_vars from C globals,
+    and jtag_axi_dump from base_address + register count.
+
+    Returns the debug dict.
+    """
+    base_addr_str = hil_config.get("axi", {}).get("base_address", "0x43C00000")
+    base_addr = int(base_addr_str, 16)
+
+    # Parse register defines from headers
+    reg_defines = _parse_register_defines(project_dir)
+    watch_addrs = {}
+    for label, offset in reg_defines:
+        watch_addrs[label] = f"0x{base_addr + offset:08X}"
+
+    # Parse global variables from test source
+    test_src = hil_config.get("firmware", {}).get("test_src", "sw/hil_test_main.c")
+    watch_vars = _parse_global_vars(project_dir, test_src)
+
+    # Build jtag_axi_dump: peripheral region + SLCR clocks
+    reg_count = max(len(reg_defines), 1)
+    jtag_axi_dump = {
+        "peripheral": {"base": base_addr_str, "count": reg_count},
+        "slcr_clocks": {"base": "0xF8000120", "count": 8},
+    }
+
+    return {
+        "watch_vars": watch_vars,
+        "watch_addrs": watch_addrs,
+        "jtag_axi_dump": jtag_axi_dump,
+    }
 
 
 # ---------------------------------------------------------------------------
