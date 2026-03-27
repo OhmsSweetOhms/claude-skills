@@ -261,7 +261,11 @@ class XSDBSession:
         )
         self._sel = selectors.DefaultSelector()
         self._sel.register(self.proc.stdout, selectors.EVENT_READ)
-        self._read_until("xsdb%")  # consume startup banner
+        # XSDB suppresses the prompt when stdin is piped, so send a
+        # known command with our marker to synchronize.
+        self.proc.stdin.write(f"puts {XSDB_MARKER}\n")
+        self.proc.stdin.flush()
+        self._read_until(XSDB_MARKER)  # consume startup + marker
 
     def _read_until(self, sentinel, timeout=10):
         """Read stdout lines until sentinel appears. Returns accumulated text.

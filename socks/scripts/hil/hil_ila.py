@@ -302,6 +302,8 @@ def main() -> int:
         print(f"  Vivado ready, ILA discovered")
 
         # Step 2: Boot CPU via XSDB (keep session for debug)
+        # Download ELF but do NOT resume — CPU stays stopped so breakpoints
+        # can be set before any test phase runs.
         print(f"\n  Step 2: Booting CPU via XSDB (debug session)")
         xsdb_session = XSDBSession(xsdb_path)
         xsdb_session.connect()
@@ -309,20 +311,17 @@ def main() -> int:
         xsdb_session.stop()
         xsdb_session.init_ps7(ps7_init)
         xsdb_session.download(elf_path)
-        xsdb_session.resume()
-        print(f"  CPU booted (debug session active)")
+        print(f"  CPU loaded (debug session active, CPU stopped)")
 
-        # Validate breakpoints can be set
+        # Validate breakpoints can be set (CPU already stopped)
         print(f"\n  Validating breakpoints...")
         for cap in captures:
             sym = cap.get("break_before")
             addr = cap.get("break_before_addr")
             try:
                 target = sym if sym else int(addr, 16)
-                xsdb_session.stop()
                 xsdb_session.breakpoint(target)
                 xsdb_session.breakpoint_remove_all()
-                xsdb_session.resume()
             except Exception as e:
                 if sym and addr:
                     print(f"  WARNING: symbol '{sym}' unresolved, will use addr {addr}")
@@ -388,12 +387,32 @@ def main() -> int:
                 elif break_addr:
                     xsdb_session.breakpoint(int(break_addr, 16))
 
-                # Arm ILA BEFORE resuming CPU (critical coordination rule)
+                # Resume CPU — it will run until breakpoint, then the
+                # function body hasn't executed yet. Arm ILA first so it's
+                # ready when the function runs past the breakpoint.
+                #
+                # Flow: arm ILA → resume CPU → CPU runs main() → hits
+                # breakpoint at function entry → CPU auto-stops → XSDB
+                # resumes on next `con` → function body runs → ILA triggers
                 ila.send_arm(probe, value, compare, csv_path)
-                time.sleep(0.1)
+                time.sleep(0.2)
 
-                # Resume CPU -- runs until firmware hits breakpoint
+                # First resume: CPU runs from current PC to breakpoint
                 xsdb_session.resume()
+
+                # Wait for breakpoint hit
+                time.sleep(1.0)
+                st = xsdb_session.state()
+                if st == "Running":
+                    # Give more time for the CPU to reach the breakpoint
+                    time.sleep(3.0)
+                    st = xsdb_session.state()
+                if st != "Running":
+                    print(f"      Breakpoint hit (state={st}), resuming into function...")
+                    # Second resume: run the function body, ILA should trigger
+                    xsdb_session.resume()
+                else:
+                    print(f"      WARNING: CPU still running after breakpoint wait")
 
                 try:
                     marker, detail = ila.wait_response(

@@ -47,7 +47,7 @@ def test_xsdb_read_until():
     # Use a small shell script that prints a banner then echoes marker
     proc = subprocess.Popen(
         ["bash", "-c",
-         'echo "xsdb%"; read line; echo "some output"; echo "another line"; '
+         'echo "===XSDB_DONE==="; read line; echo "some output"; echo "another line"; '
          f'echo "{XSDB_MARKER}"'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, bufsize=1,
@@ -59,7 +59,7 @@ def test_xsdb_read_until():
     session._sel.register(proc.stdout, selectors.EVENT_READ)
 
     # Consume banner
-    session._read_until("xsdb%", timeout=5)
+    session._read_until(XSDB_MARKER, timeout=5)
 
     # Trigger the response
     proc.stdin.write("go\n")
@@ -87,7 +87,7 @@ def test_xsdb_read_until_timeout():
 
     # Script that prints banner then partial output but no marker
     proc = subprocess.Popen(
-        ["bash", "-c", 'echo "xsdb%"; sleep 2; echo "still waiting"'],
+        ["bash", "-c", 'echo "===XSDB_DONE==="; sleep 2; echo "still waiting"'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
@@ -98,7 +98,7 @@ def test_xsdb_read_until_timeout():
     session._sel.register(proc.stdout, selectors.EVENT_READ)
 
     # Consume banner
-    session._read_until("xsdb%", timeout=5)
+    session._read_until(XSDB_MARKER, timeout=5)
 
     timed_out = False
     try:
@@ -125,7 +125,7 @@ def test_xsdb_cmd():
     # Script: print banner, then echo output for commands, echo marker for puts
     proc = subprocess.Popen(
         ["bash", "-c", """
-echo "xsdb%"
+echo "===XSDB_DONE==="
 while IFS= read -r line; do
     if [[ "$line" == "puts ===XSDB_DONE===" ]]; then
         echo "===XSDB_DONE==="
@@ -144,7 +144,7 @@ done
     session._sel.register(proc.stdout, selectors.EVENT_READ)
 
     # Consume banner
-    session._read_until("xsdb%", timeout=5)
+    session._read_until(XSDB_MARKER, timeout=5)
 
     result = session._cmd("state", timeout=5)
 
@@ -172,7 +172,7 @@ def test_xsdb_breakpoint_commands():
     # Script: capture stdin lines to stderr, echo marker for puts
     proc = subprocess.Popen(
         ["bash", "-c", """
-echo "xsdb%"
+echo "===XSDB_DONE==="
 while IFS= read -r line; do
     echo "CMD:$line" >&2
     if [[ "$line" == "puts ===XSDB_DONE===" ]]; then
@@ -190,7 +190,7 @@ done
     session._sel.register(proc.stdout, selectors.EVENT_READ)
 
     # Consume banner
-    session._read_until("xsdb%", timeout=5)
+    session._read_until(XSDB_MARKER, timeout=5)
 
     # Test symbol breakpoint
     session._cmd("bpadd -addr &run_test_phase_1", timeout=5)
@@ -219,7 +219,7 @@ def test_xsdb_state_parsing():
 
     proc = subprocess.Popen(
         ["bash", "-c", """
-echo "xsdb%"
+echo "===XSDB_DONE==="
 while IFS= read -r line; do
     if [[ "$line" == "state" ]]; then
         echo "state: Running"
@@ -236,7 +236,7 @@ done
     session.proc = proc
     session._sel = selectors.DefaultSelector()
     session._sel.register(proc.stdout, selectors.EVENT_READ)
-    session._read_until("xsdb%", timeout=5)
+    session._read_until(XSDB_MARKER, timeout=5)
 
     result = session.state()
 
