@@ -179,8 +179,10 @@ proc arm_and_capture {ila probe_name value compare csv_path {timeout 15}} {
     set trigger_str "${compare}${w}'b${value}"
     set_property TRIGGER_COMPARE_VALUE $trigger_str $probe
 
-    # Arm and wait for trigger
+    # Arm and signal ready
     run_hw_ila $ila
+    puts "ILA_ARMED"
+    flush stdout
     set t0 [clock seconds]
     set triggered 0
     while {[expr {[clock seconds] - $t0}] < $timeout} {

@@ -26,6 +26,7 @@ import argparse
 import glob
 import json
 import os
+import selectors
 import subprocess
 import sys
 import threading
@@ -69,8 +70,11 @@ class VivadoILA:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
             cwd=self.build_dir,
         )
+        self._sel = selectors.DefaultSelector()
+        self._sel.register(self.proc.stdout, selectors.EVENT_READ)
         t0 = time.time()
         while time.time() - t0 < timeout:
             line = self.proc.stdout.readline()
@@ -94,24 +98,38 @@ class VivadoILA:
         self.proc.stdin.write(line + "\n")
         self.proc.stdin.flush()
 
-    def wait_response(self, done_markers, timeout=30):
+    def wait_response(self, done_markers, timeout=30, verbose=False):
         """Wait for any of the given done markers in Vivado stdout.
 
+        Uses selectors to enforce timeout — readline() only called when
+        data is available.
         Returns (marker, rest_of_line) on success, raises TimeoutError on timeout.
         """
         t0 = time.time()
-        while time.time() - t0 < timeout:
+        while True:
+            remaining = timeout - (time.time() - t0)
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Vivado did not respond with {done_markers} within {timeout}s")
+            events = self._sel.select(timeout=remaining)
+            if not events:
+                raise TimeoutError(
+                    f"Vivado did not respond with {done_markers} within {timeout}s")
             line = self.proc.stdout.readline()
             if not line:
                 break
             line = line.strip()
+            if verbose and line:
+                print(f"      [vivado] {line}")
             for marker in done_markers:
                 if line.startswith(marker):
                     return marker, line[len(marker):].strip()
-        raise TimeoutError(f"Vivado did not respond with {done_markers} within {timeout}s")
+        raise TimeoutError(f"Vivado exited without producing {done_markers}")
 
     def quit(self):
         """Send QUIT and wait for Vivado to exit."""
+        if hasattr(self, '_sel'):
+            self._sel.close()
         if self.proc and self.proc.poll() is None:
             try:
                 self.proc.stdin.write("QUIT\n")
@@ -373,9 +391,14 @@ def main() -> int:
                 csv_path = os.path.join(
                     build_dir, output.replace(".csv", f"{suffix}.csv"))
 
-                # Stop CPU, set breakpoint for this test phase
+                # Reset CPU and re-download ELF for a fresh start each capture
                 xsdb_session.stop()
                 xsdb_session.breakpoint_remove_all()
+                xsdb_session._cmd("rst -processor")
+                xsdb_session.init_ps7(ps7_init)
+                xsdb_session.download(elf_path)
+
+                # Set breakpoint for this capture's function
                 if break_sym:
                     try:
                         xsdb_session.breakpoint(break_sym)
@@ -387,38 +410,50 @@ def main() -> int:
                 elif break_addr:
                     xsdb_session.breakpoint(int(break_addr, 16))
 
-                # Resume CPU — it will run until breakpoint, then the
-                # function body hasn't executed yet. Arm ILA first so it's
-                # ready when the function runs past the breakpoint.
-                #
-                # Flow: arm ILA → resume CPU → CPU runs main() → hits
-                # breakpoint at function entry → CPU auto-stops → XSDB
-                # resumes on next `con` → function body runs → ILA triggers
-                ila.send_arm(probe, value, compare, csv_path)
-                time.sleep(0.2)
-
-                # First resume: CPU runs from current PC to breakpoint
+                # Resume: CPU runs from main() to breakpoint
                 xsdb_session.resume()
 
                 # Wait for breakpoint hit
-                time.sleep(1.0)
-                st = xsdb_session.state()
-                if st == "Running":
-                    # Give more time for the CPU to reach the breakpoint
-                    time.sleep(3.0)
+                time.sleep(0.5)
+                for _poll in range(20):
                     st = xsdb_session.state()
-                if st != "Running":
-                    print(f"      Breakpoint hit (state={st}), resuming into function...")
-                    # Second resume: run the function body, ILA should trigger
-                    xsdb_session.resume()
+                    if st != "Running":
+                        break
+                    time.sleep(0.25)
+                if st == "Running":
+                    print(f"      WARNING: CPU did not hit breakpoint within 5s")
                 else:
-                    print(f"      WARNING: CPU still running after breakpoint wait")
+                    print(f"      Breakpoint hit (state={st!r})")
+
+                # Arm ILA and wait for confirmation
+                ila.send_arm(probe, value, compare, csv_path)
+                try:
+                    ila.wait_response(["ILA_ARMED"], timeout=10, verbose=True)
+                    print(f"      ILA armed, resuming CPU into function...")
+                except TimeoutError:
+                    print(f"      WARNING: ILA_ARMED not received within 10s")
+
+                # Resume: function body executes, ILA triggers, CPU runs
+                # until NEXT breakpoint (or end of program)
+                xsdb_session.resume()
+                print(f"      CPU resumed, waiting for ILA trigger...")
+
+                # Delete old CSV so we can detect fresh writes
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
 
                 try:
                     marker, detail = ila.wait_response(
-                        ["ILA_DONE", "ILA_TIMEOUT", "ILA_ERROR"], timeout=30)
+                        ["ILA_DONE", "ILA_TIMEOUT", "ILA_ERROR"], timeout=15,
+                        verbose=True)
                 except TimeoutError:
-                    marker, detail = "ILA_TIMEOUT", "wait_response timeout"
+                    # Fallback: check if CSV was written (Vivado stdout
+                    # buffering may prevent ILA_DONE from reaching Python)
+                    if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+                        marker, detail = "ILA_DONE", f"{csv_path} (detected via file)"
+                        print(f"      ILA_DONE not received but CSV exists — capture succeeded")
+                    else:
+                        marker, detail = "ILA_TIMEOUT", "wait_response timeout"
 
                 if marker == "ILA_DONE":
                     size = os.path.getsize(csv_path) if os.path.exists(csv_path) else 0

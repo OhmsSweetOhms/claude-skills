@@ -424,13 +424,25 @@ class XSDBSession:
             self.stop()
 
         pc = self._cmd("rrd pc").strip()
-        dfsr = self._cmd("rrd dfsr").strip()
 
         pc_val = 0
         try:
             pc_val = int(pc.split()[-1], 16)
         except (ValueError, IndexError):
             pass
+
+        # Read DFSR — Cortex-A9 uses "Data Fault Status Register"
+        # Try both register names (varies by XSDB version)
+        dfsr_val = 0
+        dfsr_raw = ""
+        for dfsr_name in ("dfsr", "cp15_dfsr", "DFSR"):
+            try:
+                dfsr_raw = self._cmd(f"rrd {dfsr_name}").strip()
+                if "error" not in dfsr_raw.lower() and "no register" not in dfsr_raw.lower():
+                    dfsr_val = int(dfsr_raw.split()[-1], 16)
+                    break
+            except (TimeoutError, ValueError, IndexError):
+                continue
 
         vbase, vsize = self._get_vector_base()
         if vbase is not None:
@@ -440,10 +452,14 @@ class XSDBSession:
                          (0xFFFF0000 <= pc_val <= 0xFFFF001C))
 
         healthy = True
-        detail = f"PC=0x{pc_val:08x} DFSR={dfsr}"
-        if in_vector:
+        detail = f"PC=0x{pc_val:08x} DFSR=0x{dfsr_val:08x}"
+
+        # Only flag as fault if PC is in vector table AND DFSR shows
+        # an actual fault (non-zero). PC=0 after main() returns is
+        # normal — the C runtime loops at the reset vector.
+        if in_vector and dfsr_val != 0:
             healthy = False
-            detail = f"CPU in exception vector: PC=0x{pc_val:08x} DFSR={dfsr}"
+            detail = f"CPU in exception vector: PC=0x{pc_val:08x} DFSR=0x{dfsr_val:08x}"
 
         if was_running and healthy:
             self.resume()
