@@ -26,7 +26,7 @@ import argparse
 import glob
 import json
 import os
-import selectors
+import queue
 import subprocess
 import sys
 import threading
@@ -73,19 +73,31 @@ class VivadoILA:
             bufsize=1,
             cwd=self.build_dir,
         )
-        self._sel = selectors.DefaultSelector()
-        self._sel.register(self.proc.stdout, selectors.EVENT_READ)
+        # Background reader thread puts stdout lines into a queue
+        # to avoid Python buffering issues with selectors + readline
+        self._line_q = queue.Queue()
+        self._reader_thread = threading.Thread(
+            target=self._stdout_reader, daemon=True)
+        self._reader_thread.start()
         t0 = time.time()
         while time.time() - t0 < timeout:
-            line = self.proc.stdout.readline()
-            if not line:
-                raise RuntimeError("Vivado exited unexpectedly during startup")
-            line = line.rstrip()
+            try:
+                line = self._line_q.get(timeout=1.0)
+            except queue.Empty:
+                if self.proc.poll() is not None:
+                    raise RuntimeError("Vivado exited unexpectedly during startup")
+                continue
             if "ILA_READY" in line:
                 return
             if "ERROR:" in line and "No ILA" in line:
                 raise RuntimeError(f"Vivado error: {line}")
         raise TimeoutError(f"Vivado did not become ready within {timeout}s")
+
+    def _stdout_reader(self):
+        """Background thread: read lines from Vivado stdout into queue."""
+        for line in self.proc.stdout:
+            self._line_q.put(line.rstrip())
+        self._line_q.put(None)  # sentinel for EOF
 
     def send_arm(self, probe, value, compare, csv_path):
         """Send ARM command to Vivado (non-blocking)."""
@@ -101,8 +113,7 @@ class VivadoILA:
     def wait_response(self, done_markers, timeout=30, verbose=False):
         """Wait for any of the given done markers in Vivado stdout.
 
-        Uses selectors to enforce timeout — readline() only called when
-        data is available.
+        Reads from the background reader thread's queue with timeout.
         Returns (marker, rest_of_line) on success, raises TimeoutError on timeout.
         """
         t0 = time.time()
@@ -111,14 +122,12 @@ class VivadoILA:
             if remaining <= 0:
                 raise TimeoutError(
                     f"Vivado did not respond with {done_markers} within {timeout}s")
-            events = self._sel.select(timeout=remaining)
-            if not events:
-                raise TimeoutError(
-                    f"Vivado did not respond with {done_markers} within {timeout}s")
-            line = self.proc.stdout.readline()
-            if not line:
-                break
-            line = line.strip()
+            try:
+                line = self._line_q.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
+            if line is None:
+                break  # EOF sentinel
             if verbose and line:
                 print(f"      [vivado] {line}")
             for marker in done_markers:
@@ -128,8 +137,6 @@ class VivadoILA:
 
     def quit(self):
         """Send QUIT and wait for Vivado to exit."""
-        if hasattr(self, '_sel'):
-            self._sel.close()
         if self.proc and self.proc.poll() is None:
             try:
                 self.proc.stdin.write("QUIT\n")

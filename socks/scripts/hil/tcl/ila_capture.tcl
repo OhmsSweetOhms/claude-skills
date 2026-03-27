@@ -134,16 +134,23 @@ set_property CONTROL.TRIGGER_POSITION 512 $ila
 
 # --- Helper: JTAG-to-AXI register dump (bypasses ARM core) ---
 proc dump_axi_via_jtag {base_addr num_regs csv_path} {
+    # Find the hw_axi core (jtag_axi IP discovered after FPGA programming)
+    set axi_core [lindex [get_hw_axis] 0]
+    if {$axi_core eq ""} {
+        puts "ILA_ERROR no JTAG-to-AXI core found (add jtag_axi IP to block design)"
+        return
+    }
+
     set fp [open $csv_path w]
     puts $fp "offset,value"
     for {set i 0} {$i < $num_regs} {incr i} {
         set addr [format 0x%08X [expr {$base_addr + $i * 4}]]
-        set txn [create_hw_axi_txn rd_txn -address $addr \
-                     -len 1 -type READ -force]
-        run_hw_axi $txn
-        set val [get_property DATA $txn]
+        create_hw_axi_txn rd_txn $axi_core -address $addr \
+            -len 1 -type READ -force
+        run_hw_axi rd_txn
+        set val [get_property DATA [get_hw_axi_txns rd_txn]]
         puts $fp "[format 0x%02X [expr {$i * 4}]],$val"
-        delete_hw_axi_txn $txn
+        delete_hw_axi_txn rd_txn
     }
     close $fp
     puts "DUMP_AXI_DONE $csv_path"

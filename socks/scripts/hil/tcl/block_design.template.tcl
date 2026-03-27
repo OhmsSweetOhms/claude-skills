@@ -24,7 +24,7 @@ set_property -dict [list \
 
 # Add AXI interconnect for AXI3 -> AXI4-Lite protocol conversion
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 axi_ic
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {1}] [get_bd_cells axi_ic]
+set_property -dict [list CONFIG.NUM_SI {{{NUM_SI}}} CONFIG.NUM_MI {1}] [get_bd_cells axi_ic]
 
 # Add proc_sys_reset
 create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst
@@ -54,8 +54,11 @@ connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd_pins dut/rst_n]
 connect_bd_intf_net [get_bd_intf_pins ps7/M_AXI_GP0] [get_bd_intf_pins axi_ic/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins axi_ic/M00_AXI] [get_bd_intf_pins dut/s_axi]
 
-# Assign address
+# Assign address — DUT
 assign_bd_address -target_address_space /ps7/Data [get_bd_addr_segs dut/s_axi/reg0] -range {{AXI_RANGE}} -offset {{AXI_BASE_ADDRESS}}
+
+# JTAG-to-AXI debug master (conditional — only when jtag_axi_dump configured)
+{{JTAG_AXI_TCL}}
 
 # Validate and save
 validate_bd_design

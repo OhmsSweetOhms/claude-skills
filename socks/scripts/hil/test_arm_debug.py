@@ -257,6 +257,7 @@ done
 def _make_vivado_ila_with_pipe():
     """Create a VivadoILA with a pipe-backed stdout for testing."""
     from hil_ila import VivadoILA
+    import queue as _queue
     r_fd, w_fd = os.pipe()
     stdout = os.fdopen(r_fd, "r")
     writer = os.fdopen(w_fd, "w")
@@ -264,6 +265,16 @@ def _make_vivado_ila_with_pipe():
     ila = object.__new__(VivadoILA)
     ila.proc = MagicMock()
     ila.proc.stdout = stdout
+    ila._line_q = _queue.Queue()
+
+    # Start a reader thread like VivadoILA.start() does
+    def reader():
+        for line in stdout:
+            ila._line_q.put(line.rstrip())
+        ila._line_q.put(None)
+
+    ila._reader_thread = threading.Thread(target=reader, daemon=True)
+    ila._reader_thread.start()
     return ila, writer, stdout
 
 
@@ -372,9 +383,11 @@ def test_vivado_wait_response_skips_non_marker_lines():
     ila, writer, stdout = _make_vivado_ila_with_pipe()
 
     def write_multi():
-        time.sleep(0.05)
+        time.sleep(0.1)
         writer.write("Vivado% info: loading design\n")
+        writer.flush()
         writer.write("setting up probes...\n")
+        writer.flush()
         writer.write("ILA_DONE /tmp/result.csv\n")
         writer.flush()
 

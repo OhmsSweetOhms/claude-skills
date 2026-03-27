@@ -184,6 +184,42 @@ def main() -> int:
         print(f"\n  ERROR: Board preset not found: {preset_path}")
         return 1
 
+    # Determine if JTAG-to-AXI debug master is needed
+    debug_config = hil_config.get("debug", {})
+    has_jtag_axi = bool(debug_config.get("jtag_axi_dump"))
+    num_si = "2" if has_jtag_axi else "1"
+
+    # Generate JTAG-AXI TCL block (empty string if not needed)
+    # Topology: jtag_axi (AXI master) → interconnect S01 → M00 → DUT
+    # This gives JTAG direct AXI access to PL registers even when CPU is dead
+    if has_jtag_axi:
+        jtag_axi_tcl = (
+            "# Add JTAG-to-AXI master for CPU-fault register dump\n"
+            "create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi:1.2 jtag_axi\n"
+            "set_property -dict [list CONFIG.PROTOCOL {2}] [get_bd_cells jtag_axi]\n"
+            "\n"
+            "# Clock and reset for JTAG-AXI\n"
+            "connect_bd_net [get_bd_pins ps7/FCLK_CLK0] [get_bd_pins jtag_axi/aclk]\n"
+            "connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd_pins jtag_axi/aresetn]\n"
+            "\n"
+            "# Connect JTAG-AXI as second slave on interconnect (S01)\n"
+            "connect_bd_net [get_bd_pins ps7/FCLK_CLK0] [get_bd_pins axi_ic/S01_ACLK]\n"
+            "connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd_pins axi_ic/S01_ARESETN]\n"
+            "connect_bd_intf_net [get_bd_intf_pins jtag_axi/M_AXI] [get_bd_intf_pins axi_ic/S01_AXI]\n"
+            "\n"
+            f"# Assign address — JTAG-AXI can reach DUT registers\n"
+            f"assign_bd_address -target_address_space /jtag_axi/Data "
+            f"[get_bd_addr_segs dut/s_axi/reg0] -range {axi.get('range', '4K')} "
+            f"-offset {axi['base_address']}\n"
+            "\n"
+            'puts "  JTAG-to-AXI debug master added (S01 -> DUT)"'
+        )
+    else:
+        jtag_axi_tcl = "# No JTAG-to-AXI (jtag_axi_dump not configured in hil.json)"
+
+    if has_jtag_axi:
+        print(f"  JTAG-AXI: enabled (jtag_axi_dump configured)")
+
     # Generate block_design.tcl from template
     fclk = str(axi.get("fclk_mhz", 100))
     bd_tcl = expand_template(
@@ -197,6 +233,8 @@ def main() -> int:
             "{{EXTERNALIZE_TCL}}": build_externalize_tcl(hil_config),
             "{{AXI_RANGE}}": axi.get("range", "4K"),
             "{{AXI_BASE_ADDRESS}}": axi["base_address"],
+            "{{NUM_SI}}": num_si,
+            "{{JTAG_AXI_TCL}}": jtag_axi_tcl,
         },
     )
 
