@@ -257,6 +257,7 @@ class XSDBSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
         self._sel = selectors.DefaultSelector()
         self._sel.register(self.proc.stdout, selectors.EVENT_READ)
@@ -265,11 +266,11 @@ class XSDBSession:
     def _read_until(self, sentinel, timeout=10):
         """Read stdout lines until sentinel appears. Returns accumulated text.
 
-        Uses selectors for non-blocking reads so the timeout is enforced
-        even when XSDB produces partial output without a newline.
+        Uses selectors to enforce the timeout — select() returns when
+        data is available, then readline() gets one line without blocking
+        indefinitely.
         """
         buf = []
-        partial = ""
         t0 = time.time()
         while True:
             remaining = timeout - (time.time() - t0)
@@ -280,16 +281,13 @@ class XSDBSession:
             if not events:
                 raise TimeoutError(
                     f"XSDB did not produce '{sentinel}' within {timeout}s")
-            chunk = self.proc.stdout.read(4096)
-            if not chunk:
+            line = self.proc.stdout.readline()
+            if not line:
                 break
-            partial += chunk
-            while "\n" in partial:
-                line, partial = partial.split("\n", 1)
-                line = line.rstrip()
-                if sentinel in line:
-                    return "\n".join(buf)
-                buf.append(line)
+            line = line.rstrip()
+            if sentinel in line:
+                return "\n".join(buf)
+            buf.append(line)
         raise TimeoutError(
             f"XSDB process ended without producing '{sentinel}'")
 
