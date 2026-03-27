@@ -33,9 +33,8 @@ app create -name hil_app -platform hil_platform \
 
 # Add debug symbols and disable optimization if --debug
 if {$debug_mode} {
-    configapp -app hil_app build-config Debug
-    configapp -app hil_app -set compiler-misc {-g -O0 -fno-omit-frame-pointer}
-    configapp -app hil_app define-compiler-symbols {HIL_DEBUG_MODE}
+    configapp -app hil_app -add compiler-misc {-g -O0 -fno-omit-frame-pointer}
+    configapp -app hil_app -add compiler-misc {-DHIL_DEBUG_MODE}
     puts "=== Debug mode: -g -O0 -fno-omit-frame-pointer + HIL_DEBUG_MODE ==="
 }
 
