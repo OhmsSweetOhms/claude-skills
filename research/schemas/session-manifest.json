@@ -1,13 +1,48 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["session_id", "title", "date", "query", "status", "content"],
+  "required": ["session_id", "title", "date", "query", "status", "content", "sources"],
   "properties": {
     "session_id": { "type": "string", "description": "Session directory name (session-YYYYMMDD-HHMMSS)" },
     "title": { "type": "string", "description": "Report title from frontmatter" },
     "date": { "type": "string", "format": "date" },
     "query": { "type": "string", "description": "Original user query verbatim" },
     "status": { "type": "string", "enum": ["complete", "partial"] },
+    "sources": {
+      "type": "object",
+      "description": "Tracks ALL sources referenced in results — both saved and unsaved",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title", "url_or_doi", "status"],
+            "properties": {
+              "title": { "type": "string" },
+              "url_or_doi": { "type": "string" },
+              "type": { "type": "string", "enum": ["paper", "thesis", "repo", "blog_post", "app_note", "presentation", "webpage", "trade_article"] },
+              "tier": { "type": ["integer", "null"], "description": "1, 2, or null if not ranked" },
+              "status": { "type": "string", "enum": ["saved", "cloned", "paywall", "fetch_failed", "not_attempted", "manual_needed"] },
+              "local_paths": { "type": "array", "items": { "type": "string" }, "description": "Relative paths within session dir" },
+              "found_by": { "type": "array", "items": { "type": "string" }, "description": "Roles that found this source" },
+              "reason": { "type": ["string", "null"], "description": "Why not saved, if status != saved/cloned" }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total": { "type": "integer" },
+            "saved": { "type": "integer" },
+            "cloned": { "type": "integer" },
+            "paywall": { "type": "integer" },
+            "fetch_failed": { "type": "integer" },
+            "not_attempted": { "type": "integer" },
+            "manual_needed": { "type": "integer" }
+          }
+        }
+      }
+    },
     "content": {
       "type": "object",
       "properties": {

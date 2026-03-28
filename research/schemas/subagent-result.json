@@ -47,7 +47,21 @@
           "recommended_action": { "type": "string", "enum": ["read_full_paper", "skim", "skip", "clone_repo", "trace_citations", "contact_author"] },
           "url_or_doi": { "type": "string" },
           "license": { "type": "string", "description": "For code repos only" },
-          "cross_references": { "type": "array", "items": { "type": "string" }, "description": "Titles of other results this relates to" }
+          "cross_references": { "type": "array", "items": { "type": "string" }, "description": "Titles of other results this relates to" },
+          "download_status": {
+            "type": "string",
+            "enum": ["saved", "cloned", "paywall", "fetch_failed", "not_attempted", "manual_needed"],
+            "description": "Whether the source content was successfully saved to the session directory"
+          },
+          "local_paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Relative paths to local copies within the session directory (e.g., pdfs/name.pdf, repos/name/)"
+          },
+          "download_note": {
+            "type": "string",
+            "description": "Why the source wasn't saved (e.g., 'IEEE paywall', '403 forbidden', 'too large')"
+          }
         }
       }
     },

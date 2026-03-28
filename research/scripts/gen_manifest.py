@@ -175,6 +175,109 @@ def scan_repos(session_dir: str) -> list:
     return results
 
 
+def build_sources(session_dir: str) -> dict:
+    """Build sources tracking from results/*.json files.
+
+    Reads all per-role result files, deduplicates by url_or_doi,
+    tracks which roles found each source and its download status.
+    """
+    results_dir = os.path.join(session_dir, "results")
+    if not os.path.isdir(results_dir):
+        return {"items": [], "summary": {}}
+
+    # Collect all results across roles, keyed by url_or_doi
+    sources = {}  # url_or_doi -> merged source dict
+
+    for fname in sorted(os.listdir(results_dir)):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(results_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        role = data.get("role", fname[:-5])  # fallback to filename without .json
+        for result in data.get("results", []):
+            url = result.get("url_or_doi", "")
+            if not url:
+                continue
+
+            if url in sources:
+                # Merge: add this role to found_by
+                sources[url]["found_by"].append(role)
+                # Upgrade status if this role has a better one
+                new_status = result.get("download_status", "not_attempted")
+                if new_status in ("saved", "cloned") and sources[url]["status"] not in ("saved", "cloned"):
+                    sources[url]["status"] = new_status
+                    sources[url]["local_paths"] = result.get("local_paths", [])
+                    sources[url]["reason"] = None
+            else:
+                # Infer source type from role and result metadata
+                source_type = _infer_source_type(role, result)
+                sources[url] = {
+                    "title": result.get("title", ""),
+                    "url_or_doi": url,
+                    "type": source_type,
+                    "tier": None,  # Set during Stage 3 ranking, not here
+                    "status": result.get("download_status", "not_attempted"),
+                    "local_paths": result.get("local_paths", []),
+                    "found_by": [role],
+                    "reason": result.get("download_note"),
+                }
+
+    # Verify local paths actually exist on disk
+    for source in sources.values():
+        verified_paths = []
+        for lp in source.get("local_paths", []):
+            full_path = os.path.join(session_dir, lp)
+            if os.path.exists(full_path):
+                verified_paths.append(lp)
+        source["local_paths"] = verified_paths
+        # If paths claimed but none exist, downgrade status
+        if source["status"] in ("saved", "cloned") and not verified_paths:
+            source["status"] = "not_attempted"
+            source["reason"] = "local_paths listed but files not found on disk"
+
+    items = sorted(sources.values(), key=lambda s: (s["status"] != "saved", s["title"]))
+
+    # Build summary counts
+    summary = {}
+    for item in items:
+        s = item["status"]
+        summary[s] = summary.get(s, 0) + 1
+    summary["total"] = len(items)
+
+    return {"items": items, "summary": summary}
+
+
+def _infer_source_type(role: str, result: dict) -> str:
+    """Infer source type from role and result metadata."""
+    action = result.get("recommended_action", "")
+    if action == "clone_repo":
+        return "repo"
+    if role == "ieee_searcher":
+        return "paper"
+    if role == "citation_tracer":
+        return "paper"
+    if role == "code_searcher":
+        return "repo"
+    # web_searcher — look at tags or URL for hints
+    tags = result.get("tags", [])
+    if any(t in tags for t in ["thesis", "dissertation"]):
+        return "thesis"
+    if any(t in tags for t in ["app_note", "vendor"]):
+        return "app_note"
+    if any(t in tags for t in ["blog", "tutorial"]):
+        return "blog_post"
+    if any(t in tags for t in ["trade_press", "trade_article"]):
+        return "trade_article"
+    if any(t in tags for t in ["presentation"]):
+        return "presentation"
+    return "webpage"
+
+
 def generate_manifest(session_dir: str, title: str, query: str, status: str) -> dict:
     """Generate the full session manifest from directory contents."""
     # Extract session ID from path
@@ -206,12 +309,15 @@ def generate_manifest(session_dir: str, title: str, query: str, status: str) -> 
     if repos:
         content["repos"] = repos
 
+    sources = build_sources(session_dir)
+
     return {
         "session_id": session_id,
         "title": title,
         "date": date,
         "query": query,
         "status": status,
+        "sources": sources,
         "content": content,
     }
 
@@ -242,7 +348,18 @@ def main():
     counts = {k: len(v) for k, v in content.items()}
     total = sum(counts.values())
     parts = ", ".join(f"{v} {k}" for k, v in counts.items())
-    print(f"Manifest: {out_path} ({total} items: {parts})")
+    print(f"Manifest: {out_path} ({total} content items: {parts})")
+
+    # Sources summary
+    src_summary = manifest.get("sources", {}).get("summary", {})
+    if src_summary:
+        src_total = src_summary.get("total", 0)
+        saved = src_summary.get("saved", 0) + src_summary.get("cloned", 0)
+        missing = src_total - saved
+        print(f"Sources: {src_total} total, {saved} saved locally, {missing} need manual retrieval")
+        for status, count in sorted(src_summary.items()):
+            if status != "total" and count > 0:
+                print(f"  {status}: {count}")
 
 
 if __name__ == "__main__":
