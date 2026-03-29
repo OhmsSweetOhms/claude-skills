@@ -74,6 +74,7 @@ If the IEEE Xplore MCP tools are not available:
 1. Use WebSearch with queries like: `site:ieeexplore.ieee.org "GPS acquisition" FPGA`
 2. Also search: `site:researchgate.net "GPS acquisition" FPGA` (often has abstracts for IEEE papers)
 3. Also search: `site:semanticscholar.org "GPS acquisition" FPGA`
+4. Also search: `site:scholar.google.com "GPS acquisition" FPGA` (broader coverage, citation counts in snippets)
 4. Extract from search result snippets: title, partial author list, year, URL
 5. Use WebFetch on promising URLs to extract full abstract and metadata
 6. For PDF URLs: use WebFetch to download, then `Read` tool to extract text (see `roles/web-searcher.md` "Handling PDFs" section). Save to `.research/session-{id}/pdfs/`
