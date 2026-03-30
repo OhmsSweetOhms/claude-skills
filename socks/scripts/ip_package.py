@@ -778,6 +778,54 @@ def _emit_reset_tcl(lines: list, iface: DetectedInterface):
 
 
 # ---------------------------------------------------------------------------
+# ADI-compatible IP generation
+# ---------------------------------------------------------------------------
+
+def _generate_adi_ip(project_dir: str, socks_cfg: dict) -> None:
+    """Generate an ADI-compatible IP folder after Vivado packaging."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    gen_script = os.path.join(script_dir, "gen_adi_ip.py")
+    if not os.path.isfile(gen_script):
+        print(f"  [WARN] gen_adi_ip.py not found, skipping ADI generation")
+        return
+
+    entity = socks_cfg.get("dut", {}).get("entity", "")
+    if not entity:
+        return
+
+    # adi_lib is at ../../adi_lib relative to modules/<name>/
+    adi_lib = os.path.normpath(os.path.join(project_dir, "..", "..", "adi_lib"))
+    if not os.path.isdir(os.path.dirname(adi_lib)):
+        print(f"  [WARN] ADI lib parent not found, skipping ADI generation")
+        return
+    os.makedirs(adi_lib, exist_ok=True)
+
+    ip_cfg = socks_cfg.get("ip", {})
+    vendor = ip_cfg.get("vendor", "socks")
+    library = ip_cfg.get("library", "socks")
+
+    out_dir = os.path.join(adi_lib, entity)
+
+    print()
+    print(f"  ADI IP generation:")
+    result = subprocess.run(
+        [sys.executable, gen_script,
+         "--project-dir", project_dir,
+         "--output", out_dir,
+         "--vendor", vendor,
+         "--library", library],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        print(f"    [{pass_str()}] ADI IP -> {os.path.relpath(out_dir, project_dir)}")
+    else:
+        print(f"    [WARN] ADI IP generation failed (non-fatal)")
+        if result.stderr:
+            for line in result.stderr.strip().split("\n")[-5:]:
+                print(f"      {line}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -855,6 +903,7 @@ def main():
     if check_hash(ip_dir, current_hash) and os.path.isfile(component_xml):
         print(f"  Sources unchanged (hash: {current_hash[:12]}...). Skipping Vivado.")
         print(f"  [{pass_str()}] IP packaging: unchanged, skipping")
+        _generate_adi_ip(project_dir, socks_cfg)
         sys.exit(0)
 
     print(f"  Entity:  {entity}")
@@ -943,6 +992,10 @@ def main():
     axi_count = sum(1 for i in interfaces if i.kind in ("axi_lite", "axi_full", "axi_stream"))
     print(f"    Bus interfaces: {axi_count}")
     print(f"    Scalar ports:   {len(scalars)}")
+
+    # ADI-compatible IP generation
+    _generate_adi_ip(project_dir, socks_cfg)
+
     print_separator()
 
 
