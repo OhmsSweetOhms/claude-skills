@@ -170,9 +170,40 @@ def check_absolute_paths(scan_dir, verbose=False):
 
         findings = engine.scan_single_repo(scan_dir)
         errors = []
+
+        # Exclude known generated directories that always contain PII (absolute
+        # paths with username from Vivado/Vitis). These are gitignored build
+        # artifacts but the fingerprint engine may not respect .gitignore when
+        # no .git repo exists or when scanning a subdirectory like build/hil/.
+        skip_prefixes = (
+            "build/vivado_project/",
+            "build/hil/vivado_project/",
+            "build/hil/vitis_ws/",
+            "vivado_project/",   # when scan_dir is build/hil/
+            "vitis_ws/",         # when scan_dir is build/hil/
+        )
+        skip_suffixes = (".log", ".jou", ".backup.log", ".backup.jou")
+
         for f in findings:
             detail = f.replace("BLOCKED: ", "")
-            errors.append(("fingerprint", detail))
+            # Extract the file path from the finding (format: "description -- path:line")
+            # or "description found in path:line"
+            skip = False
+            for prefix in skip_prefixes:
+                if prefix in detail:
+                    skip = True
+                    break
+            if not skip:
+                for suffix in skip_suffixes:
+                    # Check if the finding references a file with this suffix
+                    # Findings look like: "Personal identifier 'x' found in file.log:42"
+                    parts = detail.split(" found in ")
+                    if len(parts) > 1 and any(parts[1].rsplit(":", 1)[0].endswith(s)
+                                              for s in skip_suffixes):
+                        skip = True
+                        break
+            if not skip:
+                errors.append(("fingerprint", detail))
 
         if verbose and not errors:
             print("    No PII, secrets, or absolute paths found (fingerprint engine)")

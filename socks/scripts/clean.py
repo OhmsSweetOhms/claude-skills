@@ -58,10 +58,11 @@ ARTIFACT_GLOBS = [
     "build/hil/ila_*.csv",
 ]
 
-# HIL directories to remove entirely (with --all)
+# Path-based directories to remove entirely (with --all)
 HIL_ARTIFACT_DIRS = [
     "build/hil/vivado_project",
     "build/hil/vitis_ws",
+    "build/vivado_project",  # system-scope Stage 10 Vivado project (regenerable from TCL)
 ]
 
 # Synthesis report patterns (only removed with --all)
@@ -71,6 +72,9 @@ REPORT_GLOBS = [
     "build/synth/*_timing_constrained.txt",
     "build/synth/*_timing_paths.txt",
     "build/synth/*_drc.txt",
+    "build/synth/utilization.rpt",   # system-scope report names
+    "build/synth/timing.rpt",
+    "build/synth/*.xsa",
 ]
 
 # Directories to never descend into or remove

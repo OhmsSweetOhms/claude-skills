@@ -289,7 +289,7 @@ python scripts/socks.py --project-dir . --stages 10 --top my_module --part xc7z0
 
 **Workflows map to stages:**
 - `--design` (module) -- 0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13
-- `--design --scope system` -- 0, 1, 20, 10, 11, 12, 13 (Stage 20 replaces 2-9)
+- `--design --scope system` -- 0, 1, 20, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 (Stage 20 replaces 2-9; HIL stages skip if no hardware)
 - `--test` -- 4, 21, 5, 7, 8, 9 (sim only)
 - `--architecture` -- 0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13 (full re-architecture)
 - `--bughunt` -- 3, 4, 21, 5, 7, 8, 9, 10 (sim + synthesis)

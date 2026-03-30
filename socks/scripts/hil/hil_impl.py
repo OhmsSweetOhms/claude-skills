@@ -27,6 +27,7 @@ from socks_lib import (
     find_vivado_settings, print_header, print_separator,
     pass_str, fail_str,
 )
+from project_config import get_scope
 
 
 def main() -> int:
@@ -46,6 +47,22 @@ def main() -> int:
         return 0
 
     build_dir = hil_build_dir(project_dir)
+
+    # System scope: bitstream already staged by Stage 14 from Stage 10 artifacts
+    if get_scope(project_dir) == "system":
+        bit_files = glob.glob(os.path.join(build_dir, "vivado_project", "*", "impl_1", "*.bit"))
+        xsa_files = glob.glob(os.path.join(build_dir, "*.xsa"))
+        if bit_files and xsa_files:
+            print(f"\n  System scope: bitstream and XSA already staged by Stage 14")
+            print(f"  Bitstream: {os.path.relpath(bit_files[0], project_dir)}")
+            print(f"  XSA:       {os.path.relpath(xsa_files[0], project_dir)}")
+            print(f"\n  {pass_str()} Skipping implementation (reusing Stage 10 artifacts)")
+            return 0
+        else:
+            print(f"\n  System scope: expected staged artifacts not found in build/hil/")
+            print(f"  Run Stage 14 first to stage artifacts from Stage 10.")
+            return 1
+
     dut_entity = hil_config["dut"]["entity"]
     project_name = f"hil_{dut_entity}"
 

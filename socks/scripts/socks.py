@@ -116,7 +116,7 @@ DESIGN_LOOP = [2, 3, 4, 21, 5, 6, 7, 8, 9]  # informational only, not mechanical
 # which is only available through --validate or --design workflows.
 WORKFLOW_STAGES = {
     "design":           [0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13],
-    "design_system":    [0, 1, 20, 10, 11, 12, 13],
+    "design_system":    [0, 1, 20, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     "test":             [4, 21, 5, 7, 8, 9],
     "architecture":     [0, 1, 3, 4, 21, 5, 7, 8, 9, 10, 11, 12, 13],
     "bughunt":          [3, 4, 21, 5, 7, 8, 9, 10],
@@ -504,7 +504,7 @@ def main() -> int:
         if os.path.isfile(clean_script):
             print(f"\n  Cleaning build artifacts...")
             rc = subprocess.run(
-                [sys.executable, clean_script, "--project-dir", project_dir],
+                [sys.executable, clean_script, "--project-dir", project_dir, "--all"],
                 cwd=project_dir,
             ).returncode
             if rc != 0:
@@ -764,9 +764,10 @@ def main() -> int:
             reason = "Create HIL Vivado project from hil.json"
 
         elif stage == 15:
+            project_scope = get_scope(project_dir) or args.scope
             xpr_files = glob.glob(os.path.join(project_dir, "build", "hil",
                                                "vivado_project", "*.xpr"))
-            if not xpr_files:
+            if not xpr_files and project_scope != "system":
                 return [], "No Vivado project in build/hil/ -- run Stage 14 first", 1
             extra_args = ["--project-dir", project_dir]
             if args.settings:
@@ -790,6 +791,10 @@ def main() -> int:
         elif stage == 17:
             bit_files = glob.glob(os.path.join(project_dir, "build", "hil",
                                                "vivado_project", "*/impl_1/*.bit"))
+            # System scope: bitstream may be in build/vivado_project/ from Stage 10
+            if not bit_files:
+                bit_files = glob.glob(os.path.join(project_dir, "build",
+                                                   "vivado_project", "*.runs", "impl_1", "*.bit"))
             elf = os.path.join(project_dir, "build", "hil",
                                "vitis_ws", "hil_app", "Debug", "hil_app.elf")
             if not bit_files or not os.path.isfile(elf):

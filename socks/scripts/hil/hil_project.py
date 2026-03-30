@@ -20,6 +20,7 @@ Exit codes:
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
 
@@ -33,7 +34,7 @@ from validate_trigger_plan import validate_trigger_plan
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import (
-    find_vivado_settings, print_header, print_separator,
+    find_vivado_settings, print_header, print_separator, print_result,
     pass_str, fail_str, yellow, bold,
 )
 from project_config import get_scope, load_project_config
@@ -165,11 +166,62 @@ def main() -> int:
     print(f"  DUT:      {dut['entity']}")
     print(f"  Part:     {board['part']}")
     print(f"  AXI base: {axi['base_address']}")
-    print(f"  VCD found: ILA debug always enabled")
 
     # Prepare build directory
     build_dir = hil_build_dir(project_dir)
     os.makedirs(build_dir, exist_ok=True)
+
+    # ---- System scope: reuse Stage 10 artifacts instead of creating new BD ----
+    if project_scope == "system":
+        print(f"\n  System scope: reusing Stage 10 bitstream and XSA")
+
+        # Find XSA from Stage 10
+        xsa_files = glob.glob(os.path.join(project_dir, "build", "synth", "*.xsa"))
+        if not xsa_files:
+            print(f"\n  ERROR: No XSA found in build/synth/. Run Stage 10 first.")
+            return 1
+        xsa_src = xsa_files[0]
+
+        # Find bitstream from Stage 10
+        bit_files = glob.glob(os.path.join(
+            project_dir, "build", "vivado_project", "*.runs", "impl_1", "*.bit"))
+        if not bit_files:
+            print(f"\n  ERROR: No bitstream found in build/vivado_project/. "
+                  f"Run Stage 10 first.")
+            return 1
+        bit_src = bit_files[0]
+
+        # Copy XSA to build/hil/
+        xsa_dst = os.path.join(build_dir, os.path.basename(xsa_src))
+        shutil.copy2(xsa_src, xsa_dst)
+        print(f"  XSA:      {os.path.relpath(xsa_dst, project_dir)}")
+
+        # Create expected directory structure for Stage 17
+        # Stage 17 globs: build/hil/vivado_project/*/impl_1/*.bit
+        project_name = f"hil_{dut['entity']}"
+        impl_dir = os.path.join(build_dir, "vivado_project",
+                                f"{project_name}.runs", "impl_1")
+        os.makedirs(impl_dir, exist_ok=True)
+        bit_dst = os.path.join(impl_dir, os.path.basename(bit_src))
+        shutil.copy2(bit_src, bit_dst)
+        print(f"  Bitstream: {os.path.relpath(bit_dst, project_dir)}")
+
+        # Extract ps7_init.tcl from Vitis workspace if firmware was already built,
+        # otherwise it will be generated during Stage 16
+        ps7_dst = os.path.join(build_dir, "ps7_init.tcl")
+        if not os.path.isfile(ps7_dst):
+            # Look in Vitis workspace from a prior Stage 16 run
+            ps7_candidates = glob.glob(os.path.join(
+                build_dir, "vitis_ws", "hil_app", "_ide", "psinit", "ps7_init.tcl"))
+            if ps7_candidates:
+                shutil.copy2(ps7_candidates[0], ps7_dst)
+                print(f"  ps7_init:  {os.path.relpath(ps7_dst, project_dir)}")
+
+        print(f"\n  System scope Stage 14 complete -- artifacts staged for Stage 16-17")
+        print_result("System scope Stage 14", True, "artifacts staged from Stage 10")
+        return 0
+
+    print(f"  VCD found: ILA debug always enabled")
 
     # Resolve preset path
     preset_name = board.get("preset", "microzed_ps7_preset.tcl")
