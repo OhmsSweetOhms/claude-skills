@@ -11,7 +11,8 @@
     "mode": { "type": "string", "enum": ["single_instance", "multi_instance"] },
     "sources_searched": {
       "type": "array",
-      "items": { "type": "string", "enum": ["ieee_xplore", "semantic_scholar", "github", "web"] }
+      "items": { "type": "string", "enum": ["ieee_xplore", "semantic_scholar", "github", "web"] },
+      "description": "Which search sources were queried during this session"
     },
     "total_results_evaluated": { "type": "integer" },
     "tier1_recommendations": { "type": "integer" },

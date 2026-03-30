@@ -1,78 +1,99 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["role", "query_topic", "queries_executed", "results", "gaps_identified"],
+  "required": ["role", "results"],
   "properties": {
     "role": {
       "type": "string",
       "enum": ["ieee_searcher", "web_searcher", "code_searcher", "citation_tracer"]
     },
-    "query_topic": {
+    "mode": {
       "type": "string",
-      "description": "The sub-question or search focus this role was assigned"
+      "description": "Operating mode (e.g. 'fallback' if MCP unavailable)"
     },
     "queries_executed": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "query": { "type": "string" },
-          "tool": { "type": "string" },
-          "result_count": { "type": "integer" }
+      "oneOf": [
+        { "type": "integer", "description": "Simple count of queries run" },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string" },
+              "tool": { "type": "string" },
+              "result_count": { "type": "integer" }
+            }
+          },
+          "description": "Detailed audit trail of what was searched"
         }
-      },
-      "description": "Audit trail of what was searched"
+      ]
     },
     "results": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["title", "source", "relevance", "relevance_rationale", "recommended_action"],
+        "required": ["title", "relevance"],
         "properties": {
           "title": { "type": "string" },
           "authors": { "type": "array", "items": { "type": "string" } },
-          "source": { "type": "string" },
           "year": { "type": "integer" },
-          "venue": { "type": "string" },
-          "abstract_summary": { "type": "string", "description": "2-3 sentence summary in own words" },
+          "venue": { "type": "string", "description": "Conference, journal, or publisher name" },
+          "source": { "type": "string", "description": "Website or platform name (e.g. 'gnss-sdr.org', 'GitHub')" },
+
+          "url": { "type": "string", "description": "Direct URL to the resource" },
+          "doi": { "type": "string", "description": "DOI identifier if available (e.g. '10.3390/s24051416')" },
+
+          "summary": { "type": "string", "description": "2-3 sentence summary in own words" },
           "relevance": { "type": "string", "enum": ["high", "medium", "low"] },
-          "relevance_rationale": { "type": "string" },
-          "key_contribution": { "type": "string" },
-          "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "How confident in the relevance assessment" },
-          "tags": { "type": "array", "items": { "type": "string" } },
+          "rationale": { "type": "string", "description": "Why this relevance level was assigned" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+
+          "tags": {
+            "type": "array", "items": { "type": "string" },
+            "description": "Domain/topic tags for classification (e.g. 'AD9361', 'Zynq', 'PCPS')"
+          },
           "flags": {
             "type": "array",
-            "items": { "type": "string", "enum": ["foundational", "novel_approach", "contradicts", "has_code", "platform_specific", "open_access"] }
+            "items": { "type": "string", "enum": ["foundational", "novel_approach", "contradicts", "has_code", "platform_specific", "open_access"] },
+            "description": "Special markers that modify priority within tier"
           },
-          "recommended_action": { "type": "string", "enum": ["read_full_paper", "skim", "skip", "clone_repo", "trace_citations", "contact_author"] },
-          "url_or_doi": { "type": "string" },
-          "license": { "type": "string", "description": "For code repos only" },
-          "cross_references": { "type": "array", "items": { "type": "string" }, "description": "Titles of other results this relates to" },
-          "download_status": {
+
+          "type": {
             "type": "string",
-            "enum": ["saved", "cloned", "paywall", "fetch_failed", "not_attempted", "manual_needed"],
-            "description": "Whether the source content was successfully saved to the session directory"
+            "enum": ["paper", "thesis", "repo", "blog_post", "app_note", "tutorial", "trade_article", "presentation", "webpage"],
+            "description": "Content type — helps gen_manifest.py classify without guessing"
           },
-          "local_paths": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Relative paths to local copies within the session directory (e.g., pdfs/name.pdf, repos/name/)"
-          },
-          "download_note": {
+
+          "license": { "type": "string", "description": "For repos: SPDX license ID (e.g. 'MIT', 'GPL-3.0')" },
+          "language": { "type": "string", "description": "For repos: primary programming language" },
+          "stars": { "type": "integer", "description": "For repos: GitHub star count" },
+
+          "local_file": {
             "type": "string",
-            "description": "Why the source wasn't saved (e.g., 'IEEE paywall', '403 forbidden', 'too large')"
+            "description": "Relative path to local copy within session dir (e.g. 'pdfs/foo.pdf', 'blogs/bar.md'). Set by Claude after calling fetch_and_save.py."
+          },
+          "clone_repo": {
+            "type": "boolean",
+            "description": "Whether this repo was cloned to repos/"
+          },
+
+          "recommended_action": {
+            "type": "string",
+            "enum": ["read_full_paper", "skim", "skip", "clone_repo", "trace_citations"],
+            "description": "What the user should do with this result — used in report Stage 4"
+          },
+
+          "cross_references": {
+            "type": "array", "items": { "type": "string" },
+            "description": "Titles of related results or cited papers"
           }
         }
       }
     },
-    "gaps_identified": {
+    "merged_results": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "What the search did NOT find that was expected"
-    },
-    "suggested_followup_queries": {
-      "type": "array",
-      "items": { "type": "string" }
+      "description": "Results added from a merged older session. Same schema as results[].",
+      "items": { "$ref": "#/properties/results/items" }
     },
     "handoff_items": {
       "type": "array",
@@ -81,10 +102,15 @@
         "properties": {
           "target_role": { "type": "string" },
           "item": { "type": "string" },
-          "reason": { "type": "string" }
+          "source": { "type": "string" }
         }
       },
-      "description": "Items to pass to another role (e.g., repo URL found in a paper -> code_searcher)"
+      "description": "Items to pass to another role"
+    },
+    "gaps": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What the search did NOT find that was expected"
     }
   }
 }

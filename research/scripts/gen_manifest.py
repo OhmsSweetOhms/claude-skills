@@ -175,18 +175,59 @@ def scan_repos(session_dir: str) -> list:
     return results
 
 
+def _normalize_result(result: dict) -> dict:
+    """Normalize a single result entry, tolerating field name drift.
+
+    Subagents (Claude) write results JSON freehand. Field names drift:
+      local_paths → local_file       (array vs string)
+      download_status                 (often missing, infer from files)
+    This function reads known variants and returns canonical values.
+    """
+    url = result.get("url") or ""
+    doi = result.get("doi") or ""
+
+    # local_paths: array preferred, accept singular string variants
+    local_paths = result.get("local_paths", [])
+    if not local_paths:
+        lf = result.get("local_file") or result.get("local_path") or ""
+        if lf:
+            local_paths = [lf]
+
+    # download_status: infer from local_paths if not set
+    dl_status = result.get("download_status") or result.get("status_download") or ""
+    if not dl_status:
+        if local_paths:
+            dl_status = "saved"
+        elif result.get("clone_repo"):
+            dl_status = "cloned"
+        else:
+            dl_status = "not_attempted"
+
+    # type: accept explicit field, or will be inferred by caller
+    source_type = result.get("type") or ""
+
+    return {
+        "url": url,
+        "doi": doi,
+        "local_paths": local_paths,
+        "dl_status": dl_status,
+        "source_type": source_type,
+    }
+
+
 def build_sources(session_dir: str) -> dict:
     """Build sources tracking from results/*.json files.
 
-    Reads all per-role result files, deduplicates by url_or_doi,
-    tracks which roles found each source and its download status.
+    Reads all per-role result files, deduplicates by DOI first (stable
+    identifier), then by URL. Tracks which roles found each source and
+    its download status.
     """
     results_dir = os.path.join(session_dir, "results")
     if not os.path.isdir(results_dir):
         return {"items": [], "summary": {}}
 
-    # Collect all results across roles, keyed by url_or_doi
-    sources = {}  # url_or_doi -> merged source dict
+    sources = {}        # dedup_key -> merged source dict
+    doi_to_key = {}     # doi -> dedup_key (for cross-referencing)
 
     for fname in sorted(os.listdir(results_dir)):
         if not fname.endswith(".json"):
@@ -198,33 +239,55 @@ def build_sources(session_dir: str) -> dict:
         except (json.JSONDecodeError, OSError):
             continue
 
-        role = data.get("role", fname[:-5])  # fallback to filename without .json
-        for result in data.get("results", []):
-            url = result.get("url_or_doi", "")
-            if not url:
+        role = data.get("role", fname[:-5])
+        all_results = data.get("results", []) + data.get("merged_results", [])
+        for result in all_results:
+            norm = _normalize_result(result)
+            url = norm["url"]
+            doi = norm["doi"]
+
+            if not url and not doi:
                 continue
 
-            if url in sources:
-                # Merge: add this role to found_by
-                sources[url]["found_by"].append(role)
-                # Upgrade status if this role has a better one
-                new_status = result.get("download_status", "not_attempted")
-                if new_status in ("saved", "cloned") and sources[url]["status"] not in ("saved", "cloned"):
-                    sources[url]["status"] = new_status
-                    sources[url]["local_paths"] = result.get("local_paths", [])
-                    sources[url]["reason"] = None
+            # Dedup key: DOI is stable, prefer it; fall back to URL
+            dedup_key = doi or url
+
+            # Check if we already have this source under a different key
+            # (same DOI found via different URL, or vice versa)
+            if doi and doi in doi_to_key and doi_to_key[doi] != dedup_key:
+                dedup_key = doi_to_key[doi]
+            if doi:
+                doi_to_key[doi] = dedup_key
+
+            local_paths = norm["local_paths"]
+            dl_status = norm["dl_status"]
+
+            if dedup_key in sources:
+                existing = sources[dedup_key]
+                existing["found_by"].append(role)
+                # Fill in missing url or doi from this occurrence
+                if url and not existing.get("url"):
+                    existing["url"] = url
+                if doi and not existing.get("doi"):
+                    existing["doi"] = doi
+                # Upgrade status if better
+                if dl_status in ("saved", "cloned") and existing["status"] not in ("saved", "cloned"):
+                    existing["status"] = dl_status
+                    existing["local_paths"] = local_paths
+                    existing["reason"] = None
             else:
-                # Infer source type from role and result metadata
-                source_type = _infer_source_type(role, result)
-                sources[url] = {
-                    "title": result.get("title", ""),
-                    "url_or_doi": url,
+                # Infer type from explicit field, then role
+                source_type = norm["source_type"] or _infer_source_type(role, result)
+                sources[dedup_key] = {
+                    "title": result.get("title") or result.get("name", ""),
+                    "url": url,
+                    "doi": doi,
                     "type": source_type,
-                    "tier": None,  # Set during Stage 3 ranking, not here
-                    "status": result.get("download_status", "not_attempted"),
-                    "local_paths": result.get("local_paths", []),
+                    "tier": None,
+                    "status": dl_status,
+                    "local_paths": local_paths,
                     "found_by": [role],
-                    "reason": result.get("download_note"),
+                    "reason": result.get("download_note") or result.get("reason"),
                 }
 
     # Verify local paths actually exist on disk
@@ -235,10 +298,16 @@ def build_sources(session_dir: str) -> dict:
             if os.path.exists(full_path):
                 verified_paths.append(lp)
         source["local_paths"] = verified_paths
-        # If paths claimed but none exist, downgrade status
         if source["status"] in ("saved", "cloned") and not verified_paths:
             source["status"] = "not_attempted"
             source["reason"] = "local_paths listed but files not found on disk"
+
+    # Clean up: remove empty url/doi fields
+    for source in sources.values():
+        if not source.get("url"):
+            del source["url"]
+        if not source.get("doi"):
+            del source["doi"]
 
     items = sorted(sources.values(), key=lambda s: (s["status"] != "saved", s["title"]))
 
@@ -253,17 +322,23 @@ def build_sources(session_dir: str) -> dict:
 
 
 def _infer_source_type(role: str, result: dict) -> str:
-    """Infer source type from role and result metadata."""
-    action = result.get("recommended_action", "")
-    if action == "clone_repo":
+    """Infer source type from role, explicit type field, and result metadata."""
+    # Prefer explicit type field if present and valid
+    explicit = result.get("type", "")
+    valid_types = {"paper", "thesis", "repo", "blog_post", "app_note", "tutorial",
+                   "trade_article", "presentation", "webpage", "forum_thread"}
+    if explicit in valid_types:
+        return explicit
+
+    # Infer from role
+    if result.get("clone_repo") or result.get("recommended_action") == "clone_repo":
         return "repo"
-    if role == "ieee_searcher":
-        return "paper"
-    if role == "citation_tracer":
+    if role in ("ieee_searcher", "citation_tracer"):
         return "paper"
     if role == "code_searcher":
         return "repo"
-    # web_searcher — look at tags or URL for hints
+
+    # web_searcher — look at tags for hints
     tags = result.get("tags", [])
     if any(t in tags for t in ["thesis", "dissertation"]):
         return "thesis"

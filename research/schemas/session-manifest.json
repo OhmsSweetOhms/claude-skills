@@ -10,17 +10,18 @@
     "status": { "type": "string", "enum": ["complete", "partial"] },
     "sources": {
       "type": "object",
-      "description": "Tracks ALL sources referenced in results — both saved and unsaved",
+      "description": "Tracks ALL sources referenced in results — both saved and unsaved. Built by gen_manifest.py from results/*.json.",
       "properties": {
         "items": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["title", "url_or_doi", "status"],
+            "required": ["title", "status"],
             "properties": {
               "title": { "type": "string" },
-              "url_or_doi": { "type": "string" },
-              "type": { "type": "string", "enum": ["paper", "thesis", "repo", "blog_post", "app_note", "presentation", "webpage", "trade_article"] },
+              "url": { "type": "string", "description": "Direct URL (preferred identifier for dedup)" },
+              "doi": { "type": "string", "description": "DOI if available" },
+              "type": { "type": "string", "enum": ["paper", "thesis", "repo", "blog_post", "app_note", "tutorial", "trade_article", "presentation", "webpage"] },
               "tier": { "type": ["integer", "null"], "description": "1, 2, or null if not ranked" },
               "status": { "type": "string", "enum": ["saved", "cloned", "paywall", "fetch_failed", "not_attempted", "manual_needed"] },
               "local_paths": { "type": "array", "items": { "type": "string" }, "description": "Relative paths within session dir" },
@@ -45,6 +46,7 @@
     },
     "content": {
       "type": "object",
+      "description": "Inventory of files on disk. Built by gen_manifest.py scanning directories.",
       "properties": {
         "pdfs": {
           "type": "array",
@@ -56,8 +58,7 @@
               "file": { "type": "string", "description": "Relative path to .md text extraction" },
               "pdf": { "type": "string", "description": "Relative path to .pdf file" },
               "title": { "type": "string" },
-              "authors": { "type": "array", "items": { "type": "string" } },
-              "year": { "type": "integer" }
+              "url": { "type": "string", "description": "Source URL from file header" }
             }
           }
         },
@@ -68,8 +69,8 @@
             "required": ["name", "file", "title"],
             "properties": {
               "name": { "type": "string" },
-              "file": { "type": "string", "description": "Relative path to .md file" },
-              "url": { "type": "string", "description": "Source URL" },
+              "file": { "type": "string" },
+              "url": { "type": "string" },
               "title": { "type": "string" }
             }
           }
@@ -104,9 +105,9 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "github_url"],
+            "required": ["name"],
             "properties": {
-              "name": { "type": "string", "description": "owner/repo format" },
+              "name": { "type": "string", "description": "owner/repo or directory name" },
               "github_url": { "type": "string" },
               "description": { "type": "string" },
               "language": { "type": "string" },

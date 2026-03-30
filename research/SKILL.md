@@ -103,7 +103,7 @@ Read the role document for each role before executing it. The role docs are in `
    ```
 
    Do NOT skip this step. Do NOT use Write tool as an alternative — always use the script. The script creates directories, sanitizes names, and produces consistent output. If it came from a tool call, it goes through the script to disk.
-7. Produce output JSON per `schemas/subagent-result.json`
+7. Produce output JSON per `schemas/subagent-result.json`. Use `url` for URLs and `doi` for DOIs as **separate fields** — papers often have both. Set `local_file` to the relative session path after saving content. Set `type` explicitly (paper/thesis/repo/blog_post/app_note/tutorial/trade_article/webpage).
 8. Write to `.research/session-{id}/results/{role}.json`
 9. Collect `handoff_items` for subsequent roles
 
