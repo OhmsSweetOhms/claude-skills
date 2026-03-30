@@ -140,6 +140,12 @@ used by `find_git_repos()` to prune the directory walk.
 Additional identity strings to block, one per line. Variations, typos,
 nicknames, aliases. Auto-detected values don't need to be listed.
 
+**Gitignore** (`.gitignore` in project root):
+Files matching `.gitignore` patterns are automatically excluded from
+scanning. For git repos this uses `git check-ignore --no-index` for
+accurate matching (including tracked files that were later gitignored).
+For non-git directories, patterns are matched with fnmatch.
+
 **Project allowlist** (`.fingerprint-allowlist` in project root):
 One regex per line. Patterns are matched against **line content** (not
 filenames). Lines matching any pattern are skipped. Use for intentional

@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
 from fingerprint_engine import (
     Scanner,
+    filter_gitignored,
     find_git_repos,
     find_loose_files,
     git_ls_files,
@@ -60,6 +61,8 @@ def mode_scan_dir(scan_dir: str) -> int:
             for fname in fnames:
                 rel = os.path.relpath(os.path.join(root, fname), scan_dir)
                 files.append(rel)
+
+    files = filter_gitignored(files, scan_dir)
 
     file_count = 0
     for f in files:
