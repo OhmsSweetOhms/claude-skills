@@ -793,12 +793,11 @@ def _generate_adi_ip(project_dir: str, socks_cfg: dict) -> None:
     if not entity:
         return
 
-    # adi_lib is at ../../adi_lib relative to modules/<name>/
-    adi_lib = os.path.normpath(os.path.join(project_dir, "..", "..", "adi_lib"))
-    if not os.path.isdir(os.path.dirname(adi_lib)):
+    # Module lives in ADI/library/<entity>/, so library root is the parent dir
+    adi_lib = os.path.normpath(os.path.join(project_dir, ".."))
+    if not os.path.isdir(adi_lib):
         print(f"  [WARN] ADI lib parent not found, skipping ADI generation")
         return
-    os.makedirs(adi_lib, exist_ok=True)
 
     ip_cfg = socks_cfg.get("ip", {})
     vendor = ip_cfg.get("vendor", "socks")
