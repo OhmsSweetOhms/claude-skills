@@ -1,6 +1,6 @@
-# Domain: GNSS Signal Processing
+# Domain: GNSS Signal Processing (SoC/FPGA)
 
-Domain reference for GPS/GNSS signal processing research, including FPGA/SoC implementation aspects.
+Domain reference for GPS/GNSS signal processing research with emphasis on FPGA/SoC implementation — Zynq, 7-series, UltraScale targets.
 
 ## Conferences
 
