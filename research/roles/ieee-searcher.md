@@ -9,17 +9,7 @@
 
 ## Search Scope
 
-**Conferences:**
-- ION GNSS+
-- IEEE PLANS (Position Location and Navigation Symposium)
-- IEEE/ION POSITION LOCATION AND NAVIGATION SYMPOSIUM
-- IEEE Aerospace Conference
-
-**Journals:**
-- IEEE Transactions on Aerospace and Electronic Systems
-- IEEE Access
-- Navigation (ION journal)
-- Sensors (MDPI — open access, often has FPGA/GNSS work)
+Load conferences and journals from the domain reference file (`references/domains/{domain}.md`) if one was loaded in Stage 1. If no domain file exists, identify relevant venues from the research plan's domain field and sub-questions.
 
 **Year range:** Default last 10 years. Extend to 20 for foundational work if sub-questions require it.
 

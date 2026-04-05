@@ -18,12 +18,14 @@ When invoked as `/research {query}`:
 
 Read `references/decomposition.md` for methodology.
 
-1. Identify the **domain** (e.g., GPS/GNSS signal processing, RF design, digital communications)
-2. Identify the **implementation target** (e.g., Zynq SoC, FPGA, software, ASIC) — may be "none" for pure literature surveys
-3. Identify the **specific problem** and break it into constituent parts
-4. Cross axes to generate sub-questions (algorithm-level, implementation-level, integration-level)
-5. Identify known conferences, journals, authors, repos for this domain
-6. Assess effort level:
+1. Identify the **domain** (e.g., GPS/GNSS signal processing, RF design, digital communications, control systems, computer vision)
+2. Check `references/domains/` for a file matching the identified domain. If found, load it — it provides conferences, journals, vendors, synonyms, known repos, and platform matching criteria for this domain.
+3. Identify the **implementation target** (e.g., Zynq SoC, FPGA, software, ASIC) — may be "none" for pure literature surveys
+4. Identify the **specific problem** and break it into constituent parts
+5. Cross axes to generate sub-questions (algorithm-level, implementation-level, integration-level)
+6. Load known conferences, journals, authors, repos from the domain reference if available; otherwise identify from query context
+7. **Implementation detection:** If the query references specific block names, parameters, profiles, or a gap/robustness document, assess as `implementation` effort level. This mode emphasizes extracting concrete parameter values and design decisions rather than surveying the field.
+8. Assess effort level:
 
 | Query Type | Example | Effort Level | Roles |
 |-----------|---------|-------------|-------|
@@ -31,9 +33,10 @@ Read `references/decomposition.md` for methodology.
 | Focused technical | "VHDL Costas loop for GPS L1" | focused | ieee + code |
 | Broad survey | "GPS carrier acquisition on Zynq SoC" | broad | all roles |
 | Field mapping | "State of the art in FPGA-based GNSS receivers" | field_mapping | all roles + extended budget |
+| Implementation research | "What anti-windup policy should my 3rd-order PLL use?" | implementation | all roles, code-as-literature emphasis |
 
-7. Generate the research plan as JSON per `schemas/research-plan.json`
-8. Create the session directory and write the plan:
+9. Generate the research plan as JSON per `schemas/research-plan.json`. Include the domain reference file path in the plan if one was loaded.
+10. Create the session directory and write the plan:
 
 ```bash
 mkdir -p .research/session-$(date +%Y%m%d-%H%M%S)/{results,pdfs,blogs,app-notes,html,repos}
@@ -41,7 +44,7 @@ mkdir -p .research/session-$(date +%Y%m%d-%H%M%S)/{results,pdfs,blogs,app-notes,
 
 Write `plan.json` to the session directory.
 
-9. Show the user a brief summary of the plan:
+11. Show the user a brief summary of the plan:
    - Number of sub-questions
    - Roles to execute
    - Effort level
@@ -217,6 +220,7 @@ The skill adjusts its depth based on effort level. This table governs total beha
 | focused | 2-3 | 8-12 | 3-5 pages | Standard sections |
 | broad | all 4 | 10-15 | 5-8 pages | Full report |
 | field_mapping | all 4 | 15-20 | 8-12 pages | Extended landscape analysis |
+| implementation | all 4 | 10-15 | 5-8 pages | Standard + Parameters Extracted + Cross-Implementation Comparison |
 
 ## Error Handling
 

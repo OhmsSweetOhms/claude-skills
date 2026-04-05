@@ -7,9 +7,9 @@ What makes a result worth reading vs. skimming vs. skipping.
 Directly applicable, high quality. The user should invest time here.
 
 A result is Tier 1 if it meets **2 or more** of:
-- Describes an implementation on the target platform or close equivalent (e.g., Zynq, Artix-7, any 7-series+ for an FPGA query)
+- Describes an implementation on the target platform or close equivalent (per domain reference platform matching table, if available; otherwise use reasonable architectural similarity)
 - Provides synthesizable code or detailed block diagrams with timing
-- Published in a top venue (IEEE Transactions on Aerospace and Electronic Systems, ION GNSS+ proceedings, IEEE Access with high citations)
+- Published in a top venue for the domain (per domain reference conferences/journals, or identified from query context)
 - Cited 10+ times (for papers older than 2 years)
 - Open-source repo with recent activity (commits within 12 months), documentation, and clear license
 - Author is a recognized expert in the domain (high h-index in this specific field)

@@ -50,15 +50,16 @@ Query construction and search execution heuristics.
 
 ## Synonym Expansion
 
-Technical terms often have multiple names. Generate variants:
+Technical terms often have multiple names. Load the domain-specific synonym table from `references/domains/{domain}.md` if a domain file was loaded in Stage 1. If no domain file exists, generate synonyms from the query's technical terms.
+
+Example (from GNSS domain):
 
 | User's Term | Synonyms to Try |
 |-------------|-----------------|
 | GPS acquisition | signal acquisition, code phase search, coarse acquisition |
 | Carrier tracking | carrier loop, PLL, FLL, Costas loop |
-| FPGA | programmable logic, reconfigurable hardware, HDL |
-| Zynq | SoC FPGA, ARM+FPGA, PS/PL |
-| VHDL | HDL, RTL, hardware description |
+
+Always generate at least 2-3 synonyms per key technical term, even without a domain file.
 
 ## When to Stop
 

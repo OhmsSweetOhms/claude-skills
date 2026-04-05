@@ -57,6 +57,20 @@ tags:
 
 ---
 
+## Parameters Extracted
+
+{PARAMETERS_TABLE}
+<!-- Include this section only when effort level is "implementation". Delete if not applicable. -->
+
+---
+
+## Cross-Implementation Comparison
+
+{COMPARISON_TABLE}
+<!-- Include this section only when effort level is "implementation" and multiple implementations exist. Delete if not applicable. -->
+
+---
+
 ## Suggested Next Steps
 
 {NEXT_STEPS}

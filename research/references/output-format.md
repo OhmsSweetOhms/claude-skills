@@ -108,7 +108,27 @@ Same format as Tier 1, with briefer rationale.
 ### 5. Gap Analysis
 What the search did NOT find. What's missing from the literature. Where the user might need to look beyond these sources. This section is often the most valuable — it tells you where the frontier is.
 
-### 6. Suggested Next Steps
+### 6. Parameters Extracted (implementation effort level only)
+
+Include this section when the effort level is `implementation`. Table of specific numeric values, conditions, and logic extracted from literature and code:
+
+| Parameter | Value | Source | Context |
+|-----------|-------|--------|---------|
+| {name} | {value + units} | {paper/repo + location} | {design context, e.g., loop order, signal type} |
+
+Maps back to the research plan's gap list — note which gaps each parameter addresses.
+
+### 7. Cross-Implementation Comparison (implementation effort level, optional)
+
+When multiple implementations handle the same design choice differently, include a comparison table:
+
+| Design Choice | Implementation A | Implementation B | Implementation C |
+|--------------|-----------------|-----------------|-----------------|
+| {e.g., PLL bandwidth} | {value + source} | {value + source} | {value + source} |
+
+This section is high-value when there's no consensus in the literature — it shows the range of viable approaches.
+
+### 8. Suggested Next Steps
 Specific actionable items:
 - Follow-up queries to run
 - Papers to trace citations from
@@ -116,7 +136,7 @@ Specific actionable items:
 - Repos to watch or clone
 - Conferences to check for upcoming presentations
 
-### 7. Raw Results Index
+### 9. Raw Results Index
 Pointer to `.research/session-{id}/results/` for full per-role JSON outputs. Note which roles were executed and any that were skipped (with reason).
 
 ## Writing Style

@@ -7,14 +7,16 @@ How to break a research question into searchable sub-questions and a search stra
 Given a research query, decompose it along these axes:
 
 ### 1. Identify the Domain
-What field does this question belong to? Examples: GPS/GNSS signal processing, RF front-end design, digital communications, radar signal processing.
+What field does this question belong to? Examples: GPS/GNSS signal processing, RF front-end design, digital communications, radar signal processing, control systems, computer vision, compiler design.
 
 The domain determines which conferences, journals, and communities to search.
 
-### 2. Identify the Implementation Target
-What is the user building on? Examples: Zynq SoC, Artix-7 FPGA, software-only (Python/MATLAB), ASIC.
+**Domain reference loading:** Check `references/domains/` for a file matching the identified domain. If found, load it — it provides conferences, journals, vendors, synonyms, known repos, and platform matching criteria. If no domain file exists, identify these from the query context.
 
-The implementation target determines which code repositories, vendor app notes, and reference designs are relevant.
+### 2. Identify the Implementation Target
+What is the user building on? Examples: Zynq SoC, Artix-7 FPGA, software-only (Python/MATLAB), ASIC, embedded Linux, cloud.
+
+The implementation target determines which code repositories, vendor app notes, and reference designs are relevant. If a domain reference file is loaded, use its platform matching table to define "close equivalent" targets.
 
 ### 3. Identify the Specific Problem
 What exactly needs to be solved? Break into constituent parts. Example for "coarse and fine acquisition of GPS carrier signal":
@@ -43,11 +45,13 @@ For each combination of (problem component) × (question type), generate a sub-q
 
 ### 5. Identify Known Sources
 
-For the domain, identify:
-- **Conferences:** ION GNSS+, IEEE PLANS, IEEE/ION POSITION LOCATION AND NAVIGATION SYMPOSIUM, IEEE AESS
-- **Journals:** IEEE Transactions on Aerospace and Electronic Systems, IEEE Access, Navigation (ION journal)
-- **Trade publications:** Inside GNSS, GPS World
-- **Vendor sources:** Xilinx/AMD app notes (XAPP, UG), Analog Devices (RF front-end)
+Load from the domain reference file (`references/domains/{domain}.md`) if a matching file exists. The domain file provides conferences, journals, trade publications, vendor sources, and known repositories pre-identified for that domain.
+
+If no domain file exists, identify from the query context:
+- **Conferences:** Top venues for this field (e.g., ION GNSS+ for GNSS, CVPR for vision, PLDI for compilers)
+- **Journals:** Peer-reviewed journals where this work appears
+- **Trade publications:** Industry magazines and news sites
+- **Vendor sources:** Relevant vendor app notes and reference designs
 - **Known authors/groups:** If any are known, seed the citation tracer
 
 ### 6. Generate Search Queries
@@ -65,7 +69,7 @@ Each role gets its own queries — don't duplicate across roles:
 - **Don't use the full research question as a search query.** "Ways of doing coarse and fine acquisition of the GPS carrier signal using Zynq SoC and synthesizable VHDL" returns nothing useful. Break it apart.
 - **Don't search for the implementation target without the algorithm.** "Zynq VHDL" is useless. "GPS acquisition FPGA" is useful.
 - **Don't duplicate queries across roles.** Each role has its own search space. The ieee-searcher searches IEEE Xplore; the web-searcher searches blogs and app notes. They should not run the same queries.
-- **Don't assume the user's terminology matches the literature.** "Fine acquisition" might be called "code phase refinement" or "narrow correlator" in papers. Generate synonym variants.
+- **Don't assume the user's terminology matches the literature.** See domain reference for synonym expansion table if available. Otherwise, generate synonyms from the query's technical terms. Example: "fine acquisition" might be called "code phase refinement" or "narrow correlator" in papers.
 
 ## Output
 

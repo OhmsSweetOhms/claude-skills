@@ -8,11 +8,12 @@
 
 ## Search Scope
 
-- **Vendor app notes:** Xilinx/AMD (XAPP docs, UG docs, reference designs), Analog Devices (RF front-end, data converters), Texas Instruments (RF/mixed-signal)
-- **Trade publications:** Inside GNSS, GPS World, EE Times, Embedded.com
+Load vendor sources and trade publications from the domain reference file (`references/domains/{domain}.md`) if one was loaded in Stage 1. If no domain file exists, identify relevant vendors and trade publications from the query context.
+
+Additionally search:
 - **Technical blogs and personal sites:** credible authors with verifiable expertise
 - **PhD theses and dissertations:** often more detailed than papers — search with "thesis" or "dissertation" keyword
-- **Stack Exchange:** DSP Stack Exchange, Electrical Engineering Stack Exchange — substantive answers only
+- **Stack Exchange:** relevant Stack Exchange sites for the domain — substantive answers only
 - **YouTube talks / conference presentations:** capture title + speaker for reference (not transcription)
 - **University course materials:** lecture notes, design projects, lab assignments
 
@@ -20,9 +21,9 @@
 
 1. Take sub-questions assigned to this role from the research plan
 2. For each sub-question, construct 3+ variant queries per `references/search-strategy.md`
-3. Include vendor-specific terms alongside generic: "Xilinx GPS receiver", "AMD GNSS reference design"
-4. Search for specific document types: "XAPP", "application note", "design guide", "user guide"
-5. Try trade publication searches: `site:insidegnss.com`, `site:gpsworld.com`
+3. Include vendor-specific terms alongside generic (per domain reference vendor list, or from query context)
+4. Search for vendor document prefixes from the domain reference (e.g., "XAPP", "AN") alongside generic terms like "application note", "design guide", "user guide"
+5. Try trade publication site-scoped searches using URLs from the domain reference (e.g., `site:{publication_url}`)
 6. Use WebFetch on the most promising 3-5 URLs to extract content details
 7. Record every query, tool used, and result count
 
