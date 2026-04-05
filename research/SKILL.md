@@ -9,8 +9,9 @@ description: "Structured technical research agent. Takes a research question and
 
 When invoked as `/research {query}`:
 
-1. Read the user's research query from the arguments
-2. If no query provided, ask the user: "What would you like to research?"
+1. Check for domain tracker flags (`--domain-status`, `--domain-review`, `--domain-apply`). If present, jump to the "Domain Knowledge Tracker" section below.
+2. Read the user's research query from the arguments
+3. If no query provided, ask the user: "What would you like to research?"
 
 ## Stage 1: Decompose
 
@@ -125,6 +126,23 @@ After each role completes:
 - Brief the user: "{role} complete. Found {N} results ({tier1} high relevance, {tier2} medium). Moving to {next_role}."
 - Pass `handoff_items` to the next role's input
 
+### Domain Knowledge Tracking (Between Roles)
+
+After briefing the user on role completion, check for domain knowledge discoveries. Read `references/domain-tracker.md` for full criteria and thresholds.
+
+1. Load the domain reference file from Stage 1 (or note its absence)
+2. Compare this role's results against the domain file:
+   - New conferences/journals that yielded 2+ relevant results → `conference` / `journal`
+   - New repositories with 10+ stars or significant content → `known_repository`
+   - Synonym variants that produced results the domain's table missed → `synonym`
+   - Vendor sources with document prefix patterns not in domain file → `vendor_source`
+   - Foundational references cited by 3+ results → `foundational_reference`
+3. For each qualifying discovery, generate a `proposed_entry` formatted to match the domain file's existing style for that section
+4. Log to `.research/session-{id}/domain-discoveries.json` per `schemas/domain-discovery.json`
+5. Brief: "Domain tracker: logged {N} potential additions for {domain}."
+
+If no domain file exists, lower thresholds — we're bootstrapping a new domain. See `references/domain-tracker.md` "New Domain Detection" for details.
+
 ## Stage 3: Analyze
 
 **Goal:** Evaluate all collected results, identify patterns, rank by quality.
@@ -142,6 +160,17 @@ Read `references/ranking-criteria.md` for the ranking methodology.
 6. Identify gaps — what sub-questions got no good answers?
 7. Look for contradictions between sources — flag these prominently
 8. Compile cross-references — which results cite or relate to each other?
+
+### Domain Knowledge Tracking (Analysis Phase)
+
+After completing gap analysis and before moving to Stage 4, review all results collectively for domain-level patterns. Read `references/domain-tracker.md` for criteria.
+
+1. **Ranking insights:** "Papers from {venue} were consistently higher/lower quality than expected" → `ranking_note`
+2. **Code search limitations:** discovered empirically during code-searcher execution → `code_search_limitation`
+3. **Platform equivalences:** results for one platform transferred well to another → `platform_matching`
+4. **Comparison template gaps:** design choices that differed across implementations but weren't in the template → `comparison_template_row`
+
+Log qualifying discoveries to `.research/session-{id}/domain-discoveries.json`.
 
 ## Stage 4: Report
 
@@ -210,6 +239,19 @@ Tell the user:
 - Top 3 Tier 1 recommendations (title + one-line rationale)
 - Most significant gap identified
 
+### Domain Knowledge Promotion
+
+After presenting the report, promote session discoveries to the skill-level pending file:
+
+1. Read `.research/session-{id}/domain-discoveries.json`
+2. If it has items:
+   a. Append to `references/domains/_pending.json` (create if it doesn't exist)
+   b. Deduplicate against existing pending items (exact match on category + summary)
+   c. Assign globally unique IDs via the `next_id` counter
+   d. Group under the domain key
+3. If `domain_file_exists` is false and 5+ items across 3+ categories have accumulated in pending for this domain, suggest: "Enough domain knowledge to create `references/domains/{domain}.md`. Run `/research --domain-apply {domain}`."
+4. Brief: "Promoted {N} domain discoveries to pending. Run `/research --domain-review` when ready."
+
 ## Effort Scaling
 
 The skill adjusts its depth based on effort level. This table governs total behavior:
@@ -237,3 +279,42 @@ All session data persists in `.research/session-{YYYYMMDD-HHMMSS}/`. The user ca
 - Use raw JSON results for further analysis
 
 Never overwrite a previous session. Each `/research` invocation creates a new session directory.
+
+## Domain Knowledge Tracker
+
+The research skill tracks domain knowledge discovered during sessions and provides a pathway to feed it back into domain reference files. See `references/domain-tracker.md` for full criteria and workflows.
+
+### Commands
+
+```
+/research --domain-status                  Show pending discovery counts by domain
+/research --domain-review                  Review all pending discoveries (grouped by domain/category)
+/research --domain-review --session {id}   Review discoveries from a specific session
+/research --domain-apply {domain}          Apply accepted items to a domain file (or create new one)
+```
+
+### `--domain-status`
+
+Quick non-interactive summary of pending items per domain and whether a domain file exists.
+
+### `--domain-review`
+
+1. Load `references/domains/_pending.json`
+2. If `--session {id}` specified, first promote that session's `domain-discoveries.json` items
+3. Group by domain, then by category (in domain file section order)
+4. For each item: show summary, detail, proposed_entry, evidence, priority
+5. User can **accept**, **reject**, or **skip** each item
+6. Update status in `_pending.json`
+
+### `--domain-apply {domain}`
+
+**If domain file exists:**
+1. Filter `_pending.json` to `accepted` items for the domain
+2. Load the domain file, show proposed additions grouped by section
+3. Present the updated file to the user for approval
+4. On approval, write the file and mark items as `applied`
+
+**If no domain file exists (new domain):**
+1. Generate a complete domain file from accepted items using existing domain files as structural template
+2. Sections with no items get a placeholder note
+3. Present to user for approval, then write and mark items as `applied`

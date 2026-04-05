@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Domain Discovery Tracker",
+  "description": "Schema for both session-local domain-discoveries.json and skill-level _pending.json. Session files use the 'session' wrapper; the pending file uses the 'pending' wrapper.",
+  "definitions": {
+    "discovery_item": {
+      "type": "object",
+      "required": ["id", "timestamp", "category", "summary", "source_stage", "source_role", "status"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Unique item ID. Session-local IDs start at 1; pending IDs are globally unique."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "conference",
+            "journal",
+            "trade_publication",
+            "vendor_source",
+            "synonym",
+            "known_repository",
+            "foundational_reference",
+            "ranking_note",
+            "code_search_limitation",
+            "platform_matching",
+            "comparison_template_row"
+          ],
+          "description": "Maps 1:1 to domain file sections."
+        },
+        "summary": {
+          "type": "string",
+          "description": "One-line description of what was discovered."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Full context: what was found, why it matters, how it differs from what's in the domain file."
+        },
+        "proposed_entry": {
+          "type": "string",
+          "description": "Markdown row or paragraph to add to the domain file section, formatted to match existing entries."
+        },
+        "section_target": {
+          "type": "string",
+          "description": "Exact section heading in domain file where this would be added (e.g., '## Conferences')."
+        },
+        "source_stage": {
+          "type": "string",
+          "enum": ["stage2_collect", "stage3_analyze"]
+        },
+        "source_role": {
+          "type": ["string", "null"],
+          "enum": ["ieee_searcher", "web_searcher", "code_searcher", "citation_tracer", "analysis", null]
+        },
+        "evidence": {
+          "type": "string",
+          "description": "The specific result(s) that triggered this discovery (paper titles, repo names, URLs)."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["discovered", "reviewed", "accepted", "rejected", "applied"],
+          "default": "discovered"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "How important this addition is for future research quality."
+        }
+      }
+    },
+    "session_wrapper": {
+      "type": "object",
+      "description": "Session-local domain-discoveries.json format.",
+      "required": ["session_id", "domain", "domain_file_exists", "items"],
+      "properties": {
+        "session_id": { "type": "string" },
+        "domain": {
+          "type": "string",
+          "description": "Domain identifier (matches domain file stem, e.g., 'gnss-signal-processing-soc')."
+        },
+        "domain_file_exists": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/discovery_item" }
+        }
+      }
+    },
+    "pending_wrapper": {
+      "type": "object",
+      "description": "Skill-level _pending.json format. Groups items by domain across sessions.",
+      "required": ["last_updated", "next_id", "domains"],
+      "properties": {
+        "last_updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "next_id": {
+          "type": "integer",
+          "description": "Next globally unique ID to assign."
+        },
+        "domains": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["domain_file_exists", "items"],
+            "properties": {
+              "domain_file_exists": { "type": "boolean" },
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/definitions/discovery_item" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

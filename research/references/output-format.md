@@ -29,6 +29,7 @@ All outputs for a single research run go to:
 ├── repos/                       # Cloned git repos and GitHub API metadata
 │   ├── {repo-name}/             # Shallow clones (--depth 1)
 │   └── gh-{query}.json          # GitHub API raw results
+├── domain-discoveries.json      # Domain knowledge tracker: discoveries from this session
 └──
 ```
 
@@ -51,6 +52,7 @@ Every piece of information gathered during a research session must be saved to t
 | gh API JSON results | `repos/gh-{query-summary}.json` | Raw JSON |
 | Git repos (clone_repo) | `repos/{repo-name}/` | Shallow clone (`--depth 1`) |
 | Per-role structured results | `results/{role}.json` | Per `schemas/subagent-result.json` |
+| Domain discoveries | `domain-discoveries.json` | Per `schemas/domain-discovery.json` (session wrapper) |
 
 **Filename sanitization:** lowercase, hyphens for spaces, no special chars, max 80 chars. Example: `leclere-comparison-framework-taes-2013.pdf`
 
@@ -136,7 +138,17 @@ Specific actionable items:
 - Repos to watch or clone
 - Conferences to check for upcoming presentations
 
-### 9. Raw Results Index
+### 10. Domain Knowledge Discovered (when applicable)
+
+Include when the session's `domain-discoveries.json` has items. Summary table of domain knowledge discovered during the session that could be added to the domain reference file:
+
+| Category | Summary | Source Role | Priority |
+|----------|---------|-------------|----------|
+| {category} | {one-line summary} | {role that found it} | {high/medium/low} |
+
+Note the total count and remind the user: "Run `/research --domain-review` to review and apply these to the domain file."
+
+### 11. Raw Results Index
 Pointer to `.research/session-{id}/results/` for full per-role JSON outputs. Note which roles were executed and any that were skipped (with reason).
 
 ## Writing Style

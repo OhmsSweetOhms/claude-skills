@@ -77,6 +77,13 @@ tags:
 
 ---
 
+## Domain Knowledge Discovered
+
+{DOMAIN_DISCOVERIES_TABLE}
+<!-- Include when domain-discoveries.json has items. Delete section if none. -->
+
+---
+
 ## Raw Results Index
 
 Session directory: `.research/session-{SESSION_ID}/`
