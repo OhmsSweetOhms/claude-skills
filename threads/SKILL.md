@@ -135,6 +135,27 @@ When asked to modify a thread, always:
 
 These are cheap to check and expensive to recover from if skipped.
 
+## Session-skill tracker (optional)
+
+For multi-skill investigations where you'd like to capture gaps and
+improvement ideas about the skills themselves as you use them, run:
+
+```bash
+bash scripts/init_tracker.sh threads <other-skill> [<more>]
+```
+
+This creates `.claude/workspace/skill-tracker-<YYYYMMDD>.md` (in the
+project's workspace dir) with a template, entry schema, and an
+end-of-session pass instruction. Idempotent — existing trackers are
+left alone. Pattern is borrowed from `/socks-tracker`, but works for
+any skills the session is exercising. At session end, the template
+prompts you to group entries per skill and propose concrete edits
+(file + before/after) without applying them automatically.
+
+When to bother: long sessions, fresh-skill shakedown runs, or
+hand-offs where the next session might benefit from the skill being
+sharper. Skip for one-shot tasks where there's nothing to learn.
+
 ## Templates
 
 `assets/templates/` holds the file skeletons this skill copies
