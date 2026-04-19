@@ -169,7 +169,27 @@ Templates:
 - `top-level-threads.json` — empty threads/promotion_log arrays.
 - `thread-README.md` — per-thread landing page.
 - `thread.json` — per-thread manifest skeleton.
+- `thread-handoff.md` — per-thread rolling session-to-session
+  handoff journal. Created at thread birth; updated on user
+  request (not automatically by workflows) to capture what the
+  next session needs to know right now.
 - `plan-01-template.md` — starter plan.
 - `findings-template.md` — snapshot skeleton.
 - `external-comment-template.md` — verbatim + triage scaffold.
 - `temp-README.md` — regeneration-commands scaffold.
+
+## Handoff journal vs README vs findings
+
+Three prose artefacts, three different cadences and purposes:
+
+| File | Cadence | Role |
+|------|---------|------|
+| `README.md` | Changes rarely; structural | Status header, plan-lineage table, findings table, research linkage, next-step pointer. The stable overview. |
+| `findings-<YYYY-MM-DD>.md` | Once per plan hop closure / decision point | Point-in-time snapshot. What was measured, what was refuted, what the current best understanding is. Never overwritten. |
+| `handoff.md` | On user request (typically at session end / start) | Reverse-chronological running journal. "I'm about to X", "I tried Y, it failed because Z", "confirmed-green baseline as of <time>", "next session should start here". The bridge between formal findings and ephemeral conversation. |
+
+`handoff.md` is **never auto-updated** by the other workflows
+(New plan hop, Findings snapshot, Close thread, Import external
+review). Those workflows update the structural README and
+machine-readable `thread.json`. `handoff.md` stays under explicit
+user control — it's a journal, not a derived artefact.

@@ -41,8 +41,10 @@ the layout.
    `promotion_log` arrays.
 5. Update `.gitignore`: append
    ```
-   # Per-thread regeneratable outputs
-   <threads-path>/**/temp/
+   # Per-thread regeneratable outputs (exclude files inside temp/, not the dir
+   # itself, so git can still track temp/README.md per threads-skill convention).
+   <threads-path>/**/temp/*
+   !<threads-path>/**/temp/README.md
    ```
 6. Commit (only if the user asked you to; otherwise leave staged
    and tell them what to commit).
@@ -85,17 +87,26 @@ the layout.
    (plan_hops gets one entry — see below).
 3. Copy `assets/templates/thread-README.md` → `README.md`.
    Substitute placeholders.
-4. Copy `assets/templates/plan-01-template.md` →
+4. Copy `assets/templates/thread-handoff.md` → `handoff.md`.
+   Substitute placeholders. Seed the first "Session log" entry
+   with the user's thread-initialization context: the thread's
+   purpose, any prior-thread handoff they pasted, the confirmed-
+   green baseline (test suite + pass/fail + wall time), and the
+   prescribed reading order for a cold start. If the user
+   didn't provide rich context, keep the entry short — don't
+   fabricate. handoff.md updates only on user request from
+   this point onward.
+5. Copy `assets/templates/plan-01-template.md` →
    `plan-01-<slug>.md`. Substitute placeholders. Use the user's
    starting context to fill the "Hypothesis" and "Steps" sections;
    don't fabricate detail beyond what they gave you.
-5. Copy `assets/templates/temp-README.md` → `temp/README.md`. The
+6. Copy `assets/templates/temp-README.md` → `temp/README.md`. The
    table starts empty (will populate as diagnostics emit outputs).
-6. Update `<threads-path>/threads.json`: append the new thread to
+7. Update `<threads-path>/threads.json`: append the new thread to
    `threads[]`. Don't touch `promotion_log[]`.
-7. Add a single entry to `thread.json.plan_hops[]`:
+8. Add a single entry to `thread.json.plan_hops[]`:
    `{"num": 1, "file": "plan-01-<slug>.md", "status": "active", "outcome": null}`.
-8. Tell the user: thread directory created, plan-01 has the
+9. Tell the user: thread directory created, plan-01 has the
    starter content from your message — review and refine before
    starting the actual investigation.
 

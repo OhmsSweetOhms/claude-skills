@@ -14,6 +14,7 @@ a thread directory.
   <subsystem-1>/                  # e.g. backend/, ingest/, fpga/
     <YYYYMMDD>-<slug>/            # one thread
       README.md                   # thread status + plan lineage
+      handoff.md                  # rolling session-to-session journal
       thread.json                 # manifest (authoritative)
       plan-01-<slug>.md           # ordered plan hops
       plan-02-<slug>.md
@@ -22,7 +23,7 @@ a thread directory.
         diagnose_<name>.py        # tracked; reproducible recipe
       external-comments/          # Codex / claude.ai / colleague
         <YYYYMMDD>-<source>-<subject>.md
-      temp/                       # gitignored; regeneratable outputs
+      temp/                       # gitignored contents; regeneratable
         README.md                 # tracked; regeneration commands
       data/                       # optional; committed uncaptureable
   <subsystem-2>/                  # additional subsystems as needed
@@ -42,7 +43,8 @@ Bootstrap, or infer from the repo's existing top-level directories.
 | `threads/README.md` | Task-indexed how-to-use guide. Plain prose. First thing a new reader opens. |
 | `threads/CONVENTIONS.md` | Schema-indexed reference manual. What's the shape of `thread.json`? What status values are allowed? Reference manual, not a tutorial. |
 | `threads/threads.json` | Machine-readable index: list of threads + promotion log. Never hand-parsed; always walked by `jq` or tooling. |
-| `<thread>/README.md` | Per-thread landing page. Status, current plan, plan lineage table, findings snapshots, research linkage, promoted artefacts, external reviews, next step. Derives content from `thread.json`. |
+| `<thread>/README.md` | Per-thread landing page. Status, current plan, plan lineage table, findings snapshots, research linkage, promoted artefacts, external reviews, next step. Derives content from `thread.json`. Structural — rarely edited outside milestone transitions. |
+| `<thread>/handoff.md` | Rolling session-to-session journal. Reverse-chronological entries capturing "what the next session needs to know right now": current active step, confirmed-green baselines with timestamps, in-flight blockers, prescribed reading order for a cold start. Created at thread birth with initial context; updated on user request. NOT auto-updated by other workflows. Distinct lane from README (structural) and findings (point-in-time snapshot). |
 | `<thread>/thread.json` | Per-thread manifest. Authoritative for what's in the thread. Plan hops, diagnostics, findings, linked research, external reviews, promotions. |
 | `<thread>/plan-NN-*.md` | Ordered plan hops. Each hop is one hypothesis or focused next step. Numbered so `ls` reveals chronology. |
 | `<thread>/findings-*.md` | Snapshot of understanding at a decision point. Never overwritten — new date means new file. |
@@ -209,18 +211,28 @@ for anything ephemeral.
 
 ## .gitignore pattern
 
-Bootstrap adds this line to the repo's `.gitignore`:
+Bootstrap adds these three lines to the repo's `.gitignore`:
 
 ```
-# Per-thread regeneratable outputs
-<threads-path>/**/temp/
+# Per-thread regeneratable outputs (exclude files inside temp/, not the dir
+# itself, so git can still track temp/README.md per threads-skill convention).
+<threads-path>/**/temp/*
+!<threads-path>/**/temp/README.md
 ```
 
 Where `<threads-path>` is wherever `threads/` lives (usually
 repo root; sometimes nested inside a package dir like
 `gps_receiver/threads/`).
 
-The `temp/README.md` file inside each `temp/` is still tracked
-because `git add -f` or the readme-before-dir ordering handles it
-naturally — or because `temp/README.md` doesn't match the trailing
-slash pattern.
+**Why `temp/*` and not `temp/`:** git can't track a file inside
+an ignored directory — the directory-level exclusion wins over a
+file-level negation. Excluding the *contents* of `temp/` instead
+of the directory itself keeps the dir visible to git, and the
+`!...temp/README.md` negation then brings the README back in.
+This is the canonical pattern for "gitignored dir with one
+tracked file inside."
+
+Other thread-level files (`handoff.md`, `README.md`, `plan-*.md`,
+`findings-*.md`, `thread.json`, `diagnostics/*`,
+`external-comments/*`, `data/*`) are NOT gitignored; they track
+normally.
