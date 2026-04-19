@@ -5,8 +5,8 @@ description: "GPS L1 C/A receiver design, debug, and test for the gps_design pro
 
 # GPS Design -- L1 C/A Receiver for the gps_design Project
 
-Project-specific knowledge for the GPS L1 C/A receiver under
-`/media/doogie/Work1/Claude/work/gps_design/`. The receiver is a
+Project-specific knowledge for the GPS L1 C/A receiver under the
+`gps_design/` workspace (path varies by host). The receiver is a
 three-tier pipeline:
 
 1. **Python golden model** (`gps_receiver/`) -- block-level behavioral

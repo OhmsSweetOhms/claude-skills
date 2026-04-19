@@ -1,0 +1,11 @@
+# Fingerprint scan allowlist for the gps-design skill.
+# One regex per line; lines matching any pattern are skipped.
+
+# GPS PL/PS block-ID enumerations like "PL.B1-B3 for PL blocks" trigger
+# the street-address regex (\d+ <word> PL). Skip block-ID prose.
+PL\.B\d+(-B\d+)? for PL blocks
+PS\.B\d+(-B\d+)? for PS blocks
+
+# IS-GPS-200 spec section numbers (4-part dotted decimals) trigger the
+# IP-address regex. These are document-section refs, not network addresses.
+IS-GPS-200 section \d+\.\d+(\.\d+)?(\.\w+)?
