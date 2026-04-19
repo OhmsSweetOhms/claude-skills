@@ -1,0 +1,226 @@
+# threads/ — layout and naming conventions
+
+This reference covers the physical layout, file roles, naming
+conventions, and status vocabulary. Read this before touching
+a thread directory.
+
+## Directory tree
+
+```
+<repo-root>/threads/
+  README.md                       # human-readable how-to-use guide
+  CONVENTIONS.md                  # schemas, status vocab, templates
+  threads.json                    # machine-readable index + promotion log
+  <subsystem-1>/                  # e.g. backend/, ingest/, fpga/
+    <YYYYMMDD>-<slug>/            # one thread
+      README.md                   # thread status + plan lineage
+      thread.json                 # manifest (authoritative)
+      plan-01-<slug>.md           # ordered plan hops
+      plan-02-<slug>.md
+      findings-<YYYY-MM-DD>.md    # written at decision points
+      diagnostics/
+        diagnose_<name>.py        # tracked; reproducible recipe
+      external-comments/          # Codex / claude.ai / colleague
+        <YYYYMMDD>-<source>-<subject>.md
+      temp/                       # gitignored; regeneratable outputs
+        README.md                 # tracked; regeneration commands
+      data/                       # optional; committed uncaptureable
+  <subsystem-2>/                  # additional subsystems as needed
+```
+
+**Subsystem directories** are project-specific. For a web app they
+might be `backend/`, `frontend/`, `infra/`. For an FPGA project:
+`rtl/`, `firmware/`, `scenario/`. For a library: one subsystem is
+usually enough (or omit the layer entirely if only one). The
+skill doesn't hard-code subsystem names — ask the user during
+Bootstrap, or infer from the repo's existing top-level directories.
+
+## File roles
+
+| File | Role |
+|------|------|
+| `threads/README.md` | Task-indexed how-to-use guide. Plain prose. First thing a new reader opens. |
+| `threads/CONVENTIONS.md` | Schema-indexed reference manual. What's the shape of `thread.json`? What status values are allowed? Reference manual, not a tutorial. |
+| `threads/threads.json` | Machine-readable index: list of threads + promotion log. Never hand-parsed; always walked by `jq` or tooling. |
+| `<thread>/README.md` | Per-thread landing page. Status, current plan, plan lineage table, findings snapshots, research linkage, promoted artefacts, external reviews, next step. Derives content from `thread.json`. |
+| `<thread>/thread.json` | Per-thread manifest. Authoritative for what's in the thread. Plan hops, diagnostics, findings, linked research, external reviews, promotions. |
+| `<thread>/plan-NN-*.md` | Ordered plan hops. Each hop is one hypothesis or focused next step. Numbered so `ls` reveals chronology. |
+| `<thread>/findings-*.md` | Snapshot of understanding at a decision point. Never overwritten — new date means new file. |
+| `<thread>/diagnostics/diagnose_*.py` | Tracked scripts that produced measurements. The reproducible recipe for the data. |
+| `<thread>/external-comments/*.md` | Verbatim attribution of external feedback + triage tables. Raw content section never edited after initial capture. |
+| `<thread>/temp/` | Gitignored. Regeneratable outputs from running diagnostics: CSVs, NPZ, plots, logs. |
+| `<thread>/temp/README.md` | Tracked even though siblings are gitignored. Documents the regeneration command for each expected output. This is how the thread preserves "what was measured" without committing the bytes. |
+| `<thread>/data/` | Optional. For committed captures that CANNOT be regenerated (hardware traces, one-off environmental recordings). Omit if everything is regeneratable. |
+
+## Type A vs Type B — the load-bearing distinction
+
+When adopting `threads/` in a repo that already has plans scattered
+around, only **Type B** plans migrate. Misclassifying churns the
+wrong files.
+
+### Type A — Architectural / block-level design plans (STAY IN PLACE)
+
+Long-lived, tied to a module or system invariant. Own APIs and
+tests. Referenced by many other documents. Examples:
+
+- A block-level design plan like `rtl/blocks/fft-PLAN.md`.
+- A system-integration plan like `backend/api-integration-PLAN.md`.
+- A validation/migration plan like
+  `backend/schema-migration-PLAN.md`.
+
+These receive a one-line pointer header at the top:
+
+```markdown
+> For active debug threads referencing this plan, see
+> `<repo-root>/threads/`.
+```
+
+And nothing else. They do NOT move into `threads/`.
+
+### Type B — Debug threads (MIGRATE)
+
+Hypothesis-driven, time-bounded investigations. Often start as
+`*-debug-PLAN.md` or `diagnose-*.md`. Accrete additional plan
+files as hypotheses are tried, refuted, or narrowed. Spawn
+diagnostic scripts. Produce findings documents.
+
+These migrate into `threads/<subsystem>/<slug>/`.
+
+### How to tell
+
+Ask: **"Is this plan going to be replaced by a successor plan when
+its hypothesis resolves, or will it persist as the design
+contract?"**
+
+- "Replaced" → Type B, migrate.
+- "Persist as the contract" → Type A, stay in place.
+
+A useful secondary test: if the plan references an empirical
+measurement number (204 km first-fix, 450 ms p99, 3.7× slowdown)
+as the motivating evidence, it's almost certainly Type B.
+
+## Naming
+
+### Thread slug
+
+`<YYYYMMDD>-<short-slug>` where:
+
+- `YYYYMMDD` is the date of the **earliest** plan hop (not today's
+  date if the investigation started earlier).
+- `<short-slug>` is a human-readable description of the
+  investigation, lowercase with hyphens. Keep it under 40
+  characters. Examples: `cache-coherency-bug`, `auth-flakiness`,
+  `nav-anchor-precision`.
+
+### Plan numbering
+
+`plan-NN-<slug>.md` where `NN` starts at `01` and increments per
+hop. The slug describes **this hop's focus**, not the thread
+overall. So plan-01 might be `plan-01-cursor-timing.md`, plan-02
+might be `plan-02-nav-boundary-timestamp.md`, even though they
+belong to the same nav-anchor thread.
+
+Numbering makes the order obvious at `ls`; slugs say what each hop
+was about.
+
+### Findings snapshots
+
+`findings-<YYYY-MM-DD>.md` — one per snapshot, not per hop.
+Written when a plan hop closes or a thread reaches a decision
+point. Never overwritten; a new snapshot is a new file.
+
+### External-comment files
+
+`<YYYYMMDD>-<source>-<subject>.md`.
+
+- **Source** ∈ {`codex`, `claude-ai`, `colleague-<name>`, `other`}.
+- **Subject** is a short kebab-case reference to what the review
+  addressed (usually the plan-hop filename without `.md`, or a
+  brief topic).
+
+Example: `20260420-codex-plan-05-bitsync-review.md`.
+
+## Status vocabulary
+
+ONE enum, applied to both threads (at `thread.json.status` and
+`threads.json.threads[].status`) and plan hops (at
+`thread.json.plan_hops[].status`):
+
+| Status | Meaning |
+|--------|---------|
+| `active` | In progress. |
+| `blocked` | Awaiting external input (research, decision, hardware). |
+| `superseded` | Replaced by a successor. Thread: successor thread. Plan hop: next plan hop in the same thread. |
+| `closed` | Done. |
+
+The `outcome` field (prose) carries the substance — a resolution
+("Option C landed; first-fix 204 km → 80 m"), an inconclusive
+completion ("phases 1–4 ran end-to-end; residual is architectural"),
+or a refutation ("hypothesis refuted by shadow oracle").
+
+**Don't invent new status values.** If you need to distinguish
+"resolved with a clear answer" from "ran to completion but
+inconclusive," that distinction lives in `outcome` prose, not in
+the enum. This keeps the machine-readable filter simple.
+
+### External-review dispositions
+
+Used only in external-comment frontmatter and in
+`thread.json.external_reviews[].disposition`. Separate from the
+thread/plan-hop status enum.
+
+| Disposition | Meaning |
+|-------------|---------|
+| `pending` | Captured verbatim; triage not started or incomplete. |
+| `merged` | Every accepted triage-table point has a commit hash. `merged_into[]` must list those hashes. |
+| `rejected` | Review contained no accepted points; rationale captured in "Merge notes". |
+| `deferred` | Accepted in principle but held for later; "Merge notes" records the conditions under which it becomes active. |
+
+### Review kind
+
+| Kind | Meaning |
+|------|---------|
+| `comment` | Prose feedback, no rewrites. |
+| `edit` | Reviewer rewrote parts of the plan or code. |
+| `mixed` | Both comments and edits. |
+
+## Scripts and data
+
+- `diagnostics/` — any `diagnose_*.py` or one-off investigation
+  script. Tracked in git; the reproducible recipe for the data.
+- `temp/` — **required, gitignored**. Holds any regeneratable
+  output from running a diagnostic: CSVs, NPZ, pickles, plots,
+  captured logs. A `temp/README.md` (tracked) documents how to
+  regenerate the contents. The presence of `temp/README.md` is how
+  the thread preserves "what measurements were taken" without
+  committing the bytes.
+- `data/` — optional. For committed captures that CANNOT be
+  regenerated: hardware traces, one-off environmental recordings.
+  If everything is regeneratable, omit `data/` entirely.
+
+**Rule:** if running a script from `diagnostics/` recreates the
+file, it belongs in `temp/`. Only commit bytes that can't be
+reproduced.
+
+Scratch text (thinking-out-loud notes, half-finished ideas) goes
+in `temp/` alongside generated outputs. No separate `notes/`
+folder — `temp/` is already gitignored and that's the right place
+for anything ephemeral.
+
+## .gitignore pattern
+
+Bootstrap adds this line to the repo's `.gitignore`:
+
+```
+# Per-thread regeneratable outputs
+<threads-path>/**/temp/
+```
+
+Where `<threads-path>` is wherever `threads/` lives (usually
+repo root; sometimes nested inside a package dir like
+`gps_receiver/threads/`).
+
+The `temp/README.md` file inside each `temp/` is still tracked
+because `git add -f` or the readme-before-dir ordering handles it
+naturally — or because `temp/README.md` doesn't match the trailing
+slash pattern.

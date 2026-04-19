@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "{{ID}}",
+  "title": "{{TITLE}}",
+  "status": "active",
+  "started": "{{TODAY}}",
+  "updated": "{{TODAY}}",
+  "parent_plans": [],
+  "plan_hops": [
+    {
+      "num": 1,
+      "file": "{{FIRST_PLAN_FILENAME}}",
+      "status": "active",
+      "outcome": null
+    }
+  ],
+  "findings": [],
+  "diagnostics": [],
+  "temp": [],
+  "data": [],
+  "linked_research": [],
+  "promotions": [],
+  "external_reviews": []
+}
