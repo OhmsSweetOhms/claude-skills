@@ -10,10 +10,12 @@ Provides:
   - Common path helpers
 """
 
+import atexit
 import json
 import os
-import selectors
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import time
@@ -237,73 +239,135 @@ def resolve_sources(project_dir, source_list):
 
 
 # ---------------------------------------------------------------------------
-# XSDBSession -- Interactive XSDB for ARM debug over JTAG
+# XSDBSession -- Interactive XSDB for ARM debug over JTAG (xsdbserver socket)
 # ---------------------------------------------------------------------------
 
-XSDB_MARKER = "===XSDB_DONE==="
+XSDB_HOST = "127.0.0.1"
+XSDB_PORT = 4567
+XSDB_LINE_END = "\r\n"
+
+
+class XsdbServer:
+    """Manages an xsdbserver subprocess.
+
+    Spawns `xsdb -interactive -eval "xsdbserver start -port N"`, captures
+    stdout/stderr to build/hil/xsdb.log, and reaps the process (and any
+    children) on stop().
+    """
+
+    def __init__(self, xsdb_path, port=XSDB_PORT, log_path=None,
+                 connect_timeout=5.0):
+        self.port = port
+        self.log_path = log_path
+        self._log_fh = None
+        if log_path:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            self._log_fh = open(log_path, "w")
+        self.proc = subprocess.Popen(
+            [xsdb_path, "-eval", f"xsdbserver start -port {port}"],
+            stdin=subprocess.DEVNULL,
+            stdout=self._log_fh if self._log_fh else subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self._wait_ready(connect_timeout)
+
+    def _wait_ready(self, timeout):
+        t0 = time.time()
+        last_err = None
+        while time.time() - t0 < timeout:
+            if self.proc.poll() is not None:
+                raise RuntimeError(
+                    f"xsdbserver exited during startup "
+                    f"(rc={self.proc.returncode}); see {self.log_path}")
+            try:
+                with socket.create_connection(
+                        (XSDB_HOST, self.port), timeout=0.5):
+                    return
+            except (ConnectionRefusedError, socket.timeout, OSError) as e:
+                last_err = e
+                time.sleep(0.1)
+        raise RuntimeError(
+            f"xsdbserver did not accept connections on "
+            f"{XSDB_HOST}:{self.port} within {timeout}s (last error: "
+            f"{last_err!r}); see {self.log_path}")
+
+    def stop(self, wait=True, timeout=5.0):
+        if self.proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    self.proc.terminate()
+                except Exception:
+                    pass
+            if wait:
+                try:
+                    self.proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        self.proc.kill()
+                    self.proc.wait()
+        if self._log_fh:
+            try:
+                self._log_fh.close()
+            except Exception:
+                pass
+            self._log_fh = None
 
 
 class XSDBSession:
     """Interactive XSDB session for ARM debug over JTAG.
 
-    Mirrors the VivadoILA pattern: subprocess held open, structured
-    communication over pipes with marker-based framing.
+    Transport: TCP client to a local xsdbserver spawned on port 4567.
+    Framing: one "okay <blob>\\r\\n" or "error <msg>\\r\\n" frame per
+    command. Multi-line Tcl results are wrapped in a single frame --
+    embedded \\n characters inside <blob> are normal, only \\r\\n ends it.
     """
 
-    def __init__(self, xsdb_path):
-        self.proc = subprocess.Popen(
-            [xsdb_path],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        self._sel = selectors.DefaultSelector()
-        self._sel.register(self.proc.stdout, selectors.EVENT_READ)
-        # XSDB suppresses the prompt when stdin is piped, so send a
-        # known command with our marker to synchronize.
-        self.proc.stdin.write(f"puts {XSDB_MARKER}\n")
-        self.proc.stdin.flush()
-        self._read_until(XSDB_MARKER)  # consume startup + marker
+    def __init__(self, xsdb_path, log_path=None):
+        self._server = XsdbServer(xsdb_path, port=XSDB_PORT,
+                                  log_path=log_path)
+        try:
+            self._sock = socket.create_connection(
+                (XSDB_HOST, XSDB_PORT), timeout=10)
+        except OSError:
+            self._server.stop()
+            raise
+        self._sock.settimeout(10)
+        self._buf = b""
+        self._closed = False
+        atexit.register(self.disconnect)
 
-    def _read_until(self, sentinel, timeout=10):
-        """Read stdout lines until sentinel appears. Returns accumulated text.
-
-        Uses selectors to enforce the timeout — select() returns when
-        data is available, then readline() gets one line without blocking
-        indefinitely.
-        """
-        buf = []
-        t0 = time.time()
+    def _recv_line(self):
+        term = XSDB_LINE_END.encode()
         while True:
-            remaining = timeout - (time.time() - t0)
-            if remaining <= 0:
-                raise TimeoutError(
-                    f"XSDB did not produce '{sentinel}' within {timeout}s")
-            events = self._sel.select(timeout=remaining)
-            if not events:
-                raise TimeoutError(
-                    f"XSDB did not produce '{sentinel}' within {timeout}s")
-            line = self.proc.stdout.readline()
-            if not line:
-                break
-            line = line.rstrip()
-            if sentinel in line:
-                return "\n".join(buf)
-            buf.append(line)
-        raise TimeoutError(
-            f"XSDB process ended without producing '{sentinel}'")
+            idx = self._buf.find(term)
+            if idx >= 0:
+                line = self._buf[:idx].decode("utf-8", errors="replace")
+                self._buf = self._buf[idx + len(term):]
+                return line
+            chunk = self._sock.recv(4096)
+            if not chunk:
+                raise RuntimeError(
+                    "xsdbserver closed the connection unexpectedly")
+            self._buf += chunk
 
     def _cmd(self, tcl_cmd, timeout=10):
-        """Send a Tcl command with marker framing, return output.
-
-        Appends `puts XSDB_MARKER` after every command and waits for the
-        marker instead of the xsdb% prompt.
-        """
-        self.proc.stdin.write(f"{tcl_cmd}\nputs {XSDB_MARKER}\n")
-        self.proc.stdin.flush()
-        return self._read_until(XSDB_MARKER, timeout=timeout)
+        old_timeout = self._sock.gettimeout()
+        self._sock.settimeout(timeout)
+        try:
+            self._sock.sendall((tcl_cmd + XSDB_LINE_END).encode())
+            line = self._recv_line()
+        finally:
+            self._sock.settimeout(old_timeout)
+        if line.startswith("okay"):
+            return line[5:] if len(line) > 5 else ""
+        if line.startswith("error"):
+            raise RuntimeError(f"xsdb: {line[6:] if len(line) > 6 else ''}")
+        raise RuntimeError(f"xsdb: unexpected framing: {line!r}")
 
     # --- Boot sequence ---
 
@@ -351,10 +415,20 @@ class XSDBSession:
         return self._cmd("nxt")
 
     def resume(self):
-        return self._cmd("con")
+        try:
+            return self._cmd("con")
+        except RuntimeError as e:
+            if "already running" in str(e).lower():
+                return ""
+            raise
 
     def stop(self):
-        return self._cmd("stop")
+        try:
+            return self._cmd("stop")
+        except RuntimeError as e:
+            if "already stopped" in str(e).lower():
+                return ""
+            raise
 
     def state(self):
         """Returns 'Running', 'Stopped', 'Lockup', etc."""
@@ -380,10 +454,13 @@ class XSDBSession:
         DFSR encodes the fault type -- external abort (0x01008) means
         AXI SLVERR/DECERR. DFAR gives the exact faulting address.
         """
-        dfsr = self._cmd("rrd dfsr").strip()
-        dfar = self._cmd("rrd dfar").strip()
-        ifsr = self._cmd("rrd ifsr").strip()
-        return {"dfsr": dfsr, "dfar": dfar, "ifsr": ifsr}
+        def _rrd(reg):
+            try:
+                return self._cmd(f"rrd {reg}").strip()
+            except RuntimeError as e:
+                return str(e)
+        return {"dfsr": _rrd("dfsr"), "dfar": _rrd("dfar"),
+                "ifsr": _rrd("ifsr")}
 
     def _get_vector_base(self):
         """Determine the active exception vector table base address.
@@ -396,7 +473,7 @@ class XSDBSession:
             vbar = self._cmd("rrd vbar_el1").strip()
             vbar_val = int(vbar.split()[-1], 16)
             return vbar_val, 0x800
-        except (TimeoutError, ValueError, IndexError):
+        except (TimeoutError, ValueError, IndexError, RuntimeError):
             pass
 
         # ARMv7: check SCTLR.V bit (bit 13)
@@ -406,7 +483,7 @@ class XSDBSession:
             if sctlr_val & (1 << 13):
                 return 0xFFFF0000, 0x20  # high vectors
             return 0x00000000, 0x20      # low vectors (Zynq-7000 default)
-        except (TimeoutError, ValueError, IndexError):
+        except (TimeoutError, ValueError, IndexError, RuntimeError):
             return None, None
 
     def check_cpu_health(self):
@@ -441,7 +518,7 @@ class XSDBSession:
                 if "error" not in dfsr_raw.lower() and "no register" not in dfsr_raw.lower():
                     dfsr_val = int(dfsr_raw.split()[-1], 16)
                     break
-            except (TimeoutError, ValueError, IndexError):
+            except (TimeoutError, ValueError, IndexError, RuntimeError):
                 continue
 
         vbase, vsize = self._get_vector_base()
@@ -469,19 +546,22 @@ class XSDBSession:
     # --- Lifecycle ---
 
     def close(self):
-        """Release the selectors resources."""
-        self._sel.close()
+        """Close the socket. Idempotent."""
+        try:
+            self._sock.close()
+        except Exception:
+            pass
 
     def disconnect(self):
+        if self._closed:
+            return
+        self._closed = True
         try:
-            self._cmd("disconnect")
-            self.proc.stdin.close()
-            self.proc.wait(timeout=10)
+            self._cmd("disconnect", timeout=5)
         except Exception:
-            self.proc.kill()
-            self.proc.wait()
-        finally:
-            self.close()
+            pass
+        self.close()
+        self._server.stop()
 
     def __enter__(self):
         return self

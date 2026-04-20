@@ -330,7 +330,8 @@ def main() -> int:
         # Download ELF but do NOT resume — CPU stays stopped so breakpoints
         # can be set before any test phase runs.
         print(f"\n  Step 2: Booting CPU via XSDB (debug session)")
-        xsdb_session = XSDBSession(xsdb_path)
+        xsdb_log = os.path.join(build_dir, "xsdb.log")
+        xsdb_session = XSDBSession(xsdb_path, log_path=xsdb_log)
         xsdb_session.connect()
         xsdb_session.target_arm()
         xsdb_session.stop()

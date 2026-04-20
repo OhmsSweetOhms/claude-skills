@@ -66,7 +66,7 @@ Determine scope from `socks.json` (`get_scope()`) or `--scope` CLI arg.
 
 ### Tools
 - **Vivado** (2023.2 recommended) -- synthesis, implementation, ILA
-- **XSDB** (ships with Vivado) -- JTAG programming (flash.tcl) and interactive ARM debug via `XSDBSession` (hil_lib.py)
+- **XSDB** (ships with Vivado) -- JTAG programming (flash.tcl) and interactive ARM debug via `XSDBSession` (hil_lib.py). Transport: `xsdbserver` TCP socket on `127.0.0.1:4567`; spawner log at `build/hil/xsdb.log`.
 - **XSCT** (ships with Vitis SDK) -- firmware workspace creation (build_app.tcl)
 - **pyserial** (`pip install pyserial`) -- UART capture (stages 17-18)
 
