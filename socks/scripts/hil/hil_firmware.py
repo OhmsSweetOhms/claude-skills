@@ -16,6 +16,7 @@ Exit codes:
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
 
@@ -31,26 +32,37 @@ from socks_lib import (
 )
 
 
-def build_import_sources_tcl(project_dir, hil_config):
-    """Generate TCL importsources commands from hil.json firmware config."""
-    lines = []
+def stage_firmware_sources(project_dir, build_dir, hil_config):
+    """Stage only the firmware files listed in hil.json into a clean dir.
+
+    `importsources -path <dir>` imports every file in the directory, so we
+    cannot point it at `sw/` -- unrelated files (e.g. a standalone `main.c`
+    in a system project) would collide with the HIL test's `main`. Copy the
+    listed files into `build/hil/fw_src/` and import that dir instead.
+    """
+    stage = os.path.join(build_dir, "fw_src")
+    shutil.rmtree(stage, ignore_errors=True)
+    os.makedirs(stage, exist_ok=True)
+
     fw = hil_config.get("firmware", {})
+    rel_paths = []
+    if fw.get("test_src"):
+        rel_paths.append(fw["test_src"])
+    rel_paths.extend(fw.get("driver_sources", []))
 
-    # Test source
-    test_src = fw.get("test_src")
-    if test_src:
-        src_path = os.path.abspath(os.path.join(project_dir, os.path.dirname(test_src)))
-        lines.append(f'importsources -name hil_app -path "{src_path}"')
+    for rel in rel_paths:
+        src = os.path.abspath(os.path.join(project_dir, rel))
+        if not os.path.isfile(src):
+            raise FileNotFoundError(
+                f"hil.json references missing firmware file: {rel}")
+        shutil.copy2(src, os.path.join(stage, os.path.basename(rel)))
 
-    # Driver sources (deduplicate directories)
-    driver_dirs = set()
-    for drv in fw.get("driver_sources", []):
-        drv_dir = os.path.abspath(os.path.join(project_dir, os.path.dirname(drv)))
-        if drv_dir not in driver_dirs:
-            driver_dirs.add(drv_dir)
-            lines.append(f'importsources -name hil_app -path "{drv_dir}"')
+    return stage
 
-    return "\n".join(lines)
+
+def build_import_sources_tcl(stage_dir):
+    """Generate a single importsources TCL line for the staged dir."""
+    return f'importsources -name hil_app -path "{stage_dir}"'
 
 
 SUPPRESSED_PATTERNS = [
@@ -126,8 +138,13 @@ def main() -> int:
         return 1
     print(f"  XSCT:     {xsct}")
 
-    # Generate build_app.tcl from template
-    import_tcl = build_import_sources_tcl(project_dir, hil_config)
+    # Stage only the files listed in hil.json, then generate build_app.tcl
+    try:
+        stage_dir = stage_firmware_sources(project_dir, build_dir, hil_config)
+    except FileNotFoundError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
+    import_tcl = build_import_sources_tcl(stage_dir)
     build_tcl = expand_template(
         os.path.join(tcl_dir(), "build_app.template.tcl"),
         os.path.join(build_dir, "build_app.tcl"),
