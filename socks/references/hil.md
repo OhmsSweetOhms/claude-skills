@@ -66,7 +66,7 @@ Determine scope from `socks.json` (`get_scope()`) or `--scope` CLI arg.
 
 ### Tools
 - **Vivado** (2023.2 recommended) -- synthesis, implementation, ILA
-- **XSDB** (ships with Vivado) -- JTAG programming (flash.tcl, boot_cpu.tcl)
+- **XSDB** (ships with Vivado) -- JTAG programming (flash.tcl) and interactive ARM debug via `XSDBSession` (hil_lib.py)
 - **XSCT** (ships with Vitis SDK) -- firmware workspace creation (build_app.tcl)
 - **pyserial** (`pip install pyserial`) -- UART capture (stages 17-18)
 
@@ -581,7 +581,7 @@ must equal the ILA capture count or the last capture will timeout.
 **What it does:**
 1. Pre-flight: debug firmware check, capture count validation
 2. Launch Vivado in interactive mode (programs FPGA, discovers ILA)
-3. Boot CPU via XSDB (`boot_cpu.tcl` -- no FPGA reprogram)
+3. Boot CPU via `XSDBSession` (connect, target_arm, init_ps7, download, resume -- no FPGA reprogram)
 4. Open serial port
 5. For each capture in `ila_trigger_plan.json`:
    - Stop CPU, set breakpoint at `break_before` function
