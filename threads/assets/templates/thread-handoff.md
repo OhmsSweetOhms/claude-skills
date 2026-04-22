@@ -4,10 +4,12 @@
 **Last updated:** {{LAST_UPDATED}}
 
 This is a rolling session-to-session journal. Entries are
-reverse-chronological (newest at top). Updated on user request —
-NOT automatically by thread workflows. For structural overview
-see [`README.md`](README.md); for point-in-time snapshots at hop
-closures see `findings-*.md`.
+reverse-chronological (newest at top). Updated **whenever the
+plan changes** (New-plan-hop and Close-thread workflows re-check
+the forward-looking sections below and append a new session-log
+entry) AND on user request for in-session notes. For the stable
+structural overview see [`README.md`](README.md); for point-in-time
+snapshots at hop closures see `findings-*.md`.
 
 ## Current state
 

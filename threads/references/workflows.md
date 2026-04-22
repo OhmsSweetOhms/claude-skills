@@ -94,8 +94,11 @@ the layout.
    green baseline (test suite + pass/fail + wall time), and the
    prescribed reading order for a cold start. If the user
    didn't provide rich context, keep the entry short — don't
-   fabricate. handoff.md updates only on user request from
-   this point onward.
+   fabricate. From this point onward, `handoff.md` updates
+   automatically via the **New-plan-hop** and **Close-thread**
+   workflows (they re-check the forward-looking sections and
+   append a new session-log entry), and on user request for
+   in-session notes.
 5. Copy `assets/templates/plan-01-template.md` →
    `plan-01-<slug>.md`. Substitute placeholders. Use the user's
    starting context to fill the "Hypothesis" and "Steps" sections;
@@ -153,12 +156,45 @@ deserves its own plan rather than appending to the current one.
    to reference the previous hop.
 8. Update the thread's `README.md` "Plan lineage" table — add the
    new row, update the previous row's status/outcome.
+9. **Update `handoff.md`** — the forward-looking sections reference
+   the old plan by name and go stale immediately:
+   - Bump the `**Last updated:**` line to today.
+   - Rewrite the `**Active plan:**` bullet in "Current state" to
+     point at the new hop's filename + current hypothesis + anchor
+     data (if any).
+   - Re-check `**Blockers / in flight:**` and `**Confirmed-green
+     baseline:**`. Drop anything that was specific to the closed
+     hop; add anything new the new hop introduces.
+   - Replace `**What the next session should do first:**` with the
+     new hop's first steps (not the old hop's). If the new plan
+     has a "Steps" section, derive the next-session items from it.
+     Prefer cheapest-first ordering so a cold-start reader has a
+     low-friction entry.
+   - Update "Cross-references to carry forward" — add the new
+     plan's anchor data files, new diagnostics dirs, any new
+     reference docs the hop introduced.
+   - Update "Reading order for a cold start" — point at the new
+     active plan file; demote the closed hop to a "retains recipe
+     value only" slot if still useful, or drop if not.
+   - Append a **new Session-log entry at the top** describing the
+     transition in prose: why the previous hop closed/superseded,
+     what the new hop tests, what the key decision points are.
+     Include commit hashes when they're known. Preserve all older
+     session-log entries as history — they're the thread's memory.
+
+   These edits go in the **same commit** that adds the new hop. A
+   handoff that still names the closed plan as active is a
+   cold-start trap.
 
 **Verification:**
 - `thread.json` parses.
 - `thread.json.plan_hops[]` is in `num` order with one and only
   one `active`.
 - `thread.json.current_plan` matches the new active hop's filename.
+- `handoff.md`'s "Current state" bullet names the new plan file,
+  not the closed one.
+- `handoff.md`'s "What the next session should do first" reflects
+  the new hop's steps, not the closed hop's.
 
 ---
 
@@ -383,11 +419,32 @@ thread, or blocked indefinitely).
 4. Update `<threads-path>/threads.json`: find this thread's entry,
    update `status` and `updated`.
 5. Update the thread's `README.md` status header.
-6. Don't delete the thread directory. It's the permanent record.
+6. **Update `handoff.md`** — it was pointing at an active plan that
+   no longer exists:
+   - Bump the `**Last updated:**` line to today.
+   - Rewrite the `**Active plan:**` bullet to reflect closure
+     (e.g. `"(none — thread closed YYYY-MM-DD)"` with a pointer
+     to the final findings snapshot and the thread's outcome).
+   - Shorten or remove `**What the next session should do first:**`
+     — for a closed thread this is either empty, or points at
+     downstream threads that consumed the outcome. For a
+     `superseded` thread, name the successor thread explicitly.
+     For `blocked`, name the blocker + what unblocks it.
+   - Simplify "Reading order for a cold start" — the reader is
+     consulting the thread as history, not to continue work.
+     Point them at the final findings snapshot and the outcome
+     summary rather than at the (now-closed) plan.
+   - Append a **new Session-log entry at the top**: closure
+     rationale, what the thread established, what was ruled out,
+     where follow-up work (if any) lives. Include the closure
+     commit hash. Preserve older session-log entries as history.
+7. Don't delete the thread directory. It's the permanent record.
 
 **Verification:**
 - `thread.json.status` and `threads.json.threads[].status` agree.
 - The active plan hop's `outcome` is filled.
+- `handoff.md` no longer names a plan as "active" — it either
+  reflects closure, names a successor, or describes the blocker.
 
 ---
 

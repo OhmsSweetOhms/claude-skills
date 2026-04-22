@@ -117,6 +117,16 @@ research** workflow handles writing both.
   README documents regeneration commands; the bytes don't get
   committed. If an output can't be regenerated, it goes in
   `data/` instead.
+- **Handoff tracks plan state.** Whenever a plan hop is added,
+  closed, superseded, or materially edited in place, the
+  `handoff.md` forward-looking sections (Current state, Blockers,
+  "What the next session should do first", Reading order,
+  Cross-references) must be updated in the same commit — and a
+  new Session-log entry appended at the top describing the
+  transition in prose. The New-plan-hop and Close-thread workflows
+  include this step; in-place plan edits are the user's
+  responsibility to mirror into the handoff. A handoff that
+  references a closed or superseded plan is a cold-start trap.
 
 ## Sanity checks before acting
 
@@ -170,9 +180,11 @@ Templates:
 - `thread-README.md` — per-thread landing page.
 - `thread.json` — per-thread manifest skeleton.
 - `thread-handoff.md` — per-thread rolling session-to-session
-  handoff journal. Created at thread birth; updated on user
-  request (not automatically by workflows) to capture what the
-  next session needs to know right now.
+  handoff journal. Created at thread birth; updated by the
+  New-plan-hop and Close-thread workflows whenever the plan
+  changes (forward-looking sections get stale otherwise), and on
+  user request for in-session notes. See "Handoff journal vs
+  README vs findings" below for the cadence contract.
 - `plan-01-template.md` — starter plan.
 - `findings-template.md` — snapshot skeleton.
 - `external-comment-template.md` — verbatim + triage scaffold.
@@ -186,10 +198,20 @@ Three prose artefacts, three different cadences and purposes:
 |------|---------|------|
 | `README.md` | Changes rarely; structural | Status header, plan-lineage table, findings table, research linkage, next-step pointer. The stable overview. |
 | `findings-<YYYY-MM-DD>.md` | Once per plan hop closure / decision point | Point-in-time snapshot. What was measured, what was refuted, what the current best understanding is. Never overwritten. |
-| `handoff.md` | On user request (typically at session end / start) | Reverse-chronological running journal. "I'm about to X", "I tried Y, it failed because Z", "confirmed-green baseline as of <time>", "next session should start here". The bridge between formal findings and ephemeral conversation. |
+| `handoff.md` | **Whenever a plan changes** (new hop, close, supersede, material in-place plan edit) + on user request for in-session notes | Reverse-chronological running journal. "I'm about to X", "I tried Y, it failed because Z", "confirmed-green baseline as of <time>", "next session should start here". The bridge between formal findings and ephemeral conversation. |
 
-`handoff.md` is **never auto-updated** by the other workflows
-(New plan hop, Findings snapshot, Close thread, Import external
-review). Those workflows update the structural README and
-machine-readable `thread.json`. `handoff.md` stays under explicit
-user control — it's a journal, not a derived artefact.
+`handoff.md` is **updated by the New-plan-hop and Close-thread
+workflows**, alongside `README.md` and `thread.json`. It is also
+updated on user request for in-session notes. The reason: when the
+plan changes, the handoff's forward-looking sections — Current
+state, Blockers, "What the next session should do first", Reading
+order, Cross-references — go stale immediately, and a cold-start
+reader lands on a misleading snapshot. The fix is to re-check
+those sections against the new plan state in the **same commit**
+that changes the plan. The Session-log entry at the top of
+`handoff.md` gets a new block in prose describing the transition.
+
+`handoff.md` is never **derived mechanically** from other files —
+that's what `thread.json` is for. Always edit with attention: the
+Session-log narrative is the human record, and the forward-looking
+sections are re-thought, not auto-populated.
