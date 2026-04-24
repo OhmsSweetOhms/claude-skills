@@ -1,4 +1,6 @@
 socks-workspace/
+threads-workspace/
 *.zip
 .claude/
 __pycache__/
+research/references/domains/_pending.json
