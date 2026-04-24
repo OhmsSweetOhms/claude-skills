@@ -12,15 +12,26 @@ three-tier pipeline:
 1. **Python golden model** (`gps_receiver/`) -- block-level behavioral
    spec for every FPGA/PS block. All arithmetic is floating-point.
 2. **Bare-metal C firmware** (`gps_receiver/firmware/`, planned) --
-   ports the PS.B4-B12 blocks to the Zynq PS (no-OS, deterministic 1 ms ISR).
+   ports the PS blocks (B4-B9, TLM, B12-B13) to the Zynq PS (no-OS,
+   deterministic 1 ms ISR).
 3. **VHDL on Zynq PL** (via the SOCKS skill, planned) -- AD9361
-   front-end, decimation, dynamic bit select, correlator engine, PCPS
-   acquisition.
+   front-end, decimation, dynamic bit select, correlator engine +
+   bit-sync histogram, PCPS acquisition.
 
 This skill covers the design, debug, and test of those three tiers as a
 single coherent pipeline. The receiver is intentionally split by
-**block ID** (PL.B1-B3 for PL blocks, PS.B4-B13 for PS blocks), and
-every .json/.py/.vhd artifact references those IDs.
+**block ID** and every .json/.py/.vhd artifact references those IDs:
+
+- **PL blocks:** PL.B1 (bit select), PL.B2 (acquisition), PL.B3
+  (correlator), PL.B3a (bit-sync histogram).
+- **PS blocks:** PS.B4–B9 (DLL / PLL / FLL / C-N0 / lock), PS.TLM
+  (consolidated telemetry decoder — supersedes the retired
+  PS.B10/PS.B10a/PS.B11 chain), PS.B12 (PVT), PS.B13 (Observables).
+
+See `gps_receiver/CLAUDE.md`, `shared-interfaces.v1.json`, and
+`blocks_map.json` for the authoritative current block inventory.
+PS.B10 and PS.B11 module files may linger as dead code under
+`gps_receiver/blocks/`; don't reference them for new work.
 
 See the project's `CLAUDE.md` for the big-picture architecture. This
 skill is the technical reference for how to do work on specific
@@ -39,36 +50,28 @@ in the order the data flows through.
 
 | Chapter | Reference | Status | Covers |
 |---------|-----------|--------|--------|
-| Tracking loops | `references/gps-tracking.md` | **Mature** | DLL/PLL/FLL, Kaplan 3rd-order, Costas, M2M4, NBPW, PLI, state machine |
-| Pseudorange anchoring | `references/pseudorange-anchoring.md` | **Mature** | PS.B10a/B10/B11/B13 anchor chain, SoftGNSS pattern, three-way debug methodology |
+| Tracking loops | `references/gps-tracking.md` | Current | DLL/PLL/FLL, Kaplan 3rd-order, Costas, M2M4, NBPW, PLI, state machine |
+| Pseudorange anchoring | `references/pseudorange-anchoring.md` | Current | IS-GPS-200 TOW convention, three-way debug methodology, PS.TLM → PS.B13 chain pointers |
 | Acquisition | `references/gps-acquisition.md` | Stub | PCPS FFT, peak1/peak2, doppler/code-phase search |
-| Nav decode | `references/gps-nav-decode.md` | Stub | LNAV subframe parity, HOW/TOW, ephemeris extraction |
-| PVT solver | `references/gps-pvt.md` | Stub | WLS + Cholesky, satpos, clock bias, iteration convergence |
+| Nav decode | `references/gps-nav-decode.md` | Current | PS.TLM LNAV semantics, TOW forward-projection, TOW continuity gate |
+| PVT solver | `references/gps-pvt.md` | Current | PS.B12 WLS + Cholesky, PVTFix contract, firmware-port notes |
 | Antenna geometry | `references/gps-antenna-geometry.md` | Stub | Link budget, off-boresight angle, occultation, cislunar dynamics |
 
 ### Diagnostic scripts
 
-`scripts/` bundles three template diagnostics built during the
-pseudorange-anchoring debug. Each is a *pattern*, not a drop-in:
+**Current-architecture diagnostics live in the project**, under
+`gps_receiver/threads/<subsystem>/<slug>/diagnostics/`. See
+`scripts/README.md` for pointers to the highest-value examples
+(`diagnose_tow_label_timing.py`, `attribute_step6_observables_residual.py`,
+`gen_baseline_lnav.py`, etc.).
 
-- `diagnose_anchor_truth.py` -- harness for running a scenario end-to-end
-  and extracting per-SV anchor residuals with an oracle ground-truth
-  comparison. Supports cursor-path and fixed-block paths via
-  `--fixed-block`. Use `ANCHOR_DECOMP=1` env var to trigger the
-  per-anchor-event decomposition table.
-- `diagnose_anchor_terms.py` -- three-way comparison (claimed / iqgen /
-  oracle) that attributes residuals to specific physics terms (SV clock
-  bias, Sagnac, light-time). Use this when the receiver disagrees with
-  the oracle and you need to identify whether the bug is in the
-  receiver, the IQ generator, or the oracle itself.
-- `diagnose_preamble_alignment.py` -- decomposes preamble lock residuals
-  into integer-20-ms, integer-1-ms, and sub-ms components. Use this to
-  localize preamble-sync mechanics vs downstream bit-chain bugs.
-
-These scripts were written against this project's specific layout.
-When adapting to other scenarios, preserve the three-column (receiver
-claim / IQ truth / oracle truth) pattern -- it's the methodological
-contribution, not the specific code.
+The three scripts previously bundled in `scripts/` have been moved to
+`scripts/archived/` — they target the retired PS.B10a /
+PseudorangeMeasurement chain and will not run against the current
+code. The three-way methodology they embody is still valid and is
+written up in `references/pseudorange-anchoring.md` §3. New
+diagnostics should be written under the relevant project thread, not
+bundled into this skill.
 
 ---
 
@@ -92,9 +95,11 @@ Concretely, for timing work:
    receiver *should* recover, because it's what was in the input IQ by
    construction (`gps_scenario.py:_build_scenario_profiles`).
 3. `oracle_sv` -- what a fully physics-correct computation says SV-time
-   is at that rx-sample. For this project,
-   `diagnose_anchor_truth.py:_iterated_truth` uses light-time-iterated
-   range + Sagnac rotation + SV clock bias.
+   is at that rx-sample. Canonical form: light-time-iterated range +
+   Sagnac rotation + SV clock bias via `scenario_engine.propagate_sv`.
+   See `references/pseudorange-anchoring.md` §3 for the snippet and
+   the live diagnostics under
+   `gps_receiver/threads/receiver/*/diagnostics/` for concrete use.
 
 If `oracle_sv == iqgen_sv`, then the IQ gen's model is already
 physics-correct for this scenario class (static ground RX, idealised
@@ -228,9 +233,10 @@ Follow this ordering before making changes:
 
 1. **Read the relevant chapter reference** (`references/gps-*.md`).
 2. **Scan `.research/` for prior investigation.**
-3. **Run a diagnostic script from `scripts/`** appropriate to the
-   symptom. Don't write a new diagnostic before trying the existing
-   three-way methodology.
+3. **Run an existing diagnostic from the project**
+   (`gps_receiver/threads/receiver/*/diagnostics/`) before writing a
+   new one. The three-way methodology is embodied in several of them.
+   See `scripts/README.md` for the current-architecture pointers.
 4. **Check the JSON spec stack** -- is the parameter actually wired from
    JSON to code, or is there a silent rename / missing `.get()`?
 5. **If the bug looks like a between-blocks issue** (timing,

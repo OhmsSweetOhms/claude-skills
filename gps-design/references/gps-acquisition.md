@@ -37,12 +37,15 @@ acquisition. Backing references:
 
 ## Known Gaps
 
-- **Weak-signal PULL_IN extended integration** (Tier 3) not yet
-  implemented.
-- **Decision-directed squaring** for sub-nav-bit integration not yet
-  implemented.
+- **Weak-signal Tiers 1–3** are implemented per
+  `docs/implementation-plan-weak-signal-tracking.md`. Remaining
+  cislunar gaps: PULL_IN extended integration beyond the current
+  tiers, and decision-directed squaring for sub-nav-bit coherent
+  integration.
 - **Warm-start ephemeris-guided search** not yet implemented (would
   accelerate reacquisition after brief loss).
+- **FFT zero-padding for sub-bin Doppler resolution** not
+  implemented (could improve weak-signal sensitivity).
 
 ## When to Expand This Chapter
 
