@@ -56,6 +56,13 @@ in the order the data flows through.
 | Nav decode | `references/gps-nav-decode.md` | Current | PS.TLM LNAV semantics, TOW forward-projection, TOW continuity gate |
 | PVT solver | `references/gps-pvt.md` | Current | PS.B12 WLS + Cholesky, PVTFix contract, firmware-port notes |
 | Antenna geometry | `references/gps-antenna-geometry.md` | Stub | Link budget, off-boresight angle, occultation, cislunar dynamics |
+| FPGA PL bring-up | `references/fpga-pl-bringup.md` | Current | Hardware target matrix (ZCU102/AD9986 + Zynq-7030/Zedboard/AD9361), decimation chain (/30 vs /15 prime cascades), xsim verification convention, HIL-as-system substrate pattern, per-PL-block thread structure, SOCKS conventions |
+
+For project-wide thread sequencing across all active work (not just
+PL), see `gps_receiver/threads/tiered-execution-flow.md` — strategic
+overview of 16 active threads grouped into 7 tiers by dependency
+chain. Updated weekly; `gps_receiver/threads/threads.json` is the
+source of truth for current status.
 
 ### Diagnostic scripts
 
