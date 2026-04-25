@@ -1,0 +1,40 @@
+{
+  "skill_name": "code-survey",
+  "_comment": "Test prompts for evaluating code-survey in a fresh session. The fresh session must NOT have any prior context about the test target's codebase — that's the whole point of evaluating across sessions. Run via the skill-creator workflow's eval procedure.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "bootstrap-from-claude-md",
+      "prompt": "I'd like to set up code-survey for this project. Can you bootstrap a config from CLAUDE.md and walk me through the result?",
+      "expected_output": "Skill triggers; reads CLAUDE.md files at project root and nested locations; proposes a .claude/code-survey-config.json with boundaries, physics_floor, verification_command, and risk_classifier filled from CLAUDE.md content; surfaces the proposed config in conversation with sourcing annotations (e.g., 'boundaries[0] from <file> § <section>'); waits for user review before writing to disk.",
+      "files": [],
+      "test_target_hint": "Use any project with a substantive CLAUDE.md. The skill was extracted from an ad-hoc analysis of a Python GPS-receiver project; an analogous project (clear architectural rules in CLAUDE.md, multi-package structure, a meaningful e2e test) makes the cleanest test target."
+    },
+    {
+      "id": 2,
+      "name": "default-scan-then-synthesize",
+      "prompt": "Run a code survey on this codebase — I want to know if there are any monolithic files, long methods, or duplicate helpers worth refactoring. Use the default kit.",
+      "expected_output": "Skill triggers; runs the default kit (lenses 1, 2, 3) in parallel via Haiku/Sonnet sub-agents per the lens_models config; lands per-agent reports in .claude/workspace/code-survey/<timestamp>/pass-N-<lens>/; suggests next step is /code-survey synthesize; produces synthesis.md and synthesis.json with cross-pass reinforcement, physics-floor filter, risk classification, priority rank, verification policy, thread-worthy verdict, and filtered-out appendix.",
+      "files": [],
+      "test_target_hint": "Same project as eval 1; the survey is on the project itself."
+    },
+    {
+      "id": 3,
+      "name": "thorough-scan-with-naming-drift",
+      "prompt": "Run a thorough code survey — I'm specifically worried that we might have helpers under multiple names and constants defined in multiple places. Make sure to catch naming drift.",
+      "expected_output": "Skill triggers with --thorough kit (lenses 1-5); naming-drift and constants-drift lenses run with their default models per config; synthesis cross-checks duplicate-helper findings against naming-drift findings to escalate confidence; constants-drift findings are bucketed P1 (numerical drift) / P2 (naming drift) / P3 (inline-literal); the wrap-up MD highlights cross-pass-reinforced findings prominently.",
+      "files": [],
+      "test_target_hint": "A project where you suspect (or have planted) naming-drift cases. For an unprimed test, the gps_design project's _sagnac_correct vs _sagnac_rotate_sv_ecef pattern is a known instance — but the eval session must NOT be told this; it should derive the finding from the skill's prompts alone."
+    },
+    {
+      "id": 4,
+      "name": "scope-narrow-and-propose-thread",
+      "prompt": "I want to survey just the diff between my branch and main, then if it looks sprint-worthy, generate a /threads proposal so I can hand it off.",
+      "expected_output": "Skill triggers; runs scan with --scope=diff:main; correctly identifies changed files via git; runs the lenses on that narrow scope; synthesis applies thread-worthy check based on config thresholds; if thread-worthy, runs propose-thread workflow which surfaces a /threads new prompt populated from synthesis.json (subsystem, slug, hypothesis, plan hops, verification policy, e2e gate); does NOT auto-invoke /threads.",
+      "files": [],
+      "test_target_hint": "Any project with active branch work and a /threads-bootstrapped layout."
+    }
+  ],
+  "_eval_methodology_note": "These evals MUST run in a fresh Claude session that has no prior context about the test target. Running them in a session that has already analyzed the target (e.g., the session that authored this skill) defeats the purpose — the with-skill agent will inherit context and 'find' specific findings the session already named. The clean methodology is: open a new session in the target project's directory, run /skill-creator and point it at ~/.claude/skills/code-survey/, run the evals from there. Compare with-skill output against without-skill (baseline = same prompt, no skill) per skill-creator's eval procedure.",
+  "_assertions_note": "Assertions are deferred to the eval-running session to draft, per skill-creator's recommendation that assertions go alongside the live runs. Each eval's expected_output above is the qualitative description; the eval-running session translates that into specific pass/fail checks (e.g., 'synthesis.md exists', 'synthesis.json parses', 'recommendation table has at least N rows', 'physics-floor filter dropped at least one finding')."
+}

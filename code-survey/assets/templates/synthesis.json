@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "project_name": "{{PROJECT_NAME}}",
+  "run_timestamp": "{{RUN_TIMESTAMP}}",
+  "scope": {
+    "description": "{{SCOPE_DESCRIPTION}}",
+    "n_files": 0
+  },
+  "lenses_run": [],
+  "lens_models_used": {},
+  "verdict": "{{CLEAN | CLEANUP-WORTHY | SPRINT-WORTHY}}",
+  "executive_summary": "{{EXECUTIVE_SUMMARY}}",
+  "findings": [
+    {
+      "id": "F1",
+      "lens": "{{LENS_NAME}}",
+      "confidence": "{{high | medium | review}}",
+      "file": "{{FILE_PATH}}",
+      "lines": "{{LINE_RANGE_OR_NULL}}",
+      "verdict": "{{LENS_VERDICT}}",
+      "description": "{{ONE_SENTENCE_DESCRIPTION}}",
+      "recommendation": "{{PROPOSED_ACTION}}",
+      "priority": "{{P1 | P2 | P3 | P4}}",
+      "risk": "{{low | medium | high}}",
+      "verification": "{{UNIT | INTEG | E2E | NONE}}",
+      "effort_estimate": "{{ROUGH_DURATION}}",
+      "cross_pass_reinforced_by": [],
+      "notes": "{{OPTIONAL_NOTES}}"
+    }
+  ],
+  "verification_policy": {
+    "low_risk_batch": [],
+    "high_risk_per_item": [],
+    "e2e_gate": {
+      "command": "{{E2E_COMMAND}}",
+      "pass_criteria": "{{E2E_PASS_CRITERIA}}"
+    }
+  },
+  "thread_worthy": {
+    "verdict": false,
+    "reasons": []
+  },
+  "filtered_out": [
+    {
+      "file": "{{FILE}}",
+      "finding": "{{FINDING}}",
+      "filter": "{{physics-floor | keep_rules | boundaries | contradiction}}",
+      "reason": "{{ONE_LINE_REASON}}"
+    }
+  ],
+  "metadata": {
+    "n_agent_reports": 0,
+    "agent_counts_per_lens": {},
+    "synthesis_duration_seconds": 0
+  }
+}

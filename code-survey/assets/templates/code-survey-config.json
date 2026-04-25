@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "project_name": "{{PROJECT_NAME}}",
+  "_comment_boundaries": "Files where splitting would break a load-bearing project invariant. Filled from CLAUDE.md § Hard Requirements / Architecture during bootstrap.",
+  "boundaries": [
+    {
+      "glob": "{{BOUNDARY_GLOB_EXAMPLE}}",
+      "rule": "{{BOUNDARY_RULE_EXAMPLE}}"
+    }
+  ],
+  "_comment_keep_rules": "Files that always KEEP regardless of length. Use sparingly — for generated code, vendored third-party, etc.",
+  "keep_rules": [],
+  "_comment_physics_floor": "Plain English: smallest residual that matters. The synthesis step uses this to filter false-positive precision claims. If the project has no domain physics, set value to 'no floor; report any drift'.",
+  "physics_floor": {
+    "description": "{{PHYSICS_FLOOR_DESCRIPTION}}",
+    "value": "{{PHYSICS_FLOOR_VALUE}}"
+  },
+  "_comment_verification_command": "How to confirm a proposed change is behavior-neutral. e2e_baseline gets propagated into thread proposals.",
+  "verification_command": {
+    "unit": "{{UNIT_TEST_COMMAND}}",
+    "integ": "{{INTEG_TEST_COMMAND}}",
+    "e2e": "{{E2E_TEST_COMMAND}}",
+    "e2e_baseline": {
+      "test": "{{E2E_TEST_NAME}}",
+      "metric": "{{E2E_METRIC}}",
+      "value": "{{E2E_BASELINE_VALUE}}",
+      "tolerance": "{{E2E_TOLERANCE}}",
+      "notes": "{{E2E_NOTES}}"
+    }
+  },
+  "_comment_risk_classifier": "Three buckets, free-form lists. The synthesis step matches a finding's recommendation against these to assign a risk.",
+  "risk_classifier": {
+    "low": [
+      "comment-only changes",
+      "unused-symbol removal",
+      "test reorganization",
+      "constants alias removal",
+      "in-place private-helper extraction"
+    ],
+    "medium": [
+      "sibling-module extraction",
+      "method >100 lines refactored to private helpers"
+    ],
+    "high": [
+      "touches a boundaries[] glob",
+      "modifies the canonical e2e test or its baseline",
+      "test baseline could shift",
+      "changes any project-invariant algorithmic step"
+    ]
+  },
+  "_comment_lens_overrides": "Per-lens project-specific tweaks: extra grep terms, extra anti-patterns. Most useful for duplicate-helper and naming-drift in domain projects.",
+  "lens_overrides": {},
+  "_comment_thread_worthy_threshold": "When the synthesis step recommends propose-thread vs direct commits.",
+  "thread_worthy_threshold": {
+    "min_items": 6,
+    "or_any_high_risk_with_verification": true,
+    "or_multi_day_estimate": true
+  },
+  "_comment_models": "Sub-agent models. Default haiku; opt in to sonnet per lens. Never opus (synthesis is the only opus-grade work, and that's main-session).",
+  "default_model": "haiku",
+  "lens_models": {
+    "function-level-long-method": "sonnet",
+    "naming-drift": "sonnet",
+    "api-surface": "sonnet"
+  }
+}
