@@ -1,13 +1,8 @@
 # Diagnostics
 
-This directory used to bundle three diagnostic templates from the
-2026-04-16 pseudorange-anchoring debug session. Those are archived in
-`archived/` because they target the retired PS.B10a / PseudorangeMeasurement
-architecture (pre plan-02 Step 3, 2026-04-23).
-
-**Live, working diagnostics for the current architecture live under
-the project's own thread directories.** The gps-design skill does not
-try to maintain a parallel copy — the project is the source of truth.
+**Live, working diagnostics live under the project's own thread
+directories.** The gps-design skill does not try to maintain a
+parallel copy — the project is the source of truth.
 
 ## Where to look for current diagnostics
 

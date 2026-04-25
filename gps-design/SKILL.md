@@ -25,13 +25,11 @@ single coherent pipeline. The receiver is intentionally split by
 - **PL blocks:** PL.B1 (bit select), PL.B2 (acquisition), PL.B3
   (correlator), PL.B3a (bit-sync histogram).
 - **PS blocks:** PS.B4–B9 (DLL / PLL / FLL / C-N0 / lock), PS.TLM
-  (consolidated telemetry decoder — supersedes the retired
-  PS.B10/PS.B10a/PS.B11 chain), PS.B12 (PVT), PS.B13 (Observables).
+  (telemetry decoder — bit-sync + preamble + TLM/HOW + parity +
+  SF1/2/3 ephemeris decode), PS.B12 (PVT), PS.B13 (Observables).
 
 See `gps_receiver/CLAUDE.md`, `shared-interfaces.v1.json`, and
 `blocks_map.json` for the authoritative current block inventory.
-PS.B10 and PS.B11 module files may linger as dead code under
-`gps_receiver/blocks/`; don't reference them for new work.
 
 See the project's `CLAUDE.md` for the big-picture architecture. This
 skill is the technical reference for how to do work on specific
@@ -72,13 +70,10 @@ source of truth for current status.
 (`diagnose_tow_label_timing.py`, `attribute_step6_observables_residual.py`,
 `gen_baseline_lnav.py`, etc.).
 
-The three scripts previously bundled in `scripts/` have been moved to
-`scripts/archived/` — they target the retired PS.B10a /
-PseudorangeMeasurement chain and will not run against the current
-code. The three-way methodology they embody is still valid and is
-written up in `references/pseudorange-anchoring.md` §3. New
-diagnostics should be written under the relevant project thread, not
-bundled into this skill.
+The three-way methodology those diagnostics embody is written up in
+`references/pseudorange-anchoring.md` §3. New diagnostics should be
+written under the relevant project thread, not bundled into this
+skill.
 
 ---
 

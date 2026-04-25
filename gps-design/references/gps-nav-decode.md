@@ -21,10 +21,6 @@ observable, and where that mapping breaks — see
 - **IS-GPS-200 §20.3** — LNAV message structure (preamble, HOW,
   subframes 1–5, ephemeris fields, URA, IODC/IODE).
 
-PS.B10 and PS.B11 module files may still exist under
-`gps_receiver/blocks/` as dead code, but the runtime path is PS.TLM.
-Don't edit them; don't reference them for new work.
-
 ---
 
 ## LNAV Invariants (from IS-GPS-200)

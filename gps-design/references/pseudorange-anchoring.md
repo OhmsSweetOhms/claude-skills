@@ -51,12 +51,6 @@ emit_pseudoranges(strobe_t_rx_s)
 PS.B12 PVT solver
 ```
 
-PS.B10a / PS.B10 / PS.B11 were retired in plan-02 Step 3 (commit
-`f3e08df`, 2026-04-23). Any reference in older threads or docs to
-`set_anchor_point`, `measure_tx_time`, `PseudorangeMeasurement`, or
-the Arch #2 `sv_time_at_boundary` forward-projection algebra is
-**historical.**
-
 The architectural predecessor (fixed-block correlator discarding
 per-PRN acquired fractional chip phase) is documented with closure
 evidence in
