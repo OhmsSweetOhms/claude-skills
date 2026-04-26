@@ -24,7 +24,7 @@
       "prompt": "Run a thorough code survey — I'm specifically worried that we might have helpers under multiple names and constants defined in multiple places. Make sure to catch naming drift.",
       "expected_output": "Skill triggers with --thorough kit (lenses 1-5); naming-drift and constants-drift lenses run with their default models per config; synthesis cross-checks duplicate-helper findings against naming-drift findings to escalate confidence; constants-drift findings are bucketed P1 (numerical drift) / P2 (naming drift) / P3 (inline-literal); the wrap-up MD highlights cross-pass-reinforced findings prominently.",
       "files": [],
-      "test_target_hint": "A project where you suspect (or have planted) naming-drift cases. For an unprimed test, the gps_design project's _sagnac_correct vs _sagnac_rotate_sv_ecef pattern is a known instance — but the eval session must NOT be told this; it should derive the finding from the skill's prompts alone."
+      "test_target_hint": "A project where you suspect (or have planted) naming-drift cases. The eval session must NOT be told which cases to find; it should derive findings from the skill's prompts alone. A useful pattern is a project where two helpers apply the same math under different verbs in different modules — easy to spot in retrospect, easy to miss with a symbol-name grep."
     },
     {
       "id": 4,

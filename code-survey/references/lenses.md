@@ -114,11 +114,12 @@ test-only path).
   when the names don't.
 
 **The naming-drift trap.** Two functions can do the same math under
-different names (e.g. `_sagnac_correct` and
-`_sagnac_rotate_sv_ecef`). A symbol-name grep will report "single
-canonical owner" and miss the duplicate. Always cross-check with a
-math-signature grep when the user's project has any history of
-naming convention drift.
+different names (e.g. `_correct_<X>` in one file and
+`_rotate_<X>_helper` in another, both applying the same rotation by
+the same angle to the same input). A symbol-name grep will report
+"single canonical owner" and miss the duplicate. Always cross-check
+with a math-signature grep when the user's project has any history
+of naming convention drift.
 
 **Anti-patterns to encode in the prompt.**
 - "2-file duplicate → hoist to canonical owner; don't create a
