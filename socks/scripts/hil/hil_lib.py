@@ -221,6 +221,42 @@ def find_preset(preset_name, board_name=None):
     return None
 
 
+
+
+def board_family(config):
+    """Resolve board family for boot-init routing."""
+    board = config.get("board", {}) if config else {}
+    explicit = board.get("family")
+    if explicit:
+        family = explicit.lower()
+        if family in ("zynq7000", "zynqmp"):
+            return family
+
+    preset = str(board.get("preset", "")).lower()
+    if preset:
+        if "zcu102" in preset or "zynqmp" in preset or "psu" in preset:
+            return "zynqmp"
+        if "microzed" in preset or "zynq7000" in preset or "ps7" in preset:
+            return "zynq7000"
+
+    part = str(board.get("part", "")).lower()
+    if part.startswith("xczu"):
+        return "zynqmp"
+    if part.startswith("xc7z"):
+        return "zynq7000"
+
+    return "zynq7000"
+
+
+def boot_init_filename(family):
+    return "ps7_init.tcl" if family == "zynq7000" else "psu_init.tcl"
+
+
+def boot_init_procs(family):
+    if family == "zynq7000":
+        return "ps7_init", "ps7_post_config"
+    return "psu_init", "psu_post_config"
+
 def xdc_dir():
     """Return absolute path to scripts/hil/xdc/."""
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "xdc")
@@ -379,11 +415,16 @@ class XSDBSession:
             'targets -set -nocase -filter '
             '{name =~ "*Cortex*#0" || name =~ "*ARM*#0"}')
 
+    def init_boot(self, family, init_path):
+        """Source PS boot init Tcl and run the family-specific init procs."""
+        init_proc, post_proc = boot_init_procs(family)
+        self._cmd(f"source {init_path}")
+        self._cmd(init_proc)
+        return self._cmd(post_proc)
+
     def init_ps7(self, ps7_init_path):
-        """Source ps7_init.tcl and run PS7 initialisation."""
-        self._cmd(f"source {ps7_init_path}")
-        self._cmd("ps7_init")
-        return self._cmd("ps7_post_config")
+        """Backward-compatible PS7 boot initialisation alias."""
+        return self.init_boot("zynq7000", ps7_init_path)
 
     def download(self, elf_path):
         return self._cmd(f"dow {elf_path}", timeout=30)

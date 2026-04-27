@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hil_lib import load_hil_json, hil_build_dir, tcl_dir
+from hil_lib import load_hil_json, hil_build_dir, tcl_dir, board_family, boot_init_filename
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import (
@@ -130,9 +130,10 @@ def main() -> int:
     print(f"    XSA:       {xsa_path}")
     print(f"    Bitstream: {bit_files[0]}")
 
-    ps7_init = os.path.join(build_dir, "ps7_init.tcl")
-    if os.path.isfile(ps7_init):
-        print(f"    ps7_init:  {ps7_init}")
+    init_name = boot_init_filename(board_family(hil_config))
+    boot_init = os.path.join(build_dir, init_name)
+    if os.path.isfile(boot_init):
+        print(f"    Boot init: {boot_init}")
 
     ltx_path = os.path.join(build_dir, "hil_top.ltx")
     if os.path.isfile(ltx_path):

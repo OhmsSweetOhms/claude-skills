@@ -210,7 +210,9 @@ def main() -> int:
     ltx_path = os.path.join(build_dir, "hil_top.ltx")
     plan_path = os.path.join(build_dir, "ila_trigger_plan.json")
     elf_path = os.path.join(build_dir, "vitis_ws", "hil_app", "Debug", "hil_app.elf")
-    ps7_init = os.path.join(build_dir, "ps7_init.tcl")
+    family = board_family(hil_config)
+    init_name = boot_init_filename(family)
+    boot_init = os.path.join(build_dir, init_name)
 
     if not os.path.isfile(ltx_path):
         print(f"\n  No hil_top.ltx -- ILA not present in build")
@@ -222,7 +224,7 @@ def main() -> int:
         print(f"  Create it (hand-written or Claude-assisted from VHDL FSM states)")
         return 1
 
-    for path, label in [(elf_path, "firmware ELF"), (ps7_init, "ps7_init.tcl")]:
+    for path, label in [(elf_path, "firmware ELF"), (boot_init, init_name)]:
         if not os.path.isfile(path):
             print(f"\n  ERROR: {label} not found: {path}")
             return 1
@@ -335,7 +337,7 @@ def main() -> int:
         xsdb_session.connect()
         xsdb_session.target_arm()
         xsdb_session.stop()
-        xsdb_session.init_ps7(ps7_init)
+        xsdb_session.init_boot(family, boot_init)
         xsdb_session.download(elf_path)
         print(f"  CPU loaded (debug session active, CPU stopped)")
 
@@ -403,7 +405,7 @@ def main() -> int:
                 xsdb_session.stop()
                 xsdb_session.breakpoint_remove_all()
                 xsdb_session._cmd("rst -processor")
-                xsdb_session.init_ps7(ps7_init)
+                xsdb_session.init_boot(family, boot_init)
                 xsdb_session.download(elf_path)
 
                 # Set breakpoint for this capture's function

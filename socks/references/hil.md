@@ -504,6 +504,29 @@ ERROR: sw/hil_test_main.c not found. Claude must write firmware before Stage 16 
 `{{PROJECT_NAME}}`, `{{LOOPBACK_OUT}}`, `{{LOOPBACK_IN}}`,
 `{{MONITOR_PREFIXES}}`, `{{EXTRA_LB_PAIRS}}`, `{{TIE_LOW_PORTS}}`.
 
+**ADI Make system flow:** system-scope projects may set `socks.json`:
+
+```json
+{
+  "scope": "system",
+  "board": {"part": "xczu9eg-ffvb1156-2-e", "preset": "zcu102"},
+  "build": {
+    "flow": "adi_make",
+    "adi_root": "../../socks/ADI",
+    "project_dir": "projects/gps_streaming"
+  }
+}
+```
+
+When `build.flow` is `adi_make`, Stage 14 bypasses the native PS7 block-design
+flow and runs `make -C <adi_root>/<project_dir>` after sourcing Vivado settings.
+It writes the make transcript to `build/hil/stage14_adi_make.log`, copies the
+ADI XSA to `build/hil/system_wrapper.xsa`, copies the ADI bitstream to
+`build/hil/vivado_project/<project>.runs/impl_1/`, and extracts the family
+boot-init Tcl (`ps7_init.tcl` or `psu_init.tcl`) from the XSA when present.
+Stages 15-19 then consume the same staged HIL artifact interface as the native
+flow.
+
 ### Stage 15: HIL Implementation (`scripts/hil/hil_impl.py`)
 
 **What it does:**

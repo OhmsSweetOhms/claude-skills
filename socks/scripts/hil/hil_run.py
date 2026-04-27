@@ -24,6 +24,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hil_lib import (
     load_hil_json, hil_build_dir, tcl_dir, find_xsdb, find_serial_port,
+    board_family, boot_init_filename,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -123,19 +124,22 @@ def main() -> int:
     project_name = f"hil_{dut_entity}"
     fw = hil_config.get("firmware", {})
 
-    # Check prerequisites: bitstream + ELF + ps7_init
+    family = board_family(hil_config)
+    init_name = boot_init_filename(family)
+
+    # Check prerequisites: bitstream + ELF + boot init
     bit_files = glob.glob(os.path.join(
         build_dir, "vivado_project", f"{project_name}.runs", "impl_1", "*.bit"))
     elf_path = os.path.join(build_dir, "vitis_ws", "hil_app", "Debug", "hil_app.elf")
-    ps7_init = os.path.join(build_dir, "ps7_init.tcl")
+    boot_init = os.path.join(build_dir, init_name)
 
     missing = []
     if not bit_files:
         missing.append("bitstream (.bit)")
     if not os.path.isfile(elf_path):
         missing.append("firmware (hil_app.elf)")
-    if not os.path.isfile(ps7_init):
-        missing.append("ps7_init.tcl")
+    if not os.path.isfile(boot_init):
+        missing.append(init_name)
 
     if missing:
         print(f"\n  ERROR: Missing: {', '.join(missing)}")
@@ -171,8 +175,9 @@ def main() -> int:
     uart.start()
 
     # Program the board via XSDB
-    flash_tcl = os.path.join(tcl_dir(), "flash.tcl")
-    cmd = [xsdb, flash_tcl, bitstream, elf_path, ps7_init]
+    flash_name = "flash_ps7.tcl" if family == "zynq7000" else "flash_psu.tcl"
+    flash_tcl = os.path.join(tcl_dir(), flash_name)
+    cmd = [xsdb, flash_tcl, bitstream, elf_path, boot_init]
     print(f"\n  Programming board...")
     prog_result = subprocess.run(
         cmd,

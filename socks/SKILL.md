@@ -331,7 +331,7 @@ project_name/
 │   ├── logs/          # Legacy pipeline logs
 │   └── artifacts/     # Claude scratch space
 ├── docs/              # Architecture diagrams + README
-├── socks.json         # Project config (name, scope, board, sub-designs)
+├── socks.json         # Project config (name, scope, board, build flow, sub-designs)
 ├── hil.json           # HIL config (optional, triggers stages 14-19)
 ├── CLAUDE.md          # Project guide (Stage 12 output)
 └── .gitignore         # Vivado/Xsim artifact ignores
@@ -339,6 +339,12 @@ project_name/
 
 See `references/structure-module.md` for module conventions,
 `references/structure-system.md` for system scope conventions.
+
+System HIL projects that rely on an external vendor build can use
+`build.flow: "adi_make"` in `socks.json`; Stage 14 runs ADI Make and stages the
+resulting XSA/bitstream for the normal HIL stages. ZCU102 board metadata lives
+at `references/boards/zcu102/board.md`; the ADI flow does not use a SOCKS-native
+PSU preset.
 
 ---
 
