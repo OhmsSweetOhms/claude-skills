@@ -31,6 +31,10 @@ Trigger on any of:
   needs to update manifests, add plan hops, or capture findings.
 - User wants to link a `/research` session to a thread, or
   vice-versa.
+- User wants a survey of the threads tree's overall state, asks
+  "what's blocked," "thread status," "thread review," or wants to
+  triage stale/blocked threads as a batch. → **Status review**
+  workflow produces a frozen `review-<YYYY-MM-DD>.md` snapshot.
 
 Do NOT trigger for:
 
@@ -76,6 +80,7 @@ section in `references/workflows.md`:
 | "Import Codex/claude.ai/colleague feedback" / "add external comment" | **Import external review** |
 | "Promote this diagnostic to a test" / "it's a regression gate now" | **Promote diagnostic** |
 | "Close the thread" / "mark thread as done" | **Close thread** |
+| "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
 
 If the user's ask doesn't match cleanly, ask which operation they
@@ -189,6 +194,12 @@ Templates:
 - `findings-template.md` — snapshot skeleton.
 - `external-comment-template.md` — verbatim + triage scaffold.
 - `temp-README.md` — regeneration-commands scaffold.
+- `review-template.md` — index-scope status-review skeleton with
+  AUTO-BEGIN/AUTO-END markers and boilerplate manual sections
+  (strategic tiers, cross-tier file overlaps, critical-path
+  observations, recommendations). Used by the **Status review**
+  workflow; the script `scripts/status_review.py` rewrites the auto
+  block, manual sections persist across regen passes.
 
 ## Handoff journal vs README vs findings
 

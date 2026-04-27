@@ -448,6 +448,112 @@ thread, or blocked indefinitely).
 
 ---
 
+## Status review
+
+**Trigger:** user wants to survey the threads tree's overall state,
+identify stale/blocked candidates, or produce a frozen status snapshot.
+Phrases include "thread status," "thread review," "what's blocked,"
+"review the threads," "/threads --review."
+
+**Pre-flight:**
+- Confirm `threads/threads.json` exists + parses.
+- Decide whether this is a fresh review or a regen of an existing
+  `review-<YYYY-MM-DD>.md`. The script handles both: if the file
+  exists, it rewrites the AUTO-BEGIN..AUTO-END block in place; if
+  not, it creates a fresh file from the template.
+- Pick threshold values if non-default. The script defaults are
+  `--stale-active-days 5 --stale-blocked-days 7`. These are
+  reasonable defaults; raise them for slow-moving projects, lower
+  them for high-velocity ones.
+
+**Steps:**
+
+1. Run the script to emit / regenerate the auto-block of
+   `threads/review-<YYYY-MM-DD>.md`:
+
+   ```bash
+   python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path> --output <threads-path>/review-<YYYY-MM-DD>.md
+   ```
+
+   Optional flags:
+   - `--stale-active-days N` (default 5)
+   - `--stale-blocked-days N` (default 7)
+   - `--prev-review review-<YYYY-MM-DD>.md` (filename of predecessor;
+     populates the header link)
+   - `--today YYYY-MM-DD` (override "today" for testing / backfill)
+
+   The script reads `threads.json` + each per-thread `thread.json`,
+   computes status counts + by-subsystem rollup + active-thread list
+   + triage candidates, and writes the AUTO block into the file. The
+   manual sections (5+) are preserved across regen passes.
+
+2. Read the auto-generated triage table. For each candidate, **read
+   the thread's README + plan** to understand the current state, then
+   propose a disposition in the table's "Proposed disposition" cell:
+   - `keep_active` — still relevant, just hasn't moved recently;
+     no action needed
+   - `close_pass` — work effectively done; needs paperwork
+   - `close_fail` — work attempted, hypothesis refuted; close with
+     refutation summary
+   - `close_inconclusive` — work attempted, ran to completion but
+     no clear answer; close with what-was-ruled-out summary
+   - `supersede` — overtaken by a different thread; document the
+     successor reference
+   - `unblock` — original blocker no longer applies; status moves
+     `blocked` → `active`
+
+   Each disposition gets a one-line rationale. This is the
+   Claude+user judgment step — never auto-apply.
+
+3. For each accepted closure / supersede, route through the
+   **Close-thread** workflow (this skill, named section above).
+   For each `unblock`, manually edit `thread.json.status` and
+   `threads.json.threads[].status` from `blocked` to `active` +
+   bump `updated`. For `keep_active`, no action — just record the
+   decision in the review file.
+
+4. After dispositions land, append a **"Resolved this pass"
+   addendum** at the bottom of the review file (above the manual
+   sections). Format: short bulleted list of what closed/superseded/
+   unblocked + commit hashes if any.
+
+5. Update the manual sections (5+) if the strategic-tier grouping,
+   cross-tier file overlaps, or critical-path observations have
+   shifted since the prior review. The script never touches these;
+   they're hand-curated.
+
+6. Commit the new review file alongside any closures it triggered,
+   using a message like "threads: status review YYYY-MM-DD —
+   closed N, superseded M, flagged K candidates."
+
+**Verification:**
+
+- `python3 -c "import json; ..."` style sanity: `threads.json`
+  parses; counts in the AUTO block match `threads.json` actuals.
+- AUTO-BEGIN and AUTO-END markers are present and well-formed
+  (the script refuses to overwrite a file missing them).
+- All triage candidates have a disposition decision recorded.
+- For each accepted closure, the corresponding thread's
+  `thread.json.status` agrees with `threads.json.threads[].status`
+  (per the Close-thread verification rule).
+
+**Cadence:**
+
+Manual trigger only. Run a review when the tree feels noisy, when
+preparing for a planning session, after a major closure wave, or
+after a rebalancing of the project's strategic priorities. There is
+no enforced regular cadence — the review file is a snapshot, not a
+journal, and unused reviews don't decay.
+
+Each review file is a **frozen snapshot** at its date. Never
+overwrite a prior review's date — re-running on the same day
+regenerates the AUTO block (preserving manual sections) but doesn't
+rename the file. A new date = a new file. The auto-regen behavior is
+specifically for "I ran the review, did some closures, want the
+counts updated in-place" workflows; the manual sections accumulate.
+
+---
+
 ## Link research
 
 See `references/research-integration.md` for the bidirectional-link
