@@ -163,6 +163,7 @@ def cmd_fetch(args):
         print(f"Text: {text_path} ({text.count(chr(10))} lines)")
     else:
         raw_path = os.path.join(session_dir, "fetched", f"{name}.html")
+        os.makedirs(os.path.dirname(raw_path), exist_ok=True)
         with open(raw_path, "wb") as f:
             f.write(data)
         print(f"HTML: {raw_path} ({len(data) / 1024:.0f} KB)")
