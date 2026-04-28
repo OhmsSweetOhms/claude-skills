@@ -5,6 +5,7 @@ set build_dir  "{{BUILD_DIR}}"
 set ws_dir     [file join $build_dir vitis_ws]
 set xsa_path   [file join $build_dir system_wrapper.xsa]
 set processor  "{{PROCESSOR}}"
+set bsp_config_tcl "{{BSP_CONFIG_TCL}}"
 
 # Parse --debug flag
 set debug_mode 0
@@ -28,6 +29,17 @@ platform create -name hil_platform -hw $xsa_path \
 # Create application
 app create -name hil_app -platform hil_platform \
     -template "Empty Application"
+
+# Optional project-specific BSP configuration. This is used by system HIL
+# projects that need a non-default standalone domain, such as R5/lwIP.
+if {$bsp_config_tcl ne ""} {
+    puts "=== Applying BSP config: $bsp_config_tcl ==="
+    platform active hil_platform
+    domain active standalone_domain
+    source $bsp_config_tcl
+    bsp regenerate
+    platform generate
+}
 
 # Import test sources
 {{IMPORT_SOURCES_TCL}}

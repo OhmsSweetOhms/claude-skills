@@ -155,6 +155,9 @@ def main() -> int:
             "{{BUILD_DIR}}": build_dir,
             "{{IMPORT_SOURCES_TCL}}": import_tcl,
             "{{PROCESSOR}}": processor,
+            "{{BSP_CONFIG_TCL}}": os.path.abspath(os.path.join(
+                project_dir, fw_config.get("bsp_config_tcl", "")))
+            if fw_config.get("bsp_config_tcl") else "",
         },
     )
 
