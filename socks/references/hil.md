@@ -159,6 +159,8 @@ hand-written.
 | `firmware.pass_marker` | `HIL_PASS` | UART string indicating test passed |
 | `firmware.fail_marker` | `HIL_FAIL` | UART string indicating test failed |
 | `firmware.timeout_s` | `30` | Seconds to wait for pass/fail marker |
+| `firmware.post_ready_cmd` | -- | Optional command string/list to run from the project directory after the pass marker is seen; non-zero exit fails Stage 17 |
+| `firmware.post_ready_timeout_s` | `30` | Timeout for `post_ready_cmd` |
 | `firmware.processor` | family default | Vitis processor name. Defaults to `ps7_cortexa9_0` for `zynq7000` and `psu_cortexa53_0` for `zynqmp`; override for R5 or custom processor targets. |
 | `firmware.debug_iterations` | -- | Number of test phases in debug firmware. **Must equal ILA capture count.** Required when `hil.json` exists and ILA captures are planned. |
 | `debug.watch_vars` | `[]` | C global variable names to read with XSDB `print` on failure |

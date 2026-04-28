@@ -16,6 +16,7 @@ Exit codes:
 import argparse
 import glob
 import os
+import shlex
 import subprocess
 import sys
 import threading
@@ -226,7 +227,39 @@ def main() -> int:
         print(f"  RESULT: {fail_str()} -- TIMEOUT (no {pass_marker}/{fail_marker})")
     print_separator()
 
-    return 0 if result == "PASS" else 1
+    if result != "PASS":
+        return 1
+
+    post_cmd = fw.get("post_ready_cmd")
+    if post_cmd:
+        if isinstance(post_cmd, str):
+            post_cmd = shlex.split(post_cmd)
+        elif not isinstance(post_cmd, list):
+            print(f"\n  {fail_str()}: firmware.post_ready_cmd must be a string or list")
+            return 1
+
+        post_timeout = fw.get("post_ready_timeout_s", 30)
+        env = os.environ.copy()
+        env["HIL_PROJECT_DIR"] = project_dir
+        print(f"\n  Running post-ready check: {' '.join(post_cmd)}")
+        post_result = subprocess.run(
+            post_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=post_timeout,
+            text=True,
+            cwd=project_dir,
+            env=env,
+        )
+        print(post_result.stdout)
+        if post_result.returncode != 0:
+            print(f"  RESULT: {fail_str()} -- post-ready check failed")
+            print_separator()
+            return 1
+        print(f"  RESULT: {pass_str()} -- post-ready check")
+        print_separator()
+
+    return 0
 
 
 if __name__ == "__main__":
