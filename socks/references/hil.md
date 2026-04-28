@@ -159,6 +159,7 @@ hand-written.
 | `firmware.pass_marker` | `HIL_PASS` | UART string indicating test passed |
 | `firmware.fail_marker` | `HIL_FAIL` | UART string indicating test failed |
 | `firmware.timeout_s` | `30` | Seconds to wait for pass/fail marker |
+| `firmware.processor` | family default | Vitis processor name. Defaults to `ps7_cortexa9_0` for `zynq7000` and `psu_cortexa53_0` for `zynqmp`; override for R5 or custom processor targets. |
 | `firmware.debug_iterations` | -- | Number of test phases in debug firmware. **Must equal ILA capture count.** Required when `hil.json` exists and ILA captures are planned. |
 | `debug.watch_vars` | `[]` | C global variable names to read with XSDB `print` on failure |
 | `debug.watch_addrs` | `{}` | Labelled AXI register addresses to read with `mrd` on failure |
@@ -527,6 +528,11 @@ boot-init Tcl (`ps7_init.tcl` or `psu_init.tcl`) from the XSA when present.
 Stages 15-19 then consume the same staged HIL artifact interface as the native
 flow.
 
+Run ADI/Vivado builds outside the Codex sandbox when the board/device uses a
+node-locked host license. In Codex, request escalated execution and pass the
+Vivado 2023.2 settings path:
+`--settings /tools/Xilinx/Vivado/2023.2/.settings64-Vivado.sh`.
+
 ### Stage 15: HIL Implementation (`scripts/hil/hil_impl.py`)
 
 **What it does:**
@@ -534,10 +540,12 @@ flow.
    XSA export, ps7_init extraction
 2. Verifies timing (VIOLATED = fail)
 
-**Outputs:** `build/hil/system_wrapper.xsa`, `build/hil/ps7_init.tcl`,
-bitstream in `vivado_project/*/impl_1/*.bit`, `hil_top.ltx`
+**Outputs:** `build/hil/system_wrapper.xsa`, family boot init
+(`ps7_init.tcl` or `psu_init.tcl`), bitstream in
+`vivado_project/*/impl_1/*.bit`, `hil_top.ltx`
 
-**Prerequisite:** Stage 14 must have created the `.xpr` project.
+**Prerequisite:** Stage 14 must have created the `.xpr` project for native
+module HIL or staged the XSA/bitstream for system-scope HIL.
 
 ### Stage 16: HIL Firmware Build (`scripts/hil/hil_firmware.py`)
 
@@ -548,7 +556,9 @@ runs.
 **What it does:**
 1. Hard-fails if `sw/hil_test_main.c` is missing (Claude must author it first)
 2. Expands `build_app.template.tcl` from `hil.json` firmware config
-3. Runs XSCT to create Vitis workspace, hardware platform, BSP, and app
+3. Runs XSCT from the Vitis settings environment to create the Vitis workspace,
+   hardware platform, BSP, and app. If the orchestrator forwards a Vivado
+   settings path, the script prefers the matching Vitis settings path.
 4. Imports driver and test sources from `hil.json`
 5. Builds firmware ELF
 6. If `--debug` flag is set: defines `HIL_DEBUG_MODE`, writes `.debug_build` marker
@@ -556,6 +566,11 @@ runs.
 **Outputs:** `build/hil/vitis_ws/hil_app/Debug/hil_app.elf`
 
 **Prerequisite:** Stage 15 must have generated `system_wrapper.xsa`.
+
+**Processor selection:** Stage 16 uses `firmware.processor` when present.
+Otherwise it defaults by board family: `ps7_cortexa9_0` for Zynq-7000 and
+`psu_cortexa53_0` for Zynq UltraScale+. The `gps_streaming` ZCU102 ADI XSA
+has been verified with Vitis 2023.2 using `psu_cortexa53_0`.
 
 **Driver deduplication:** Multiple driver source files in the same directory
 are imported once (directories are deduplicated).
@@ -771,6 +786,13 @@ Run test discovery (`references/test_discovery.md`) to produce
 XSCT ships with Vitis SDK, not Vivado. Install Vitis or set the `XSCT`
 environment variable to the XSCT binary path.
 
+### "XSCT starts only under escalated execution"
+In Codex, Vitis/XSCT may fail in the default sandbox before Tcl execution
+because the tool bootstrap probes the display environment. Run Stage 16 outside
+the sandbox with escalated execution and source Vitis 2023.2 settings, or pass
+the Vivado 2023.2 settings path to the orchestrator and let Stage 16 resolve
+the matching Vitis settings path.
+
 ### "No serial port found"
 - Check board USB connection
 - Verify user is in `dialout` group: `sudo usermod -a -G dialout $USER`
@@ -780,7 +802,8 @@ environment variable to the XSCT binary path.
 ### Programming fails (XSDB error)
 - Check JTAG cable connection
 - Verify only one Zynq target is connected
-- Check `ps7_init.tcl` exists in `build/hil/`
+- Check the family boot-init Tcl exists in `build/hil/` (`ps7_init.tcl` for
+  Zynq-7000, `psu_init.tcl` for Zynq UltraScale+)
 
 ### UART timeout (no HIL_PASS/HIL_FAIL)
 - Verify firmware prints the marker string

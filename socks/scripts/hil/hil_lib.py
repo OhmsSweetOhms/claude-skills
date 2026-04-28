@@ -66,6 +66,12 @@ VITIS_SEARCH_DIRS = [
     os.path.expanduser("~/Xilinx/Vitis"),
 ]
 
+VITIS_SETTINGS_SEARCH_PATHS = [
+    "/tools/Xilinx/Vitis/*/settings64.sh",
+    "/opt/Xilinx/Vitis/*/settings64.sh",
+    os.path.expanduser("~/Xilinx/Vitis/*/settings64.sh"),
+]
+
 
 def find_tool(name, extra_dirs=None):
     """Find executable in PATH or known Xilinx install directories."""
@@ -100,6 +106,32 @@ def find_xsct():
     if env:
         return env
     return find_tool("xsct", extra_dirs=VITIS_SEARCH_DIRS)
+
+
+def find_vitis_settings(preferred_settings=None):
+    """Find Vitis settings64.sh, preserving a matching Vivado version if given."""
+    if preferred_settings:
+        norm = os.path.abspath(preferred_settings)
+        if "/Vitis/" in norm and os.path.isfile(norm):
+            return norm
+
+        parts = norm.split(os.sep)
+        if "Vivado" in parts:
+            idx = parts.index("Vivado")
+            if idx + 1 < len(parts):
+                version = parts[idx + 1]
+                root = os.sep.join(parts[:idx])
+                candidate = os.path.join(root, "Vitis", version, "settings64.sh")
+                if os.path.isfile(candidate):
+                    return candidate
+
+    candidates = []
+    for pattern in VITIS_SETTINGS_SEARCH_PATHS:
+        candidates.extend(glob.glob(pattern))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0]
 
 
 def check_pyserial():
@@ -256,6 +288,18 @@ def boot_init_procs(family):
     if family == "zynq7000":
         return "ps7_init", "ps7_post_config"
     return "psu_init", "psu_post_config"
+
+
+def default_processor(config):
+    """Return the default standalone firmware processor for the board family."""
+    return "ps7_cortexa9_0" if board_family(config) == "zynq7000" else "psu_cortexa53_0"
+
+
+def firmware_processor(config):
+    """Resolve the Vitis processor for Stage 16 firmware builds."""
+    fw = config.get("firmware", {}) if config else {}
+    board = config.get("board", {}) if config else {}
+    return fw.get("processor") or board.get("processor") or default_processor(config)
 
 def xdc_dir():
     """Return absolute path to scripts/hil/xdc/."""

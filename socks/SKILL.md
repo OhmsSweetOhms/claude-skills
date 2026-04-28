@@ -344,7 +344,8 @@ System HIL projects that rely on an external vendor build can use
 `build.flow: "adi_make"` in `socks.json`; Stage 14 runs ADI Make and stages the
 resulting XSA/bitstream for the normal HIL stages. ZCU102 board metadata lives
 at `references/boards/zcu102/board.md`; the ADI flow does not use a SOCKS-native
-PSU preset.
+PSU preset. For Zynq UltraScale+ firmware, Stage 16 defaults to
+`psu_cortexa53_0` unless `hil.json` sets `firmware.processor`.
 
 ---
 

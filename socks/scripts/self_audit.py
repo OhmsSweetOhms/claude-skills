@@ -182,7 +182,16 @@ def check_absolute_paths(scan_dir, verbose=False):
             "vivado_project/",   # when scan_dir is build/hil/
             "vitis_ws/",         # when scan_dir is build/hil/
         )
-        skip_suffixes = (".log", ".jou", ".backup.log", ".backup.jou")
+        skip_suffixes = (
+            ".log",
+            ".jou",
+            ".backup.log",
+            ".backup.jou",
+            "build/hil/ps7_init.tcl",
+            "build/hil/psu_init.tcl",
+            "ps7_init.tcl",      # when scan_dir is build/hil/
+            "psu_init.tcl",      # when scan_dir is build/hil/
+        )
 
         for f in findings:
             detail = f.replace("BLOCKED: ", "")
@@ -194,14 +203,23 @@ def check_absolute_paths(scan_dir, verbose=False):
                     skip = True
                     break
             if not skip:
-                for suffix in skip_suffixes:
-                    # Check if the finding references a file with this suffix
-                    # Findings look like: "Personal identifier 'x' found in file.log:42"
-                    parts = detail.split(" found in ")
-                    if len(parts) > 1 and any(parts[1].rsplit(":", 1)[0].endswith(s)
-                                              for s in skip_suffixes):
+                # Check if the finding references a generated file suffix.
+                # Engine findings commonly look like either:
+                #   "Personal identifier 'x' found in file.log:42"
+                #   "Street address pattern detected -- build/hil/psu_init.tcl:15383"
+                path_part = None
+                parts = detail.split(" found in ", 1)
+                if len(parts) > 1:
+                    path_part = parts[1]
+                else:
+                    parts = detail.rsplit(" -- ", 1)
+                    if len(parts) > 1:
+                        path_part = parts[1]
+
+                if path_part:
+                    finding_path = path_part.rsplit(":", 1)[0]
+                    if any(finding_path.endswith(s) for s in skip_suffixes):
                         skip = True
-                        break
             if not skip:
                 errors.append(("fingerprint", detail))
 

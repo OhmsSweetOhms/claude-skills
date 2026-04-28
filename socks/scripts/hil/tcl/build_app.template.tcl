@@ -4,6 +4,7 @@
 set build_dir  "{{BUILD_DIR}}"
 set ws_dir     [file join $build_dir vitis_ws]
 set xsa_path   [file join $build_dir system_wrapper.xsa]
+set processor  "{{PROCESSOR}}"
 
 # Parse --debug flag
 set debug_mode 0
@@ -22,7 +23,7 @@ setws $ws_dir
 
 # Create platform from XSA
 platform create -name hil_platform -hw $xsa_path \
-    -proc ps7_cortexa9_0 -os standalone
+    -proc $processor -os standalone
 
 # Create application
 app create -name hil_app -platform hil_platform \

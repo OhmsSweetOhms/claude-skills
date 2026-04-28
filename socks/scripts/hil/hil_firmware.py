@@ -23,11 +23,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hil_lib import (
     load_hil_json, hil_build_dir, tcl_dir, find_xsct, expand_template,
+    find_vitis_settings, firmware_processor,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import (
-    find_vivado_settings, print_header, print_separator,
+    print_header, print_separator,
     pass_str, fail_str,
 )
 
@@ -94,7 +95,7 @@ def main() -> int:
     parser.add_argument("--debug", action="store_true",
                         help="Enable HIL_DEBUG_MODE (ILA pacing)")
     parser.add_argument("--settings", default=None,
-                        help="Path to Vivado settings64.sh")
+                        help="Path to Xilinx settings64.sh")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -130,6 +131,8 @@ def main() -> int:
     print(f"\n  Project:  {project_dir}")
     print(f"  XSA:      {xsa_path}")
     print(f"  Debug:    {enable_debug}")
+    processor = firmware_processor(hil_config)
+    print(f"  Proc:     {processor}")
 
     # Find XSCT
     xsct = find_xsct()
@@ -151,11 +154,13 @@ def main() -> int:
         {
             "{{BUILD_DIR}}": build_dir,
             "{{IMPORT_SOURCES_TCL}}": import_tcl,
+            "{{PROCESSOR}}": processor,
         },
     )
 
-    # Run XSCT (source Vivado settings first for environment)
-    settings = args.settings or find_vivado_settings()
+    # Run XSCT from the Vitis environment. If the orchestrator forwards a
+    # Vivado settings path, prefer the matching Vitis version for firmware.
+    settings = find_vitis_settings(args.settings)
     debug_arg = " --debug" if enable_debug else ""
 
     if settings:
