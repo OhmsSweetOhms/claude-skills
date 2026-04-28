@@ -198,13 +198,17 @@ def find_serial_port(hil_config=None):
         streaming_name = str(uart_cfg.get("streaming", "")).lower()
         is_zcu102 = (
             str(board_preset).lower() == "zcu102" or
-            (str(board_family_name).lower() == "zynqmp" and pid == 0xEA70)
+            (str(board_family_name).lower() == "zynqmp" and
+             pid in (0xEA70, 0xEA71))
         )
         if is_zcu102 and ("r5" in streaming_name or "uart1" in streaming_name):
-            # The ZCU102 CP2108 exposes four UART functions. The R5 console is
-            # UART1 in the ADI AMP topology, which appears as the last function
-            # on the CP2108 device. The /dev/ttyUSB number itself is not stable.
-            return sorted(matches, key=_interface_key)[-1].device
+            # The ZCU102 CP2108 exposes four UART functions. ADI's AMP topology
+            # routes A53 UART0 to interface 0 and R5 UART1 to interface 1. The
+            # /dev/ttyUSB number itself is not stable.
+            uart1_matches = [p for p in matches if _interface_key(p) == 1]
+            if uart1_matches:
+                return sorted(uart1_matches, key=_port_key)[0].device
+            return sorted(matches, key=_interface_key)[0].device
         return matches[0].device
 
     # Try exact VID:PID match

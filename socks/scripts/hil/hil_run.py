@@ -147,6 +147,20 @@ def main() -> int:
         return 1
 
     bitstream = bit_files[0]
+    zynqmp_boot_elfs = []
+    if family == "zynqmp":
+        pmufw_candidates = glob.glob(os.path.join(
+            build_dir, "vitis_ws", "hil_platform", "zynqmp_pmufw", "pmufw.elf"))
+        fsbl_candidates = glob.glob(os.path.join(
+            build_dir, "vitis_ws", "hil_platform", "zynqmp_fsbl", "fsbl_a53.elf"))
+        pmufw_candidates += glob.glob(os.path.join(
+            build_dir, "vitis_ws", "hil_platform", "export", "*", "sw",
+            "*", "boot", "pmufw.elf"))
+        fsbl_candidates += glob.glob(os.path.join(
+            build_dir, "vitis_ws", "hil_platform", "export", "*", "sw",
+            "*", "boot", "fsbl.elf"))
+        if pmufw_candidates and fsbl_candidates:
+            zynqmp_boot_elfs = [pmufw_candidates[0], fsbl_candidates[0]]
 
     # Find tools
     xsdb = find_xsdb()
@@ -163,6 +177,9 @@ def main() -> int:
     print(f"\n  Project:   {project_dir}")
     print(f"  Bitstream: {os.path.relpath(bitstream, project_dir)}")
     print(f"  Firmware:  {os.path.relpath(elf_path, project_dir)}")
+    if zynqmp_boot_elfs:
+        print(f"  PMUFW:     {os.path.relpath(zynqmp_boot_elfs[0], project_dir)}")
+        print(f"  FSBL:      {os.path.relpath(zynqmp_boot_elfs[1], project_dir)}")
     print(f"  Serial:    {port}")
     print(f"  XSDB:      {xsdb}")
 
@@ -177,7 +194,7 @@ def main() -> int:
     # Program the board via XSDB
     flash_name = "flash_ps7.tcl" if family == "zynq7000" else "flash_psu.tcl"
     flash_tcl = os.path.join(tcl_dir(), flash_name)
-    cmd = [xsdb, flash_tcl, bitstream, elf_path, boot_init]
+    cmd = [xsdb, flash_tcl, bitstream, elf_path, boot_init] + zynqmp_boot_elfs
     print(f"\n  Programming board...")
     prog_result = subprocess.run(
         cmd,
