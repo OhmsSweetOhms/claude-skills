@@ -545,21 +545,48 @@ def main() -> int:
                     all_warnings.append(
                         "No UART port detected -- HIL stages 17-18 require a board")
 
-                # JTAG probe (only if xsdb found)
+                # JTAG probe (only if xsdb found). ZynqMP boards such as the
+                # ZCU102 are reported in the XSDB target tree as PS TAP/PL/PSU,
+                # not necessarily as an xczu* JTAG target.
                 if xsdb:
                     try:
+                        family = str(hil_cfg.get("board", {}).get("family", "")).lower()
+                        preset = str(hil_cfg.get("board", {}).get("preset", "")).lower()
                         jtag_result = subprocess.run(
                             [xsdb, '-eval',
-                             'connect; puts [jtag targets]; exit'],
+                             'connect; puts "=== JTAG ==="; puts [jtag targets]; '
+                             'puts "=== TARGETS ==="; puts [targets]; exit'],
                             capture_output=True, text=True, timeout=10)
-                        jtag_out = jtag_result.stdout.strip()
                         jtag_full = (jtag_result.stdout + jtag_result.stderr).strip()
                         has_error = 'error' in jtag_full.lower()
+                        jtag_out = jtag_result.stdout.strip()
+                        jtag_section = jtag_out.split("=== TARGETS ===")[0]
+                        target_section = jtag_out.split("=== TARGETS ===")[-1]
+
                         # Look for numbered target lines (e.g. "  1  Digilent ...")
-                        target_lines = [ln for ln in jtag_out.splitlines()
+                        jtag_lines = [ln for ln in jtag_section.splitlines()
                                         if re.match(r'\s*\d+\s+', ln)]
-                        if target_lines and not has_error:
-                            first_target = target_lines[0].strip()
+                        xsdb_target_lines = [ln for ln in target_section.splitlines()
+                                             if re.match(r'\s*\d+\s+', ln)]
+                        target_text = "\n".join(xsdb_target_lines)
+
+                        zynqmp_ok = (
+                            family == "zynqmp" and
+                            "PSU" in target_text and
+                            "PL" in target_text and
+                            "Cortex-R5 #0" in target_text
+                        )
+                        microzed_ok = (
+                            family in ("zynq7000", "") and
+                            bool(jtag_lines)
+                        )
+
+                        if (zynqmp_ok or microzed_ok or jtag_lines) and not has_error:
+                            if zynqmp_ok:
+                                first_target = (
+                                    f"{preset or 'zynqmp'}: PSU/PL/R5 detected")
+                            else:
+                                first_target = jtag_lines[0].strip()
                             print_result(f"{'JTAG target':24s} {first_target}", True)
                             jtag_ok = True
                         else:
@@ -583,6 +610,19 @@ def main() -> int:
                 # Persist hardware capabilities to project.json
                 from state_manager import StateManager
                 _sm = StateManager(args.project_dir)
+                if _sm.load() is None:
+                    socks_json = os.path.join(os.path.abspath(args.project_dir), "socks.json")
+                    if os.path.isfile(socks_json):
+                        try:
+                            with open(socks_json) as _sf:
+                                _scfg = json.load(_sf)
+                            _sm.ensure_state(
+                                name=_scfg.get("name"),
+                                scope=_scfg.get("scope"),
+                                workflow="env",
+                            )
+                        except (json.JSONDecodeError, OSError):
+                            pass
                 if _sm.load() is not None:
                     _sm.set_hardware_capabilities(
                         jtag_detected=jtag_ok,

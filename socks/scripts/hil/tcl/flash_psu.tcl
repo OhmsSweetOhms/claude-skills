@@ -14,16 +14,16 @@ after 3000
 puts "=== Targets after connect ==="
 puts [targets]
 
-set tgt_list [targets -filter {name =~ "xczu*"}]
+set tgt_list [targets -filter {name =~ "xczu*" || name =~ "PL"}]
 if {$tgt_list eq ""} {
-    puts "ERROR: No xczu device found"
+    puts "ERROR: No ZynqMP PL target found"
     disconnect
     exit 1
 }
 
 puts "=== System reset ==="
 catch {
-    targets -set -nocase -filter {name =~ "APU*" || name =~ "DAP*" || name =~ "PSU*"}
+    targets -set -nocase -filter {name =~ "PSU"}
     rst -system
 } rst_result
 puts "rst result: $rst_result"
@@ -33,7 +33,7 @@ puts "=== Targets after reset ==="
 puts [targets]
 
 puts "=== Selecting ARM target #0 ==="
-targets -set -nocase -filter {name =~ "*Cortex*#0" || name =~ "*ARM*#0"}
+targets -set -nocase -filter {name =~ "Cortex-R5 #0*"}
 catch {stop}
 after 500
 
@@ -44,12 +44,12 @@ psu_post_config
 after 1000
 
 puts "=== Programming FPGA ==="
-targets -set -filter {name =~ "xczu*"}
+targets -set -filter {name =~ "xczu*" || name =~ "PL"}
 fpga $bitstream
 after 3000
 
 puts "=== Downloading firmware ==="
-targets -set -nocase -filter {name =~ "*Cortex*#0" || name =~ "*ARM*#0"}
+targets -set -nocase -filter {name =~ "Cortex-R5 #0*"}
 dow $firmware
 after 1000
 

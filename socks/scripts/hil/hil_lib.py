@@ -13,6 +13,7 @@ Provides:
 import atexit
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -157,9 +158,15 @@ def find_serial_port(hil_config=None):
     vid = None
     pid = None
     fallback = None
+    board_preset = None
+    board_family_name = None
+    uart_cfg = {}
 
     if hil_config and "board" in hil_config:
         board = hil_config["board"]
+        board_preset = board.get("preset")
+        board_family_name = board.get("family")
+        uart_cfg = board.get("uart", {})
         vid_str = board.get("serial_vid")
         pid_str = board.get("serial_pid")
         if vid_str:
@@ -168,22 +175,60 @@ def find_serial_port(hil_config=None):
             pid = int(pid_str, 16)
         fallback = board.get("serial_fallback")
 
+    def _port_key(port):
+        match = re.search(r'(\d+)$', port.device)
+        suffix = int(match.group(1)) if match else -1
+        return (re.sub(r'\d+$', '', port.device), suffix, port.device)
+
+    def _interface_key(port):
+        location = str(getattr(port, "location", "") or "")
+        match = re.search(r'[:.](\d+)$', location)
+        if match:
+            return int(match.group(1))
+        interface = str(getattr(port, "interface", "") or "")
+        match = re.search(r'(\d+)$', interface)
+        if match:
+            return int(match.group(1))
+        return _port_key(port)[1]
+
+    def _select_port(matches):
+        if not matches:
+            return None
+        matches = sorted(matches, key=_port_key)
+        streaming_name = str(uart_cfg.get("streaming", "")).lower()
+        is_zcu102 = (
+            str(board_preset).lower() == "zcu102" or
+            (str(board_family_name).lower() == "zynqmp" and pid == 0xEA70)
+        )
+        if is_zcu102 and ("r5" in streaming_name or "uart1" in streaming_name):
+            # The ZCU102 CP2108 exposes four UART functions. The R5 console is
+            # UART1 in the ADI AMP topology, which appears as the last function
+            # on the CP2108 device. The /dev/ttyUSB number itself is not stable.
+            return sorted(matches, key=_interface_key)[-1].device
+        return matches[0].device
+
     # Try exact VID:PID match
     if vid and pid:
-        for p in serial.tools.list_ports.comports():
-            if p.vid == vid and p.pid == pid:
-                return p.device
+        matches = [p for p in serial.tools.list_ports.comports()
+                   if p.vid == vid and p.pid == pid]
+        selected = _select_port(matches)
+        if selected:
+            return selected
 
     # Try VID-only match
     if vid:
-        for p in serial.tools.list_ports.comports():
-            if p.vid == vid:
-                return p.device
+        matches = [p for p in serial.tools.list_ports.comports()
+                   if p.vid == vid]
+        selected = _select_port(matches)
+        if selected:
+            return selected
 
     # Fallback: first ttyUSB or ttyACM
-    for p in serial.tools.list_ports.comports():
-        if "ttyUSB" in p.device or "ttyACM" in p.device:
-            return p.device
+    matches = [p for p in serial.tools.list_ports.comports()
+               if "ttyUSB" in p.device or "ttyACM" in p.device]
+    selected = _select_port(matches)
+    if selected:
+        return selected
 
     return fallback
 

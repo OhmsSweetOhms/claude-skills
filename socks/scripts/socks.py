@@ -865,9 +865,9 @@ def main() -> int:
         rc = run_stage(stage, project_dir, extra_args, script_override=script_override)
         elapsed = _time.monotonic() - t0
 
-        # Stage 4 (audit) exit code 2 = external-only warnings (non-blocking)
-        if stage == 4 and rc == 2:
-            print(f"\n  Stage 4: external module warnings only -- continuing pipeline")
+        # Stage 0/4 exit code 2 = warnings-only (non-blocking)
+        if stage in (0, 4) and rc == 2:
+            print(f"\n  Stage {stage}: warnings only -- continuing pipeline")
             results[stage] = 0
             warnings.add(stage)
         # Guidance stage WAITING (exit code 2) = files missing, stop pipeline
