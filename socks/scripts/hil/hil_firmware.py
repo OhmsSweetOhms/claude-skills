@@ -40,12 +40,38 @@ def stage_firmware_sources(project_dir, build_dir, hil_config):
     cannot point it at `sw/` -- unrelated files (e.g. a standalone `main.c`
     in a system project) would collide with the HIL test's `main`. Copy the
     listed files into `build/hil/fw_src/` and import that dir instead.
+    Projects with a nested firmware tree can also provide
+    `firmware.source_roots`: each entry copies a source directory into the
+    staged import tree while preserving its internal layout.
     """
     stage = os.path.join(build_dir, "fw_src")
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage, exist_ok=True)
 
     fw = hil_config.get("firmware", {})
+    for root in fw.get("source_roots", []):
+        if isinstance(root, str):
+            src_rel = root
+            dst_rel = os.path.basename(os.path.normpath(root))
+        else:
+            src_rel = root.get("src")
+        if not src_rel:
+            raise FileNotFoundError("firmware.source_roots entry missing src")
+        if not isinstance(root, str):
+            dst_rel = root.get("dest", os.path.basename(os.path.normpath(src_rel)))
+
+        src = os.path.abspath(os.path.join(project_dir, src_rel))
+        if not os.path.isdir(src):
+            raise FileNotFoundError(
+                f"hil.json references missing firmware source root: {src_rel}")
+
+        dst = os.path.abspath(os.path.join(stage, dst_rel))
+        if os.path.commonpath([stage, dst]) != stage:
+            raise FileNotFoundError(
+                f"firmware source root destination escapes stage dir: {dst_rel}")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+
     rel_paths = []
     if fw.get("test_src"):
         rel_paths.append(fw["test_src"])

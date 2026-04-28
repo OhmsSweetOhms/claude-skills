@@ -44,6 +44,10 @@ if {$bsp_config_tcl ne ""} {
 # Import test sources
 {{IMPORT_SOURCES_TCL}}
 
+# Let nested imported source trees include headers from the app source root
+# (for example, "net/foo.h" and "drv/bar.h").
+configapp -app hil_app -add compiler-misc {-I../src}
+
 # Add debug symbols and disable optimization if --debug
 if {$debug_mode} {
     configapp -app hil_app -add compiler-misc {-g -O0 -fno-omit-frame-pointer}
