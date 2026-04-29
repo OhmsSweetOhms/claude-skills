@@ -222,9 +222,10 @@ Bootstrap adds these three lines to the repo's `.gitignore`:
 !<threads-path>/**/temp/README.md
 ```
 
-Where `<threads-path>` is wherever `threads/` lives (usually
-repo root; sometimes nested inside a package dir like
-`gps_receiver/threads/`).
+Where `<threads-path>` is wherever `threads/` lives. Common shapes:
+repo root (`threads/`), repo root with leading dot for symmetry
+with `.research/` and `.code_survey/` (`.threads/`), or nested
+inside a package dir (`gps_receiver/threads/`).
 
 **Why `temp/*` and not `temp/`:** git can't track a file inside
 an ignored directory — the directory-level exclusion wins over a
