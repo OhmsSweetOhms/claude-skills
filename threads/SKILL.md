@@ -82,9 +82,25 @@ section in `references/workflows.md`:
 | "Close the thread" / "mark thread as done" | **Close thread** |
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
+| "Hand thread X off to codex" / "spawn a codex worktree on X" / "run codex on X" / `/codex --thread X` | **Codex worktree handoff** (`references/codex-handoff.md`) |
+| "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 
 If the user's ask doesn't match cleanly, ask which operation they
 want before acting. Don't invent new operations.
+
+The codex-handoff pair is a delivery mechanism for thread work, not
+a separate domain — a thread already has a plan; codex executes
+source-code work in an isolated worktree while bookkeeping stays on
+`main`. The worktree + branch are **long-lived across the thread's
+full lifetime** (all plans, all hops): bootstrap once at thread
+start, re-invoke codex against the same worktree N times as the
+plan progresses, and merge back to `main` exactly once at thread
+close — and only when the user explicitly requests it. The
+merge-back script never auto-merges; it shows the incoming diff and
+prompts for confirmation. See `references/codex-handoff.md` for the
+full workflow, the pre-built bootstrap and merge-back scripts under
+`scripts/`, and the agent-prompt template under
+`assets/templates/codex-handoff-prompt.md`.
 
 ## Integration with `/research`
 
@@ -102,6 +118,40 @@ want before acting. Don't invent new operations.
 
 The two sides should stay in sync when both exist. The **Link
 research** workflow handles writing both.
+
+## Auto-generated registry
+
+`<project>/.threads/threads.json` is **auto-generated**, not
+hand-edited. The canonical source for every thread is its own
+`thread.json` (status, plan hops, findings, promotions, linked
+research, etc.). The registry is the aggregate produced by
+`~/.claude/skills/threads/scripts/index_threads_research.py`,
+which also writes `<project>/.research/INDEX.json` for the
+research-side mirror.
+
+**Mutating workflows** — new thread, new plan hop, findings snapshot,
+register diagnostic, import external review, promote diagnostic,
+close thread, link research, codex worktree merge-back — must
+regenerate the registry as their **final step**:
+
+```bash
+python3 ~/.claude/skills/threads/scripts/index_threads_research.py
+```
+
+**Status-review workflow** also fires the indexer, but as a **first
+step**: the review reads `threads.json` to compute status counts and
+triage candidates, so a stale registry produces a misleading review.
+Same command, run before `status_review.py`.
+
+Run it from the project root (the directory containing `.threads/`
+and `.research/`). The script discovers the project root from the
+current working directory; pass `--project-root <path>` if invoking
+from elsewhere. Add `--check` to validate without writing (exits 1
+on any cross-reference findings); add `--print` to also see a
+one-line summary plus per-finding-kind breakdown.
+
+The registry must always be regenerated and committed in the same
+commit as the per-thread edits. A drifted registry is a bug.
 
 ## Invariants (violate these and the pattern falls apart)
 

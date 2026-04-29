@@ -98,6 +98,50 @@ def active_threads_table(threads: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def active_codex_worktrees_table(threads: list[dict], threads_path: Path, today: datetime.date) -> tuple[str, int]:
+    """Walk every thread.json and surface codex_worktrees[] entries with status:active.
+
+    Returns (markdown_table, count). An "active" worktree on a closed
+    or superseded thread is included in the table (so it's visible
+    here) and also surfaces as an `orphaned_codex_worktree` flag in
+    the triage table below.
+    """
+    rows = []
+    for t in threads:
+        thread_data = load_thread(threads_path, t["id"])
+        if thread_data is None or thread_data.get("__corrupt__"):
+            continue
+        for wt in thread_data.get("codex_worktrees", []) or []:
+            if wt.get("status") != "active":
+                continue
+            started = wt.get("started", "?")
+            try:
+                age = days_since(started, today) if started != "?" else "?"
+            except (ValueError, TypeError):
+                age = "?"
+            rows.append({
+                "thread": t["id"],
+                "thread_status": t["status"],
+                "branch": wt.get("branch", "?"),
+                "base_commit": wt.get("base_commit", "?"),
+                "started": started,
+                "age": age,
+                "path": wt.get("path", "?"),
+            })
+    if not rows:
+        return ("*(no active codex worktrees)*", 0)
+    out = [
+        "| Thread | Status | Branch | Base | Started | Age (d) | Path |",
+        "|--------|--------|--------|------|---------|--------:|------|",
+    ]
+    for r in rows:
+        out.append(
+            f"| `{r['thread']}` | `{r['thread_status']}` | `{r['branch']}` | "
+            f"`{r['base_commit']}` | {r['started']} | {r['age']} | `{r['path']}` |"
+        )
+    return ("\n".join(out), len(rows))
+
+
 def flag_triage(
     threads: list[dict],
     threads_path: Path,
@@ -175,6 +219,24 @@ def flag_triage(
                     # Already flagged via active_stale; add detail
                     pass  # primary flag suffices
 
+        # Orphaned codex worktree: status:active worktree on a closed/superseded thread.
+        # The thread is supposed to be done but the worktree never landed — cleanup
+        # needed (either merge-back was skipped or the worktree should be abandoned).
+        if t["status"] in ("closed", "superseded"):
+            for wt in thread_data.get("codex_worktrees", []) or []:
+                if wt.get("status") == "active":
+                    flags.append({
+                        "id": tid,
+                        "kind": "orphaned_codex_worktree",
+                        "days": days,
+                        "summary": (
+                            f"Thread is `{t['status']}` but codex worktree at "
+                            f"`{wt.get('path','?')}` (branch `{wt.get('branch','?')}`) "
+                            f"is still status:active. Either run **Codex worktree merge-back** "
+                            f"or set the worktree's status to `abandoned` with a notes line."
+                        ),
+                    })
+
     # De-duplicate by (id, kind)
     deduped = []
     seen = set()
@@ -183,13 +245,15 @@ def flag_triage(
         if key not in seen:
             deduped.append(f)
             seen.add(key)
-    # Sort: blocked_stale first (highest priority), then active_stale by descending days, then validity issues
+    # Sort: blocked_stale first (highest priority), then orphaned worktrees,
+    # then active_stale by descending days, then validity issues.
     kind_order = {
         "blocked_stale": 0,
         "missing_thread_json": 1,
         "corrupt_thread_json": 2,
-        "active_stale": 3,
-        "supersede_ref_unverified": 4,
+        "orphaned_codex_worktree": 3,
+        "active_stale": 4,
+        "supersede_ref_unverified": 5,
     }
     deduped.sort(key=lambda f: (kind_order.get(f["kind"], 99), -f.get("days", 0)))
     return deduped
@@ -219,6 +283,7 @@ def render_auto_block(
 ) -> str:
     flags = flag_triage(threads, threads_path, today, stale_active_days, stale_blocked_days)
     active_count = sum(1 for t in threads if t["status"] == "active")
+    worktrees_table, worktrees_count = active_codex_worktrees_table(threads, threads_path, today)
     parts = [
         AUTO_BEGIN,
         "",
@@ -235,6 +300,12 @@ def render_auto_block(
         "Sorted by `updated` date, most recent first.",
         "",
         active_threads_table(threads),
+        "",
+        f"### Active codex worktrees ({worktrees_count})",
+        "",
+        "Long-lived isolated worktrees on which a Codex agent is doing source-code work for the named thread. A `merged` or `abandoned` worktree is omitted. A `status: active` worktree on a `closed` or `superseded` thread surfaces as an `orphaned_codex_worktree` flag in the triage table below — either run **Codex worktree merge-back** or set the worktree's status to `abandoned`.",
+        "",
+        worktrees_table,
         "",
         f"## 4. Triage candidates ({len(flags)})",
         "",

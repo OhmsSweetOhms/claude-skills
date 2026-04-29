@@ -129,6 +129,18 @@ Per-thread manifest. Authoritative for what's in this thread.
       "file": "external-comments/20260420-codex-plan-05-review.md",
       "merged_into": ["<commit-hash-1>", "<commit-hash-2>"]
     }
+  ],
+  "codex_worktrees": [
+    {
+      "path": "/abs/path/to/<repo>-<slug>",
+      "branch": "<slug>",
+      "base_commit": "<short-sha-from-origin-main>",
+      "started": "2026-04-29",
+      "status": "active",
+      "merged_into": null,
+      "merged_at": null,
+      "notes": "Optional one-line"
+    }
   ]
 }
 ```
@@ -164,6 +176,46 @@ Per-thread manifest. Authoritative for what's in this thread.
   permanent tests. Never rewritten.
 - `external_reviews[]` — one entry per external-comments file.
   Mirror of the frontmatter in the referenced file.
+- `codex_worktrees[]` — one entry per long-lived codex worktree
+  the thread spawned (typically one; rarely more, e.g., if the
+  first worktree was abandoned and a fresh one cut). See
+  `references/codex-handoff.md` for the workflow. Field-by-field:
+  - `path` — absolute path to the worktree dir on the user's
+    machine. Convention: `<parent-of-repo>/<repo-name>-<slug>`.
+  - `branch` — git branch name of the worktree, matches the
+    thread's slug component.
+  - `base_commit` — short SHA the worktree was cut from at
+    bootstrap. Always `origin/main` HEAD at the time, not a stale
+    local branch.
+  - `started` — ISO date of bootstrap.
+  - `status` — `active`, `merged`, or `abandoned`. Worktree-specific
+    enum, intentionally distinct from the thread / plan-hop status
+    enum (`active | blocked | superseded | closed`) since the
+    terminal states differ.
+  - `merged_into` — commit hash on `main` once the worktree is
+    merged back. `null` while `status == "active"`. Required
+    non-null when `status == "merged"` — same audit-trail rule as
+    `external_reviews[].merged_into`.
+  - `merged_at` — ISO date of merge. `null` while `status == "active"`.
+  - `notes` — optional one-line. Use sparingly (e.g., to flag
+    "abandoned: codex sandbox blocked all writes; restarted at
+    base_commit X").
+
+### `codex_worktrees[]` merged_into contract
+
+When `status == "merged"`, `merged_into` is required and must be a
+real commit hash on `main` (`git rev-parse <hash>` succeeds — short
+or full form). The merge commit's body should describe what the
+thread accomplished; this is the user's commit, not auto-generated.
+
+When `status ∈ {"active", "abandoned"}`, `merged_into` is `null`.
+An `abandoned` worktree was cleaned up without landing — record
+why in `notes`.
+
+This is a strict rule for the same reason as the `external_reviews[]`
+contract: a worktree marked `merged` with no commit hash is
+indistinguishable from one that was deleted and forgotten. The
+hash forces merge to be a real git operation.
 
 ### `external_reviews[]` merged_into contract
 
