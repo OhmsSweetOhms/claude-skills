@@ -1,13 +1,24 @@
 # Project config — schema and bootstrap
 
-Every project gets one config at `.claude/code-survey-config.json`.
+Every project gets one config at `<project-root>/.code_survey/config.json`.
 The config is the runtime contract: it tells every lens which
 boundaries are sacred, what the physics floor is, how to verify
 proposed changes, and how to classify risk.
 
+The config lives **inside** the artifact tree at
+`.code_survey/config.json` (not in `.claude/`). This makes the
+whole code-survey footprint self-contained, portable across
+machines, and reviewable in PRs alongside the artifacts it
+governs. Older versions of this skill kept config at
+`.claude/code-survey-config.json`; bootstrap auto-migrates that
+file when found.
+
 If the config doesn't exist, the **Bootstrap** workflow creates it
-(seeded from CLAUDE.md). Without a config, the skill runs in
-generic mode with reduced accuracy — warn the user.
+(seeded from CLAUDE.md). Bootstrap is **auto-invoked** on a Scan
+that finds no config — the user does not have to run it manually.
+Without a config, the skill runs in generic mode with reduced
+accuracy — but generic mode should be an explicit user opt-out,
+not the default path.
 
 ## Schema (v1)
 
@@ -185,7 +196,7 @@ no config:
      `blocks/`, not just `pl_*.py`."
    - "Physics floor is wrong; the real floor is X."
    - "Drop the `keep_rules` entry; we do refactor that file."
-5. **Write** `.claude/code-survey-config.json`.
+5. **Write** `.code_survey/config.json`.
 6. **Tell the user to commit it.** The config is project state; it
    belongs in version control.
 

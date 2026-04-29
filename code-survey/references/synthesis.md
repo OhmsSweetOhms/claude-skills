@@ -11,14 +11,22 @@ delegating it dilutes the value.
 
 ## Inputs
 
-- All `pass-N-<lens>/agent-*.md` files in the current run directory.
+- All `pass-N-<lens>/agent-*.md` files in the current session directory.
 - The project config snapshot at `config.snapshot.json`.
 - The scope at `scope.json`.
+- The thread-tree snapshot at `thread-tree-snapshot.json`.
 
 ## Outputs
 
-- `synthesis.md` — wrap-up MD, the durable artifact.
+- `raw-recommendations.md` — every per-lens hit, **pre-curation**.
+  The implicit-save artifact. Lets future agents reconstruct the
+  original signal before any filter ran.
+- `synthesis.md` — curated wrap-up MD, the deliverable.
 - `synthesis.json` — same data, machine-readable, for /threads ingest.
+- `thread-proposals.md` — candidate threads partitioned into three
+  buckets (NEW / SUBSUMED / TENSION) after dedup'ing against the
+  project's existing thread tree.
+- Append to `<root>/.code_survey/index.md` — one-line entry at top.
 
 ## Procedure (follow in order)
 
@@ -34,6 +42,26 @@ Read every per-agent report. For each finding extract:
 - `recommendation` — the proposed action.
 
 Hold them in a working set; nothing on disk yet.
+
+### Step 1.5: Persist `raw-recommendations.md` (pre-curation)
+
+**Before any filter runs**, write the working set to disk as
+`raw-recommendations.md` in the session dir. Group by lens, list
+every finding, no judgment applied. Header:
+
+```
+# Raw recommendations — session-<id>
+
+This file is the unfiltered union of every lens agent's findings.
+NO anti-pattern filter, NO physics-floor filter, NO KEEP-bias, NO
+risk classification has been applied. See synthesis.md for the
+curated deliverable.
+```
+
+Why persist before curation: future agents (or future you) need to
+distinguish "this lens never flagged it" from "this lens flagged
+it and we dropped it." The curated synthesis can't tell you which.
+This is the implicit-save artifact the user asked for.
 
 ### Step 2: Cross-pass reinforcement check
 
@@ -74,6 +102,51 @@ converges quadratically. Iter count differs between two
 implementations, but both produce sub-floor residuals. Not a bug.
 File this kind of finding under "intentional duplication" or
 "naming drift," not "precision."
+
+### Step 3.5: Thread-tree dedupe (three-bucket classification)
+
+Read `thread-tree-snapshot.json`. For each surviving finding,
+classify it into exactly one of three buckets:
+
+- **NEW** — no active or closed thread covers this work. Eligible
+  for thread proposal.
+- **SUBSUMED** — a thread already covers it. Point the user at the
+  thread; do **not** propose a new one. Sub-cases:
+  - *Active-subsumed:* an active thread has this in its plan hops.
+  - *Closed-subsumed:* a closed thread already landed it (verify
+    against `git log` if uncertain). Demote to filtered-out
+    appendix with reason "already-landed: <thread-id>".
+- **TENSION** — an active thread touches the same files for a
+  *different* reason. Surface the conflict; the user decides
+  whether to coordinate, defer, or fold the recommendation into
+  the existing thread.
+
+**Matching strategy** (in order):
+
+1. **File-path overlap (primary signal).** Compute the intersection
+   of the finding's `file` (or files) with each thread's plan-hop
+   step files (`plan-*.md` "Files touched" sections). Non-empty
+   intersection ⇒ candidate match.
+2. **Title-keyword overlap (secondary signal).** Tokenize the
+   thread title and the finding's `recommendation`; ≥2 shared
+   non-stopword tokens ⇒ candidate match.
+3. **Same-reason check (disambiguates SUBSUMED vs TENSION).** If
+   a candidate match exists, read the candidate thread's
+   `README.md` § "One-paragraph summary" or its plan-hop
+   "Hypothesis" — does the thread aim to do *this same change*?
+   - Yes → **SUBSUMED**.
+   - No, but it touches the file for a different purpose →
+     **TENSION**.
+
+**Closed threads count.** Include closed threads in the inventory.
+If a closed thread's findings snapshot says "landed: <commit>",
+the recommendation has already shipped — that's signal worth
+preserving in the appendix even if you don't surface it as an
+active proposal.
+
+**Tag every recommendation.** Every item that survives to the
+recommendation list must carry a bucket tag. No untagged items
+in `synthesis.md`.
 
 ### Step 4: Risk classification
 
@@ -134,13 +207,50 @@ direct commits; here's the suggested order."
 
 ### Step 8: Write the artifacts
 
-Use `assets/templates/synthesis.md` and
-`assets/templates/synthesis.json` as scaffolds. Substitute the
+Use `assets/templates/synthesis.md`,
+`assets/templates/synthesis.json`, and
+`assets/templates/thread-proposals.md` as scaffolds. Substitute the
 findings, fill in the cross-pass section, the per-lens highlights,
-the recommendation table, the verification policy block, and the
-filtered-out appendix.
+the recommendation table (every row tagged NEW / SUBSUMED /
+TENSION), the verification policy block, and the filtered-out
+appendix.
 
-Both files land in the run directory.
+`thread-proposals.md` is sectioned by bucket:
+
+```
+## New thread proposals (k items)
+### Proposal 1 — <slug>
+- Recommendation: <ref to synthesis section>
+- Subsystem: <inferred from file paths touched>
+- Files touched: ...
+- Suggested verification gate: ...
+- Suggested plan-hop count: 1 / phase
+
+## Subsumed by active threads (k items)
+- Item #N → covered by `<thread-path>` (active, plan-XX HX)
+
+## Subsumed by closed threads (k items)
+- Item #N → already landed in `<thread-path>` (closed, commit `<sha>`)
+
+## Tension with active threads (k items)
+- Item #M → conflicts with `<thread-path>` because both touch
+  `<file>`. Coordinate before proceeding.
+```
+
+All four artifacts land in the session directory:
+`raw-recommendations.md` (already written in Step 1.5),
+`synthesis.md`, `synthesis.json`, `thread-proposals.md`.
+
+### Step 9: Update the session index
+
+Prepend a one-line entry to `<root>/.code_survey/index.md`:
+
+```
+- session-YYYYMMDD-HHMMSS — <kit> kit, N recs (P1: a, P2: b, P3: c, P4: d) — NEW: x, SUBSUMED: y, TENSION: z — top: <one-line top-P1>
+```
+
+If `index.md` doesn't exist, create it with a header line and the
+first entry. The entry is prepended (newest-first), not appended.
 
 ## What goes in the filtered-out appendix
 

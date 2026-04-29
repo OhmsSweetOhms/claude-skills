@@ -43,9 +43,46 @@ section in `references/workflows.md`:
 | "Survey only the diff against main" / "scope to changes" | **Scan (--scope=diff:main)** |
 | "Synthesize the results" / "wrap up the scan" / "produce the report" | **Synthesize** |
 | "Turn this into a thread" / "spawn a thread for the refactor sprint" | **Propose thread** |
+| "Compare the last two runs" / "A/B the surveys" / "diff the synthesis" | **Diff** |
 
 If the user's ask doesn't match cleanly, ask which operation they
 want before spawning agents. Don't invent operations.
+
+**Auto-bootstrap.** If **Scan** is invoked on a project with no
+config (no `.code_survey/config.json`), the skill auto-runs
+**Bootstrap** first, surfaces the proposed config for user review,
+then proceeds. The user does not have to invoke Bootstrap manually.
+
+## Project-root anchor
+
+Code-survey runs from project root, never a subdirectory. A scan
+rooted in `gps_receiver/` would miss `scenario_engine/`; a scan
+rooted in `~/Work1/Claude/` would scan every project at once. Both
+are wrong-tree errors that the skill detects up front.
+
+**Detection order** (first match wins):
+
+1. **Primary — `.research/` peer at cwd.** If `<cwd>/.research/`
+   exists, this is project root.
+2. **Reinforcement — `.code_survey/` peer at cwd.** If
+   `<cwd>/.code_survey/` (with at least `.gitkeep`) exists from a
+   prior bootstrap, this is project root. Use this when the project
+   has no `/research` history yet.
+3. **Reinforcement — CLAUDE.md at cwd describing this project.**
+   If `<cwd>/CLAUDE.md` exists AND names the project + subdirs (the
+   "umbrella" CLAUDE.md pattern), accept as project root. Use when
+   neither `.research/` nor `.code_survey/` exist (very-first
+   bootstrap on a brand-new project).
+
+If none match, **stop and ask** — do not silently survey the wrong
+tree. Phrasing: "I think project root is `<best-guess>` because
+`<reason>`. Proceed or override with `--root=<path>`?"
+
+A valid invocation example: from
+`/media/doogie/Work1/Claude/work/gps_design/` (which has
+`.research/` and `gps_receiver/threads/`), the skill picks up that
+cwd as root. From `gps_receiver/` it refuses; from
+`/media/doogie/Work1/Claude/` it refuses.
 
 ## The 8 lenses
 
@@ -110,27 +147,51 @@ that motivated this skill:
    intentional duplication, not a dedup target. Document, don't
    merge.
 
-## Workspace layout
+## Artifact layout
 
-Every scan run lands at:
+Code-survey writes its config and every scan run into a single
+project-root tree at `.code_survey/`. The tree is **git-tracked**
+(small text artifacts; durable across machines and reviewable in
+PRs); only `temp/` subdirs are gitignored.
 
 ```
-.claude/workspace/code-survey/<YYYYMMDD-HHMM>/
-  config.snapshot.json     # the config used for this run
-  scope.json               # which files were surveyed and why
-  pass-1-file-monolith/
-    agent-1-<group>.md     # per-agent report
-    ...
-  pass-2-long-method/
-  pass-3-dedupe/
-  ...
-  synthesis.md             # the wrap-up MD (final artifact)
-  synthesis.json           # parallel machine-readable
+.code_survey/
+  config.json                      # project config (was .claude/code-survey-config.json)
+  .gitkeep                         # project-root anchor; created by Bootstrap
+  index.md                         # session log, newest-first; auto-updated each Synthesize
+  session-<YYYYMMDD-HHMMSS>/
+    config.snapshot.json           # frozen copy of config.json at run time
+    scope.json                     # files surveyed + why each was included
+    pass-1-file-monolith/
+      agent-1-<group>.md           # raw per-agent report (Haiku output, unfiltered)
+      ...
+    pass-2-long-method/
+    pass-3-dedupe/
+    raw-recommendations.md         # aggregated per-lens hits, PRE-curation
+    thread-tree-snapshot.json      # inventory of all threads at run time (active + closed)
+    thread-proposals.md            # candidate threads, dedup'd vs. tree (3 buckets)
+    synthesis.md                   # curated, risk-classified final artifact
+    synthesis.json                 # machine-readable parallel
+    temp/                          # gitignored; per-run scratch
+  diff-<sessionA>-vs-<sessionB>.md # A/B comparison artifact (Diff op, optional)
 ```
 
-The wrap-up `synthesis.md` is the durable artifact. Past surveys
-stay on disk; users can compare runs over time without losing
-prior findings.
+### Why three recommendation artifacts, not one
+
+- **`raw-recommendations.md`** — what the lens agents found before
+  any filter. Necessary so a future agent (or future you) can
+  reconstruct the original signal. Without it, the curated synthesis
+  is the only record and you cannot tell whether an item was never
+  flagged or was flagged and dropped.
+- **`synthesis.md`** — what survived the anti-pattern filter,
+  physics-floor filter, KEEP-bias, risk classifier, and
+  cross-pass reinforcement check. The deliverable.
+- **`thread-proposals.md`** — what's eligible for **new** thread
+  spawn after dedup'ing against the project's existing thread tree.
+  Three buckets: NEW, SUBSUMED, TENSION. See `references/synthesis.md`.
+
+Past surveys stay on disk under their session dirs. The Diff
+operation compares any two sessions on demand.
 
 ## Composability with other skills
 
@@ -144,15 +205,20 @@ prior findings.
 
 ## Sanity checks before acting
 
-1. **Does the project have a config?** If
-   `.claude/code-survey-config.json` is missing, run **Bootstrap**
-   first (or warn the user and proceed in generic mode).
-2. **Is the scope sensible?** Before fanning out agents over 200
+1. **Are we at project root?** Apply the detection order in
+   "Project-root anchor" above. If detection fails, stop and ask
+   before doing anything else.
+2. **Does the project have a config?** If `.code_survey/config.json`
+   is missing, **auto-run Bootstrap** (surface proposed config for
+   review, wait for user accept, then proceed). Generic-mode
+   fallback exists but should be the explicit user choice, not
+   the default.
+3. **Is the scope sensible?** Before fanning out agents over 200
    files, confirm the scope with the user. Surveys at >50 files
    want `--scope=path:` or `--scope=diff:` narrowing.
-3. **Is there a recent run?** If a survey already exists from
-   today on the same scope, ask whether to re-run or just
-   re-synthesize.
+4. **Is there a recent run?** If a survey already exists from
+   today on the same scope, ask whether to re-run, re-synthesize,
+   or **Diff** against it.
 
 ## Reference files
 
@@ -174,8 +240,20 @@ Read on demand:
 
 `assets/templates/` holds skeletons the workflows copy:
 
-- `code-survey-config.json` — project config seed.
-- `synthesis.md` — wrap-up MD scaffold.
+- `code-survey-config.json` — project config seed (written to
+  `<root>/.code_survey/config.json` at bootstrap).
+- `synthesis.md` — curated wrap-up MD scaffold.
 - `synthesis.json` — parallel JSON scaffold.
+- `thread-proposals.md` — three-bucket dedupe scaffold
+  (NEW / SUBSUMED / TENSION).
 - `agent-prompt-<lens>.md` × 8 — per-lens agent prompt templates
   (substitute project context at scan time).
+
+## Scripts
+
+`scripts/` holds helpers the workflows shell out to:
+
+- `inventory_threads.py <root>` — globs every
+  `**/threads/*/*/thread.json` under `<root>` and emits a JSON
+  snapshot (id, status, plan files, files touched). Consumed by
+  Synthesize for the three-bucket dedupe pass.
