@@ -17,7 +17,6 @@
 #
 # Outputs to stdout:
 #   - worktree path, branch, base commit, venv link target
-#   - PYTHONPYCACHEPREFIX dir
 #   - JSON snippet to paste into the thread's thread.json (first creation only)
 
 set -euo pipefail
@@ -93,21 +92,15 @@ else
     echo "venv symlinked: $VENV_LINK -> $VENV_TARGET"
 fi
 
-# Refresh .envrc with PYTHONPYCACHEPREFIX (read-only-fs guard) and PYTHON.
+# Refresh .envrc with PYTHON pinned to the venv-symlink path.
 ENVRC="$WORKTREE/.envrc"
-PYCACHE="/tmp/${SLUG}-pycache"
 cat > "$ENVRC" <<EOF
-# Source this in the codex shell or copy into the agent's env block.
-# PYTHONPYCACHEPREFIX redirects __pycache__ writes off the worktree to
-# avoid [Errno 30] Read-only file system on sandboxed filesystems.
-export PYTHONPYCACHEPREFIX="${PYCACHE}"
-# Always invoke project Python via the venv symlink to dodge system-ABI
-# mismatch (SciPy/NumPy _ARRAY_API on host python3).
+# Source this before launching codex in this worktree, or paste into
+# the agent's env. Pins PYTHON to the venv to dodge system-ABI mismatch
+# (SciPy/NumPy _ARRAY_API failures on host python3).
 export PYTHON="${WORKTREE}/.venv/bin/python"
 EOF
-mkdir -p "$PYCACHE"
 echo ".envrc written: $ENVRC"
-echo "PYTHONPYCACHEPREFIX dir: $PYCACHE"
 
 cat <<EOF
 
@@ -117,7 +110,6 @@ Done. Worktree ready.
   branch:      $BRANCH
   base commit: ${BASE_COMMIT} ($(git -C "$WORKTREE" log -1 --format=%s 2>/dev/null || echo '?'))
   venv:        $VENV_LINK -> $VENV_TARGET
-  pycache:     $PYCACHE
 
 Hand the codex agent this env:
 

@@ -29,13 +29,9 @@ Always invoke Python via the worktree's venv link:
     {{WORKTREE_PATH}}/.venv/bin/python <args>
 
 The system `python3` is ABI-broken on this host (SciPy/NumPy
-mismatch). Project imports will fail under it.
-
-Export this before running anything that imports the project (or
-just `source .envrc` from the worktree root — bootstrap left one
-for you):
-
-    export PYTHONPYCACHEPREFIX=/tmp/{{SLUG}}-pycache
+mismatch). Project imports will fail under it. Either source the
+worktree's `.envrc` (which exports `PYTHON` pinned to the venv
+path), or invoke `.venv/bin/python` directly.
 
 ## What to do
 
@@ -56,28 +52,38 @@ Tests to run when you think you're done:
    Do NOT edit anything under `.threads/` — that's the user's
    responsibility on `main`, after your work is reviewed.
 
-2. **Do not commit.** Leave changes unstaged. The user (in their
-   main claude session, which is *not* sandboxed) will review and
-   commit your output onto this worktree branch. Committing inside
-   the worktree typically fails under the codex sandbox anyway
-   (`.git` metadata write barrier).
+2. **Commits land on the worktree branch only — never on `main`,
+   never push.** Cadence: one commit per logical sub-deliverable.
+   Use clear subject lines and bodies (subject ~70 chars,
+   imperative; body explaining the why). Do NOT push to a remote
+   without explicit user approval. The merge to `main` happens
+   later via the threads-skill **Codex worktree merge-back**
+   workflow, gated on user confirmation. The user may exit the TUI
+   and commit themselves if they prefer pre-commit review.
 
 3. **If you're blocked, stop and surface the blocker.** Don't paper
    over a missing dep, an ABI mismatch, or a test that won't run
    with a workaround comment. Print a short diagnosis and exit.
    Common blockers and where to look first:
    - Import error → check `which python` and `python -c "import sys; print(sys.executable)"`. You should see the venv path.
-   - `[Errno 30] Read-only file system` on `__pycache__` → confirm
-     `PYTHONPYCACHEPREFIX` is exported.
-   - `git` write failure → leave the file unstaged and stop. The
-     user will commit on your behalf.
+   - `git` write failure → don't bypass with `--no-verify`. The
+     project's pre-commit/push hook is rejecting for a reason.
+     Read the hook output, fix the underlying issue, then retry.
 
 4. **Don't expand scope.** Only the deliverables in "What to do"
    above. If you spot a follow-on improvement, name it in your
    final summary — do not implement it.
 
-5. **No fingerprint scrubbing here.** The user runs the fingerprint
-   guard on `main` before committing. Just write the code.
+5. **Run the fingerprint scan before each commit.** From the
+   worktree root, before `git add` / `git commit`:
+   ```bash
+   python3 ~/.claude/skills/fingerprint/fingerprint_scan.py --scan-dir .
+   ```
+   If it flags anything, fix the offending line or extend the
+   allowlist at `~/.claude/hooks/fingerprint-path-allowlist`. Do
+   NOT bypass with `--no-verify` — the project's pre-commit/push
+   hook will reject the commit anyway, and bypassing breaks the
+   guard's whole-system invariant.
 
 6. **Final summary** must list:
    - Files modified (with line counts) — output of

@@ -82,7 +82,7 @@ section in `references/workflows.md`:
 | "Close the thread" / "mark thread as done" | **Close thread** |
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
-| "Hand thread X off to codex" / "spawn a codex worktree on X" / "run codex on X" / `/codex --thread X` | **Codex worktree handoff** (`references/codex-handoff.md`) |
+| "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 
 If the user's ask doesn't match cleanly, ask which operation they

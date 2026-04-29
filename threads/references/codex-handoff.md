@@ -15,8 +15,11 @@ Two workflows, mirroring the dispatch table in `SKILL.md`:
 
 Plus a troubleshooting section seeded by the case study at
 `.threads/receiver/20260427-chi-square-raim-design/handoff.md`
-(2026-04-29-afternoon session log) — five concrete pitfalls and
-their fixes.
+(2026-04-29-afternoon session log) — three concrete pitfalls and
+their fixes. (The case study originally surfaced five issues; two
+were specific to a sandboxed codex environment that this workflow
+no longer uses. They survive in the case-study handoff and in
+gps_design commits `4ca46a8` + `1f351dc` for the historical record.)
 
 ## Lifetime model — read this first
 
@@ -89,7 +92,7 @@ properties make this safe:
 
 **Trigger:** user asks to hand a thread (or a specific plan hop) off
 to a codex agent. Phrasings: "hand thread X off to codex", "spawn a
-codex worktree on X", "run codex on X", `/codex --thread X`.
+codex worktree on X", "spawn codex on X", "run codex on X".
 
 **Pre-flight:**
 
@@ -123,9 +126,8 @@ codex worktree on X", "run codex on X", `/codex --thread X`.
      `worktree add` and just refreshes the venv link and `.envrc`.
    - Symlinks `.venv` from the main checkout
      (`ln -s ../<repo>/.venv .venv`).
-   - Writes `.envrc` exporting `PYTHONPYCACHEPREFIX=/tmp/<slug>-pycache`
-     and `PYTHON=<worktree>/.venv/bin/python`, and `mkdir -p`s the
-     pycache dir.
+   - Writes `.envrc` exporting `PYTHON=<worktree>/.venv/bin/python`
+     so any `source .envrc` pins Python to the venv-symlink path.
    - Prints a `codex_worktrees[]` JSON snippet for the user to paste
      into `thread.json` (only on first creation; idempotent re-runs
      skip this).
@@ -147,28 +149,47 @@ codex worktree on X", "run codex on X", `/codex --thread X`.
    section was specifically written to be cold-start-readable, so
    it transfers verbatim with minimal editing.
 
-5. **Run codex** through the existing `/codex` plugin, pointed at
-   the worktree path. The codex plugin's own skill set (`codex:*`)
-   handles the runtime; the threads skill is only responsible for
-   the worktree shape and the prompt.
-
-6. **Wait for the agent's final summary.** It should list files
-   modified, files added, tests run, and any blocker. If blocked,
-   read the diagnosis and decide whether to (a) unblock and resume,
-   (b) commit the partial work to the worktree branch and continue
-   on a different track, or (c) abandon and clean up.
-
-7. **Commit the codex output to the worktree branch** (in the
-   user's main claude session — the codex sandbox can't). After
-   reviewing `git -C <worktree> diff`:
+5. **You (the user) open a sidecar terminal** — a separate
+   tab, window, or pane in your terminal app on this same machine —
+   and run codex interactively in the worktree:
    ```bash
    cd <worktree>
-   git add <files>
-   git commit -m "..."   # subject + body per project commit conventions
+   source .envrc
+   codex
    ```
-   Each codex run typically produces one commit on the worktree
-   branch. Multiple runs accumulate as separate commits — natural
-   plan-hop history, mergeable as a unit at thread close.
+   Then paste the rendered handoff prompt from step 4 as the first
+   turn. The codex TUI is the watch-and-interact surface: events
+   stream live, approval gates fire when codex wants to run a tool,
+   and you can interject mid-thought.
+
+   Claude (the main session) cannot launch this terminal for you —
+   spawning an interactive TTY isn't possible from inside its own
+   shell. The bootstrap script's final stdout block prints the
+   exact `cd / source / codex` invocation; copy-paste it into the
+   sidecar terminal.
+
+6. **Watch + steer.** As codex works, the TUI shows every event
+   (tool calls, file edits, agent messages, tool results). Approve
+   gates as they fire. If codex goes off track, type a redirect
+   message — that fires a `turn/start` against the same thread
+   without losing context.
+
+7. **Commit the codex output to the worktree branch.** When codex
+   stops at a sensible checkpoint (or you intervene to pause it),
+   review `git -C <worktree> diff` and either:
+   - let codex commit on the worktree branch via the TUI (it has
+     full git access in interactive mode), or
+   - exit the TUI and commit yourself from the main claude session:
+     ```bash
+     cd <worktree>
+     git add <files>
+     git commit -m "..."   # subject + body per project commit conventions
+     ```
+   Either way, commits land on the **worktree branch**, never on
+   `main`. Each plan hop's codex work typically produces one commit
+   on the branch; multiple hops accumulate as separate commits —
+   natural lineage that the merge-back absorbs as one unit at
+   thread close.
 
    `handoff.md` updates and the indexer regen happen on `main`, not
    on the worktree branch — see the "Bookkeeping interactions"
@@ -181,7 +202,6 @@ codex worktree on X", "run codex on X", `/codex --thread X`.
   advances ahead of main; that's expected.
 - `<worktree>/.venv/bin/python -c "import sys; print(sys.executable)"`
   prints the symlinked path (proves the link resolves).
-- `[ -d /tmp/<slug>-pycache ]` is true.
 - `thread.json.codex_worktrees[0].status == "active"` and
   `path` / `branch` match what bootstrap printed.
 
@@ -292,11 +312,12 @@ proceed on explicit confirmation.
 
 ## Troubleshooting
 
-The five issues observed during the case-study run on
-`.threads/receiver/20260427-chi-square-raim-design/` (codex-worktree
-session 2026-04-29 afternoon, commits `4ca46a8` source + `1f351dc`
-thread). Each has a one-line root cause and a mitigation that the
-bootstrap and prompt template now apply by default.
+The three issues observed during the case-study run on
+`.threads/receiver/20260427-chi-square-raim-design/` that still
+apply under raw-TUI mode (codex-worktree session 2026-04-29
+afternoon, commits `4ca46a8` source + `1f351dc` thread). Each has
+a one-line root cause and a mitigation that the bootstrap and
+prompt template now apply by default.
 
 ### 1. `.venv` tied to the main checkout
 
@@ -344,39 +365,6 @@ inside the same isolated worktree.
 **source-only** work. Thread updates happen on `main` after each
 codex run, by the user's main claude session. Rule 1 of the handoff
 prompt enforces this with a "do NOT touch `.threads/`" instruction.
-
-### 4. Codex sandbox cannot write `.git` metadata
-
-**Symptom:** the agent's `git add` or `git commit` fails with an
-index-lock or read-only-fs error. Worktree `.git` is a file
-pointing at `.git/worktrees/<name>/` in the main repo, which the
-sandbox may not allow writes to.
-
-**Root cause:** codex sandbox / permission policy on the main
-repo's `.git` dir; not a bug in the worktree pattern itself.
-
-**Mitigation (applied by prompt rule 2):** the agent leaves all
-changes unstaged. The user's main claude session — which is *not*
-sandboxed — commits the agent's output onto the worktree branch
-between codex runs. This is also where intermediate plan-hop
-commits accrue, giving the merge-back a clean linear history to
-absorb.
-
-### 5. `__pycache__` writes fail on read-only sandbox FS
-
-**Symptom:** running `python3` (or `pytest`, `unittest`) errors
-with `[Errno 30] Read-only file system` while writing `.pyc` to
-`__pycache__`.
-
-**Root cause:** the codex sandbox mounts parts of the worktree
-read-only or denies writes outside an explicit allowlist. Python
-defaults to writing `.pyc` next to the `.py`.
-
-**Mitigation (applied by bootstrap):** `.envrc` exports
-`PYTHONPYCACHEPREFIX=/tmp/<slug>-pycache` and the bootstrap
-`mkdir -p`s that dir. Python writes `.pyc` files to the prefix
-dir mirroring the source tree, leaving the worktree itself
-write-untouched-by-bytecode.
 
 ## Bookkeeping interactions with other workflows
 
