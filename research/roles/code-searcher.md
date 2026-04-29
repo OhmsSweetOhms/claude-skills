@@ -72,6 +72,19 @@ JSON per `schemas/subagent-result.json` with `role: "code_searcher"`.
 
 Write to `.research/session-{id}/results/code.json`.
 
+### Path-handling rule (load-bearing)
+
+`local_file` and any other path field (`source`, `local_paths[]`, free-text `verbatim_quote` blobs that paste shell output) MUST be relative — either session-relative for fresh downloads or repo-relative for files cited from other sessions or the project tree:
+
+| Case | Correct | Wrong |
+|---|---|---|
+| Fresh PDF you just downloaded | `pdfs/foo.pdf` | `/home/<user>/.claude/.../pdfs/foo.pdf` |
+| File cited from another session's clone | `.research/session-XXX/repos/Y/foo.cc` | `/media/<user>/Work1/.../session-XXX/repos/Y/foo.cc` |
+| File in the project's source tree | `gps_iq_gen/foo.py` | `/media/<user>/Work1/Claude/work/gps_design/gps_iq_gen/foo.py` |
+| `ls -la` output captured as `verbatim_quote` | replace `<user> <user>` ownership with `user user` | leave the local username in the captured output |
+
+This is load-bearing because absolute paths leak the local user's directory layout into committed JSON. `gen_manifest.py` defensively normalizes paths it reads, but the rule applies to every JSON field the code-searcher writes — only `local_paths[]` is normalized at manifest-build time.
+
 ## Boundaries
 
 - Do NOT read full source files (that's a follow-up action for the user)

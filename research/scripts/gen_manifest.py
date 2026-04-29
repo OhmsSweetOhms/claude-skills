@@ -175,23 +175,60 @@ def scan_repos(session_dir: str) -> list:
     return results
 
 
+def _normalize_path_string(p: str) -> str:
+    """Strip user-fingerprinted absolute-path prefixes from a path string.
+
+    Subagents sometimes capture absolute filesystem paths in `local_file`
+    despite the schema requesting relative paths. Those leak the local
+    user's home directory layout into committed JSON. This converts:
+
+      <project_root>/<...>           ->  <...>           (repo-relative)
+      /home/<user>/.claude/<...>     ->  ~/.claude/<...> (home-relative)
+      /Users/<user>/.claude/<...>    ->  ~/.claude/<...>
+      /home/<user>/<...>             ->  ~/<...>
+      /Users/<user>/<...>            ->  ~/<...>
+
+    Other absolute paths are left as-is (so external mounts like
+    /mnt/dataset/foo are still recorded verbatim — they are not user
+    fingerprints, just intentional external references).
+    """
+    if not p or not isinstance(p, str):
+        return p
+    project_root = os.getcwd()
+    if p.startswith(project_root + os.sep):
+        return p[len(project_root) + 1:]
+    if p == project_root:
+        return ""
+    home = os.path.expanduser("~")
+    if p.startswith(home + os.sep):
+        return "~" + p[len(home):]
+    if p == home:
+        return "~"
+    return p
+
+
 def _normalize_result(result: dict) -> dict:
     """Normalize a single result entry, tolerating field name drift.
 
     Subagents (Claude) write results JSON freehand. Field names drift:
       local_paths → local_file       (array vs string)
       download_status                 (often missing, infer from files)
-    This function reads known variants and returns canonical values.
+    This function reads known variants and returns canonical values, and
+    defensively scrubs absolute filesystem paths (with the local username
+    embedded) down to repo-relative or home-relative form.
     """
     url = result.get("url") or ""
     doi = result.get("doi") or ""
 
-    # local_paths: array preferred, accept singular string variants
+    # local_paths: array preferred, accept singular string variants.
+    # Defensively normalize each path so absolute prefixes leaking the
+    # local username get stripped here even if the subagent wrote them.
     local_paths = result.get("local_paths", [])
     if not local_paths:
         lf = result.get("local_file") or result.get("local_path") or ""
         if lf:
             local_paths = [lf]
+    local_paths = [_normalize_path_string(p) for p in local_paths]
 
     # download_status: infer from local_paths if not set
     dl_status = result.get("download_status") or result.get("status_download") or ""

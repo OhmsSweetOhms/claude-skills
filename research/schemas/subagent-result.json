@@ -70,7 +70,7 @@
 
           "local_file": {
             "type": "string",
-            "description": "Relative path to local copy within session dir (e.g. 'pdfs/foo.pdf', 'blogs/bar.md'). Set by Claude after calling fetch_and_save.py."
+            "description": "Path to local copy. MUST be relative — either to the session dir (e.g. 'pdfs/foo.pdf', 'blogs/bar.md' for fresh downloads) or to the repo root (e.g. '.research/session-XXX/repos/Y/file.cc' for files in another session, 'gps_iq_gen/foo.py' for files in the project). Never absolute — paths starting with '/home/', '/Users/', '/media/', or the current project root leak the local user's directory layout into committed JSON. gen_manifest.py defensively normalizes these but the agent should not write them in the first place."
           },
           "clone_repo": {
             "type": "boolean",

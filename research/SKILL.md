@@ -96,6 +96,8 @@ Read the role document for each role before executing it. The role docs are in `
    python3 scripts/fetch_and_save.py fetch "<url>" .research/session-{id} --name "{name}"
    ```
 
+   PDF text extraction tries Mathpix first (high-fidelity LaTeX, tables, headings); falls back to pymupdf flat-text on any error. Provenance is written to `<stem>.extraction.json` next to `<stem>.md`. Read `references/mathpix-conversion.md` for env-var setup (`MATHPIX_APP_ID`, `MATHPIX_APP_KEY`), costs, and known limitations.
+
    **d) gh API results** — pipe JSON output:
    ```bash
    gh api search/repositories ... | python3 scripts/fetch_and_save.py gh-json .research/session-{id} --name "{query-summary}"
@@ -107,7 +109,7 @@ Read the role document for each role before executing it. The role docs are in `
    ```
 
    Do NOT skip this step. Do NOT use Write tool as an alternative — always use the script. The script creates directories, sanitizes names, and produces consistent output. If it came from a tool call, it goes through the script to disk.
-7. Produce output JSON per `schemas/subagent-result.json`. Use `url` for URLs and `doi` for DOIs as **separate fields** — papers often have both. Set `local_file` to the relative session path after saving content. Set `type` explicitly (paper/thesis/repo/blog_post/app_note/tutorial/trade_article/webpage).
+7. Produce output JSON per `schemas/subagent-result.json`. Use `url` for URLs and `doi` for DOIs as **separate fields** — papers often have both. Set `local_file` to a **relative path only** — either session-relative (`pdfs/foo.pdf` for a fresh download) or repo-relative (`.research/session-XXX/repos/Y/file.cc` for a file in another session, `gps_iq_gen/foo.py` for a file in the project tree). **Never write absolute paths** like `/home/<user>/...`, `/Users/<user>/...`, `/media/<user>/...` or anything starting with the local project root — those leak the local user's directory layout into committed JSON. The same rule applies to any other free-text path field (e.g. `domain_reference` in plan.json, `source` in extraction.json, `local_paths[]`, `verbatim_quote` blobs that paste shell output). Set `type` explicitly (paper/thesis/repo/blog_post/app_note/tutorial/trade_article/webpage).
 8. Write to `.research/session-{id}/results/{role}.json`
 9. Collect `handoff_items` for subsequent roles
 
@@ -230,6 +232,16 @@ python3 scripts/gen_manifest.py .research/session-{id} \
 ```
 
 The script scans `pdfs/`, `blogs/`, `app-notes/`, `html/`, and `repos/` directories, extracts metadata from file headers and GitHub API JSON, and writes the structured manifest. Schema: `schemas/session-manifest.json`.
+
+### Refresh Cross-Project Indexes
+
+If `<project>/.threads/` exists alongside `<project>/.research/`, regenerate the threads-side registry and the research-side index so any new session is reflected and any `spawning_thread`/`linked_research` cross-references are validated:
+
+```bash
+python3 ~/.claude/skills/threads/scripts/index_threads_research.py
+```
+
+Run from the project root (the directory containing `.research/`). The script writes `<project>/.threads/threads.json` (the threads-skill registry) and `<project>/.research/INDEX.json` (the research-side mirror with reverse `linked_by_threads[]` for each session). Add `--check` to validate without writing; the command exits 1 if the new session's `spawning_thread` references a non-existent thread, if it has the `.threads/` prefix instead of the bare `subsystem/slug` form, or if any thread's `linked_research[]` points at a missing session. If the project has no `.threads/` directory, skip this step.
 
 ### Final Output
 

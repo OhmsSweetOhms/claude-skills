@@ -119,21 +119,67 @@ def download(url: str) -> tuple:
     return data, headers, final_url
 
 
-def extract_pdf_text(pdf_path: str) -> str:
-    """Extract text from PDF using pymupdf."""
+def extract_pdf_text(pdf_path: str) -> tuple[str, dict]:
+    """Extract markdown from PDF.
+
+    Tries Mathpix first (high-fidelity LaTeX/tables/headings). On any
+    MathpixError — including missing env vars — falls back to pymupdf
+    flat-text. Returns (markdown, provenance_dict).
+
+    Provenance keys: backend, pages, duration_s, pdf_id, fallback_reason.
+    """
+    import time
+
+    fallback_reason = None
+
+    # 1. Try Mathpix
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from mathpix_convert import convert_pdf, MathpixError
+        try:
+            md, prov = convert_pdf(pdf_path)
+            prov["fallback_reason"] = None
+            return md, prov
+        except MathpixError as e:
+            fallback_reason = f"{type(e).__name__}: {e}"
+    except ImportError as e:
+        fallback_reason = f"ImportError: {e} (run: python3 -m pip install requests)"
+
+    # 2. pymupdf fallback
+    t0 = time.monotonic()
     try:
         import pymupdf
     except ImportError:
-        return "[pymupdf not installed — run: python3 -m pip install pymupdf]\n"
+        return (
+            "[pymupdf not installed — run: python3 -m pip install pymupdf]\n",
+            {
+                "backend": "pymupdf",
+                "pages": 0,
+                "duration_s": round(time.monotonic() - t0, 2),
+                "pdf_id": None,
+                "fallback_reason": fallback_reason,
+            },
+        )
 
     doc = pymupdf.open(pdf_path)
     lines = []
+    pages = 0
     for i, page in enumerate(doc):
         text = page.get_text()
         if text.strip():
             lines.append(f"--- Page {i + 1} ---")
             lines.append(text)
-    return "\n".join(lines)
+            pages = i + 1
+    return (
+        "\n".join(lines),
+        {
+            "backend": "pymupdf",
+            "pages": pages,
+            "duration_s": round(time.monotonic() - t0, 2),
+            "pdf_id": None,
+            "fallback_reason": fallback_reason,
+        },
+    )
 
 
 # ── Mode: fetch (PDF/URL download) ──────────────────────────────────────────
@@ -154,13 +200,17 @@ def cmd_fetch(args):
         pdf_path = os.path.join(session_dir, "pdfs", f"{name}.pdf")
         with open(pdf_path, "wb") as f:
             f.write(data)
-        text = extract_pdf_text(pdf_path)
+        text, provenance = extract_pdf_text(pdf_path)
         text_path = os.path.join(session_dir, "pdfs", f"{name}.md")
         with open(text_path, "w") as f:
             f.write(f"# {name}\n# Source: {url}\n\n{text}")
+        sidecar_path = os.path.join(session_dir, "pdfs", f"{name}.extraction.json")
+        with open(sidecar_path, "w") as f:
+            json.dump(provenance, f, indent=2)
         size_kb = len(data) / 1024
         print(f"PDF: {pdf_path} ({size_kb:.0f} KB)")
-        print(f"Text: {text_path} ({text.count(chr(10))} lines)")
+        print(f"Text: {text_path} ({text.count(chr(10))} lines, backend={provenance['backend']})")
+        print(f"Provenance: {sidecar_path}")
     else:
         raw_path = os.path.join(session_dir, "fetched", f"{name}.html")
         os.makedirs(os.path.dirname(raw_path), exist_ok=True)
