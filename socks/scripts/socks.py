@@ -193,6 +193,12 @@ def print_session_summary(project_dir):
         print()
 
 
+def get_build_flow(project_dir):
+    """Return socks.json build.flow, defaulting to native Vivado."""
+    config = load_project_config(project_dir) or {}
+    return config.get("build", {}).get("flow", "vivado_native")
+
+
 def log_transition(stage_num, reason, extra_args, project_dir):
     """Log what stage is about to run, why, and what it receives."""
     label = STAGES[stage_num].label if stage_num in STAGES else f"Stage {stage_num}"
@@ -630,6 +636,12 @@ def main() -> int:
                 extra_args.extend(["--settings", args.settings])
             reason = "Package VHDL design as Vivado IP (ipx::)"
 
+        elif stage == 20:
+            project_scope = get_scope(project_dir) or args.scope
+            if project_scope == "system" and get_build_flow(project_dir) == "adi_make":
+                return [], "ADI Make flow -- native system design loop not applicable", 0
+            reason = "Scheduled stage"
+
         elif stage == 5:
             tb_path = find_python_tb(project_dir)
             if tb_path:
@@ -692,6 +704,8 @@ def main() -> int:
 
             # System scope: pass --project-dir only (TCL-driven flow)
             if project_scope == "system":
+                if get_build_flow(project_dir) == "adi_make":
+                    return [], "ADI Make flow -- Stage 14 owns bitstream/XSA staging", 0
                 synth_top = get_entity(project_dir) or "system_wrapper"
                 extra_args = ["--project-dir", project_dir]
                 if args.settings:
@@ -864,6 +878,11 @@ def main() -> int:
         t0 = _time.monotonic()
         rc = run_stage(stage, project_dir, extra_args, script_override=script_override)
         elapsed = _time.monotonic() - t0
+        if stage == 0 and sm:
+            # Stage 0 persists hardware capabilities from a child process.
+            # Reload before updating stage status so cached state does not
+            # overwrite fresh JTAG/UART detection results.
+            sm._state = None
 
         # Stage 0/4 exit code 2 = warnings-only (non-blocking)
         if stage in (0, 4) and rc == 2:

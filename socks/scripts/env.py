@@ -359,6 +359,37 @@ def check_fingerprint(project_dir):
         spec.loader.exec_module(engine)
 
         findings = engine.scan_single_repo(project_dir)
+        skip_prefixes = (
+            "build/hil/vivado_project/",
+            "build/hil/vitis_ws/",
+            "vivado_project/",
+            "vitis_ws/",
+        )
+        skip_suffixes = (
+            "build/hil/ps7_init.tcl",
+            "build/hil/psu_init.tcl",
+            "ps7_init.tcl",
+            "psu_init.tcl",
+        )
+        filtered_findings = []
+        for finding in findings:
+            detail = finding.replace("BLOCKED: ", "")
+            path_part = None
+            parts = detail.split(" found in ", 1)
+            if len(parts) > 1:
+                path_part = parts[1]
+            else:
+                parts = detail.rsplit(" -- ", 1)
+                if len(parts) > 1:
+                    path_part = parts[1]
+            if path_part:
+                finding_path = path_part.rsplit(":", 1)[0].replace(os.sep, "/")
+                if any(finding_path.startswith(p) for p in skip_prefixes):
+                    continue
+                if any(finding_path.endswith(s) for s in skip_suffixes):
+                    continue
+            filtered_findings.append(finding)
+        findings = filtered_findings
 
         if findings:
             info.append(("Fingerprint scan", False,

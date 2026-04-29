@@ -131,6 +131,9 @@ def main() -> int:
     # Check prerequisites: bitstream + ELF + boot init
     bit_files = glob.glob(os.path.join(
         build_dir, "vivado_project", f"{project_name}.runs", "impl_1", "*.bit"))
+    if not bit_files:
+        bit_files = glob.glob(os.path.join(
+            build_dir, "vivado_project", "*.runs", "impl_1", "*.bit"))
     elf_path = os.path.join(build_dir, "vitis_ws", "hil_app", "Debug", "hil_app.elf")
     boot_init = os.path.join(build_dir, init_name)
 

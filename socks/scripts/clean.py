@@ -56,6 +56,8 @@ ARTIFACT_GLOBS = [
     "build/hil/**/*.pb",
     "build/hil/**/*.wdb",
     "build/hil/ila_*.csv",
+    "build/hil/ps7_init.tcl",
+    "build/hil/psu_init.tcl",
 ]
 
 # Path-based directories to remove entirely (with --all)

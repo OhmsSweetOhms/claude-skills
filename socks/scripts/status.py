@@ -60,6 +60,12 @@ def _result(name, level, detail=""):
     return {"name": name, "level": level, "detail": detail}
 
 
+def get_build_flow(project_dir):
+    """Return socks.json build.flow, defaulting to native Vivado."""
+    cfg = load_project_config(project_dir) or {}
+    return cfg.get("build", {}).get("flow", "vivado_native")
+
+
 # ---------------------------------------------------------------------------
 # Check: Config (socks.json)
 # ---------------------------------------------------------------------------
@@ -142,11 +148,18 @@ def check_directory(project_dir, output="terminal"):
     results = []
     warns, fails = 0, 0
     scope = get_scope(project_dir) or "module"
+    build_flow = get_build_flow(project_dir)
 
     if scope == "system":
         # build/synth/
         synth_dir = os.path.join(project_dir, "build", "synth")
-        if os.path.isdir(synth_dir):
+        if build_flow == "adi_make":
+            results.append(_result(
+                "build/synth/",
+                "INFO",
+                "not required; ADI Make stages artifacts under build/hil/",
+            ))
+        elif os.path.isdir(synth_dir):
             tcl_count = _count_files(synth_dir, "*.tcl")
             xsa_count = _count_files(synth_dir, "*.xsa")
             rpt_count = _count_files(synth_dir, "*.rpt")
@@ -164,7 +177,13 @@ def check_directory(project_dir, output="terminal"):
 
         # constraints/
         constr_dir = os.path.join(project_dir, "constraints")
-        if os.path.isdir(constr_dir):
+        if build_flow == "adi_make":
+            results.append(_result(
+                "constraints/",
+                "INFO",
+                "owned by ADI Make reference project",
+            ))
+        elif os.path.isdir(constr_dir):
             xdc_count = _count_files(constr_dir, "*.xdc")
             level = "PASS" if xdc_count else "WARN"
             results.append(_result("constraints/", level,
@@ -254,6 +273,7 @@ def check_build(project_dir, output="terminal"):
     results = []
     warns, fails = 0, 0
     scope = get_scope(project_dir) or "module"
+    build_flow = get_build_flow(project_dir)
     synth_dir = os.path.join(project_dir, "build", "synth")
 
     # timing.rpt
@@ -309,6 +329,13 @@ def check_build(project_dir, output="terminal"):
     # XSA / bitstream
     xsa_files = glob.glob(os.path.join(synth_dir, "*.xsa"))
     bit_files = glob.glob(os.path.join(synth_dir, "*.bit"))
+    if build_flow == "adi_make":
+        hil_dir = os.path.join(project_dir, "build", "hil")
+        xsa_files.extend(glob.glob(os.path.join(hil_dir, "*.xsa")))
+        bit_files.extend(glob.glob(
+            os.path.join(hil_dir, "vivado_project", "**", "*.bit"),
+            recursive=True,
+        ))
     if xsa_files:
         results.append(_result("*.xsa", "PASS", f"{len(xsa_files)} present"))
     if bit_files:

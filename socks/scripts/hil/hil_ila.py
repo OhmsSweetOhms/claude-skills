@@ -35,7 +35,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hil_lib import (
     load_hil_json, hil_build_dir, tcl_dir, find_xsdb, find_serial_port,
-    XSDBSession,
+    XSDBSession, board_family, boot_init_filename,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

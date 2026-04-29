@@ -64,6 +64,7 @@ def check_board_references(project_dir, config):
     """Check for board preset and master XDC."""
     info = []
     warnings = []
+    build_flow = config.get("build", {}).get("flow", "vivado_native")
 
     preset = config.get("board", {}).get("preset")
     if not preset:
@@ -79,6 +80,8 @@ def check_board_references(project_dir, config):
         preset_files = [f for f in os.listdir(boards_dir) if f.endswith("_preset.tcl")]
         if preset_files:
             info.append(("  PS7 preset", True, preset_files[0]))
+        elif build_flow == "adi_make":
+            info.append(("  PS preset", None, "owned by ADI Make XSA"))
         else:
             info.append(("  PS7 preset", False, "no *_preset.tcl found"))
             warnings.append(f"No PS7 preset TCL in references/boards/{preset}/")
@@ -174,12 +177,19 @@ def main() -> int:
 
     # Section 4: System design loop guidance
     print(f"\n  Next Steps:")
-    print(f"    Stage 20 (System Design Loop) -- Claude authors:")
-    print(f"      1. build/synth/create_bd.tcl   (Vivado block design TCL)")
-    print(f"      2. build/synth/build_bitstream.tcl (synthesis/impl/bitstream)")
-    print(f"      3. constraints/*.xdc            (pin assignment + I/O standard)")
-    print(f"      4. docs/ARCHITECTURE.md         (data flow, clocking, rate summary)")
-    print(f"    Read references/design-loop-system.md for the full guide.")
+    if config.get("build", {}).get("flow") == "adi_make":
+        print(f"    Stage 14 (HIL Vivado Project) -- ADI Make stages:")
+        print(f"      1. build/hil/system_wrapper.xsa")
+        print(f"      2. build/hil/vivado_project/.../system_top.bit")
+        print(f"      3. build/hil/psu_init.tcl or ps7_init.tcl")
+        print(f"    Stage 20/10 native SOCKS design loops are skipped for ADI Make flows.")
+    else:
+        print(f"    Stage 20 (System Design Loop) -- Claude authors:")
+        print(f"      1. build/synth/create_bd.tcl   (Vivado block design TCL)")
+        print(f"      2. build/synth/build_bitstream.tcl (synthesis/impl/bitstream)")
+        print(f"      3. constraints/*.xdc            (pin assignment + I/O standard)")
+        print(f"      4. docs/ARCHITECTURE.md         (data flow, clocking, rate summary)")
+        print(f"    Read references/design-loop-system.md for the full guide.")
 
     # Warnings
     if all_warnings:
