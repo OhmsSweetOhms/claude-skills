@@ -403,16 +403,23 @@ def render_thread_index(idx: ThreadIndex) -> dict[str, Any]:
     by_kind: dict[str, list[dict[str, str]]] = {}
     for f in idx.findings:
         by_kind.setdefault(f.kind, []).append({"thread_id": f.thread_id, "detail": f.detail})
-    return {
+    payload: dict[str, Any] = {
         "version": 1,  # legacy registry schema version, preserved for skill compat
         "generated_at": utc_now_iso(),
         "schema_version": 1,
         "summary": thread_summary_block(idx.threads),
         "validation": by_kind,
-        "promotion_log": flatten_promotions(idx.threads),
-        "closure_log": _build_closure_log(idx.threads),
-        "threads": idx.threads,
     }
+    # current_metrics is asserted state, not derived — preserve verbatim from disk
+    # so a rebuild never clobbers measurements written by a thread-closure step.
+    # See _preserve_current_metrics for the contract.
+    cm = _preserve_current_metrics()
+    if cm is not None:
+        payload["current_metrics"] = cm
+    payload["promotion_log"] = flatten_promotions(idx.threads)
+    payload["closure_log"] = _build_closure_log(idx.threads)
+    payload["threads"] = idx.threads
+    return payload
 
 
 def render_research_index(idx: ResearchIndex) -> dict[str, Any]:
@@ -502,11 +509,24 @@ def _build_closure_log(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # Summary mode (read-only; SessionStart-friendly)
 # ---------------------------------------------------------------------------
 
-# Where current_metrics lives. Phase 6 of the gps_design memory-and-docs-cleanup
-# thread defines the schema and populates this block; until then, we read what's
-# present on disk and emit "(not yet populated)" if absent. Once populated, the
-# preservation contract is the threads skill's responsibility (close-thread step
-# writes here; rebuilds preserve).
+# Where current_metrics lives. Phase 6 step 1 of the gps_design
+# memory-and-docs-cleanup thread (cross-cutting/20260501-memory-and-docs-cleanup)
+# defines the schema and backfills the block. Per the 2026-05-01 user direction
+# (Option B / moving target), downstream firmware-port and FPGA validation gates
+# read these values directly; the rule is "VHDL/C must follow the Python
+# accuracy targets." That makes preservation across rebuilds load-bearing —
+# without it, the very first index rebuild after a Python-side refactor
+# session would silently nuke the measurements the gates depend on.
+#
+# Two helpers, one read source:
+#   _read_on_disk_current_metrics — used by render_summary (read-only, may
+#                                   return None for "not yet populated").
+#   _preserve_current_metrics    — used by render_thread_index when assembling
+#                                   the new payload; same read, same shape.
+#
+# Mutation contract: rebuilds NEVER write current_metrics. Only an explicit
+# thread-closure step in the threads skill writes new values (or a manual edit
+# during a backfill, which is what Phase 6 step 1 itself was).
 def _read_on_disk_current_metrics() -> dict[str, Any] | None:
     if not THREADS_INDEX_PATH.is_file():
         return None
@@ -518,6 +538,10 @@ def _read_on_disk_current_metrics() -> dict[str, Any] | None:
     return cm if isinstance(cm, dict) else None
 
 
+def _preserve_current_metrics() -> dict[str, Any] | None:
+    return _read_on_disk_current_metrics()
+
+
 def _collect_goal_targets() -> list[str]:
     """Walk known project-specific JSON sources for `targets` blocks.
 
@@ -526,6 +550,13 @@ def _collect_goal_targets() -> list[str]:
     the helper is conservative — unknown projects produce no output.
 
     Currently checks scenario_engine/scenarios/*.v2.json (gps_design).
+
+    Display contract: one headline number per scenario per category. The
+    on-disk schema is much richer (rationale, source citations, tracking
+    integration_ms / continuity_s, p95, ttff) — but SessionStart output
+    is token-bounded. Anyone who needs the full block reads the JSON.
+    Categories surfaced here: pvt._3d_mean_error_m (the budget),
+    tracking.cn0_sensitivity_floor_dbhz (the architecture floor).
     """
     out: list[str] = []
     scenarios_dir = REPO_ROOT / "scenario_engine" / "scenarios"
@@ -538,13 +569,19 @@ def _collect_goal_targets() -> list[str]:
             targets = data.get("targets")
             if not isinstance(targets, dict) or not targets:
                 continue
-            out.append(f"  {path.name}:")
-            for k, v in targets.items():
-                if isinstance(v, dict):
-                    val = v.get("value", v)
-                    out.append(f"    {k}: {val}")
-                else:
-                    out.append(f"    {k}: {v}")
+            pvt = targets.get("pvt") if isinstance(targets.get("pvt"), dict) else {}
+            trk = targets.get("tracking") if isinstance(targets.get("tracking"), dict) else {}
+            pvt_v = pvt.get("_3d_mean_error_m")
+            trk_v = trk.get("cn0_sensitivity_floor_dbhz")
+            trk_int = trk.get("integration_ms")
+            parts = []
+            if pvt_v is not None:
+                parts.append(f"pvt 3D mean ≤ {pvt_v} m")
+            if trk_v is not None:
+                int_tail = f" @ {trk_int} ms" if trk_int is not None else ""
+                parts.append(f"cn0 floor {trk_v} dB-Hz{int_tail}")
+            if parts:
+                out.append(f"  {path.name}: {'; '.join(parts)}")
     return out
 
 
@@ -581,6 +618,10 @@ def render_summary(thread_payload: dict[str, Any]) -> str:
     if cm:
         lines.append("Current metrics:")
         for key, val in cm.items():
+            if key.startswith("_"):
+                # Convention: leading-underscore fields are inline schema docs
+                # / notes for the on-disk JSON, not SessionStart-display data.
+                continue
             if isinstance(val, dict):
                 v = val.get("value")
                 scenario = val.get("scenario", "")
