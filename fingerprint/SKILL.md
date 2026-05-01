@@ -12,15 +12,32 @@ digital fingerprint material that could identify the developer.
 
 ```
 fingerprint_engine.py              <- shared core (patterns, Scanner, identity, allowlist)
-    |                  |
-    imports            imports
-    |                  |
-git-fingerprint-guard.py        fingerprint_scan.py
-(hook: --scan-stdin)            (tool: --scan-dir, --scan-tree)
-~/.claude/hooks/                ~/.claude/skills/fingerprint/
+    |             |             |
+    imports       imports       imports
+    |             |             |
+git-fingerprint-guard.py   commit-msg            fingerprint_scan.py
+(Claude PreToolUse hook)   (git-native hook)     (tool: scan-{dir,tree,commits,unpushed})
+~/.claude/hooks/           ~/.claude/hooks/      ~/.claude/skills/fingerprint/
+                           git-hooks/
 ```
 
-Both entry points use the same engine. Update patterns in one place.
+Three entry points share one engine. Update patterns once.
+
+### Defense layers — what catches what
+
+| Entry path                        | PreToolUse (Claude)   | commit-msg (git-native)  | --scan-commits (audit) |
+|-----------------------------------|-----------------------|--------------------------|------------------------|
+| `git commit -m "msg"` from Claude | ✅ shlex parser       | ✅ scans message file    | retrospective only     |
+| `git commit -F file` from Claude  | ✅ reads file content | ✅                       | retrospective only     |
+| `git commit` (editor) from Claude | ❌ no msg yet         | ✅                       | retrospective only     |
+| `git commit --amend`              | ❌ no msg yet         | ✅                       | retrospective only     |
+| `git merge` / `git rebase`        | ❌ git authors msg    | ✅                       | retrospective only     |
+| Codex / external tool / user CLI  | ❌ no Claude hook     | ✅ (git itself enforces) | retrospective only     |
+| `git commit --no-verify`          | ❌                    | ❌ (explicit bypass)     | retrospective catches  |
+
+The `commit-msg` git hook is the bulletproof layer because git enforces it
+regardless of which tool authored the commit. Installed globally via
+`git config --global core.hooksPath ~/.claude/hooks/git-hooks/`.
 
 ## When to Use
 
@@ -33,10 +50,32 @@ Both entry points use the same engine. Update patterns in one place.
 
 ## How to Run
 
-### Single repo scan
+### Single repo scan (working tree)
 ```bash
 python3 ~/.claude/skills/fingerprint/fingerprint_scan.py --scan-dir /path/to/repo
 ```
+
+### Commit-message scans (history audit)
+
+The working-tree scan only sees current files. To audit commit message
+bodies (which can carry leaks like absolute paths in `Verification:`
+trailers), use:
+
+```bash
+# All reachable commits (every ref)
+python3 ~/.claude/skills/fingerprint/fingerprint_scan.py --scan-commits /path/to/repo
+
+# Only commits not yet pushed to upstream
+python3 ~/.claude/skills/fingerprint/fingerprint_scan.py --scan-unpushed /path/to/repo
+```
+
+Use `--scan-unpushed` as the natural pre-push check; use `--scan-commits`
+for retrospective audits or to catch leaks that snuck through before the
+`commit-msg` hook was installed. Findings include the short commit SHA
+and subject so you can `git show <sha>` immediately.
+
+If `--scan-commits` finds leaks, the fix path is `git filter-repo
+--replace-message <table>` — see "Git History Scrubbing" below.
 
 ### Multi-repo tree scan (interactive)
 For a parent directory containing multiple repos:
@@ -252,12 +291,75 @@ done
 
 ## Relationship to Git Hooks
 
-The `git-fingerprint-guard.py` PreToolUse hook automatically gates
-`git add`, `git commit`, and `git push`. It imports the same
-`fingerprint_engine.py` so patterns are always in sync.
+Two hooks share the engine:
 
-The `fingerprint_scan.py` tool handles `--scan-dir` and `--scan-tree`
-for auditing repos that predate the hooks or for bulk scanning.
+1. **`git-fingerprint-guard.py`** -- a Claude Code PreToolUse hook that
+   gates `git add`, `git commit`, and `git push` invocations made from
+   inside Claude Code sessions. Catches early but is invisible to git
+   commands run by other tools (e.g. Codex) or by the user in their
+   own shell.
+
+2. **`commit-msg`** -- a git-native hook (`~/.claude/hooks/git-hooks/commit-msg`)
+   installed globally via `git config --global core.hooksPath
+   ~/.claude/hooks/git-hooks/`. Runs inside git's own commit flow on
+   every commit, regardless of which tool launched it. This is the
+   authoritative layer.
+
+The `fingerprint_scan.py` tool handles `--scan-dir`, `--scan-tree`,
+`--scan-commits`, and `--scan-unpushed` for ad-hoc audits.
+
+### Installing the commit-msg hook on a new machine
+
+```bash
+# 1. Hook script is in ~/.claude/hooks/git-hooks/commit-msg
+ls ~/.claude/hooks/git-hooks/commit-msg
+
+# 2. Point git globally at the directory
+git config --global core.hooksPath ~/.claude/hooks/git-hooks/
+
+# 3. (Optional) Drop a per-repo backup so the hook still works if
+#    core.hooksPath is later disabled or pointed elsewhere
+cp ~/.claude/hooks/git-hooks/commit-msg /path/to/repo/.git/hooks/commit-msg
+```
+
+**Note:** `core.hooksPath` is a single-path setting -- once set, git
+ignores per-repo `.git/hooks/` entirely. If you previously had custom
+hooks in any repo, copy them into `~/.claude/hooks/git-hooks/` too or
+they'll stop firing.
+
+### When the hook blocks (agent guidance)
+
+The hook is a PreToolUse interceptor: when it detects fingerprint
+material, it blocks the entire Bash invocation **before any of the
+chained commands run**. Practical implications for an agent retrying
+after a block:
+
+- **Don't assume your prior `git add` persisted.** Even though the
+  hook itself is read-only (`git diff --cached`), if you chained
+  `git add … && git commit …` in one Bash call, the chain was
+  intercepted before either ran in some block scenarios. After fixing
+  the flagged content, always run `git status --short` first, then
+  **re-stage every file you intended to commit** — don't trust that
+  the index still reflects your earlier intent.
+- **Re-run the fingerprint scan on the modified file before retrying.**
+  Cheap insurance that your fix actually addressed the violation.
+- **Multi-file commits split if you only re-stage the flagged file.**
+  Common foot-gun: hook blocks on file A; you fix A, re-stage A only,
+  commit. Files B/C/D that you originally intended to ride along get
+  left behind, requiring follow-up commits. Re-stage the full original
+  set or use a single `git add` of all paths together.
+
+### Most common foot-gun: absolute filesystem paths in commit messages
+
+The single most common cause of agent-driven blocks is writing
+absolute filesystem paths into commit message bodies, session-log
+entries, or any tracked content (`/home/<user>/...`,
+`/media/<user>/...`, etc.). The username component trips the identity
+check. **Always use repo-relative paths** in commit messages and
+tracked docs — `../<sibling-dir>` for worktrees, `.threads/...` for
+thread paths, etc. This rule is also stated in the user's global
+CLAUDE.md but bears repeating here because the hook enforces it
+loudly and recovery is multi-step.
 
 ## Operational Notes
 
