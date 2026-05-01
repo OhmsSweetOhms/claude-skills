@@ -1,0 +1,300 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://claude.local/threads/codex-handback.schema.json",
+  "title": "Codex worktree handback (v2)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "plan_id",
+    "thread_id",
+    "session_date",
+    "status",
+    "worktree",
+    "commits",
+    "gates",
+    "discoveries",
+    "investigations",
+    "follow_ons",
+    "plan_hindsight"
+  ],
+  "properties": {
+    "schema_version": { "const": "2" },
+    "plan_id": { "type": "string", "pattern": "^plan-[0-9]+" },
+    "thread_id": { "type": "string" },
+    "session_date": { "type": "string", "format": "date" },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "gate-incomplete", "blocked", "scope-cut"]
+    },
+
+    "worktree": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["branch", "base_at_hop_start", "head_at_handback", "diff_stat"],
+      "properties": {
+        "branch": { "type": "string" },
+        "base_at_hop_start": { "type": "string" },
+        "head_at_handback": { "type": "string" },
+        "plan_terminal_sha": { "type": "string" },
+        "commit_range": {
+          "type": "string",
+          "description": "e.g. 1a3de76..befa40e"
+        },
+        "diff_stat": {
+          "type": "object",
+          "required": ["files_changed", "insertions", "deletions"],
+          "properties": {
+            "files_changed": { "type": "integer", "minimum": 0 },
+            "insertions": { "type": "integer", "minimum": 0 },
+            "deletions": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "commits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["sha", "subject", "role"],
+        "properties": {
+          "sha": { "type": "string" },
+          "subject": { "type": "string" },
+          "role": { "enum": ["anchor", "intermediate"] },
+          "has_verification_trailer": { "type": "boolean" }
+        }
+      }
+    },
+
+    "tests": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "baseline_cmd": { "type": "string" },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "added_modules": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "removed_modules": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "log_path": { "type": ["string", "null"] }
+      }
+    },
+
+    "regression_baseline": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["command", "status"],
+      "properties": {
+        "command": { "type": "string" },
+        "status": { "enum": ["pass", "fail", "skipped"] },
+        "tests_run": { "type": "integer" },
+        "expected_failures": { "type": "integer" },
+        "log_path": { "type": ["string", "null"] }
+      }
+    },
+
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "verdict"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Verbatim from plan-NN.md acceptance-gates table"
+          },
+          "target_ref": {
+            "type": "string",
+            "description": "Path#anchor to the target spec in plan file"
+          },
+          "target_lines": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Inline target text if no anchor exists"
+          },
+          "observed": { "type": "string" },
+          "measured_value": { "type": "string" },
+          "verdict": {
+            "enum": [
+              "pass",
+              "fail",
+              "unmeasured",
+              "retired",
+              "deferred-to-firmware"
+            ]
+          },
+          "evidence_path": { "type": ["string", "null"] },
+          "summary": { "type": "string" }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "verdict": { "not": { "const": "pass" } }
+              }
+            },
+            "then": { "required": ["evidence_path"] }
+          }
+        ]
+      }
+    },
+
+    "engineering_deliverables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["path", "status", "evidence"],
+        "properties": {
+          "path": { "type": "string" },
+          "status": {
+            "enum": ["landed", "partial", "deferred", "removed"]
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Commit SHA(s)"
+          },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+
+    "discoveries": {
+      "type": "array",
+      "description": "Unprompted, codex-flagged observations.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "claim", "evidence"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^discovery-"
+          },
+          "kind": {
+            "type": "string",
+            "description": "Free-form classifier (no enum)"
+          },
+          "claim": { "type": "string" },
+          "evidence": { "$ref": "#/definitions/evidence" },
+          "follow_up_needed": { "type": "boolean" },
+          "follow_up_summary": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "investigations": {
+      "type": "array",
+      "description": "Human-prompted mid-session inquiries that produced findings.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "triggered_by",
+          "question",
+          "answer",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^investigation-"
+          },
+          "triggered_by": {
+            "type": "string",
+            "description": "User's prompt verbatim or paraphrased <= 1 line"
+          },
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "evidence": { "$ref": "#/definitions/evidence" },
+          "code_paths_anchored_in": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "file:symbol or file:line"
+            }
+          }
+        }
+      }
+    },
+
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["summary"],
+        "properties": {
+          "summary": { "type": "string" },
+          "last_command": { "type": "string" },
+          "hypothesis": { "type": "string" },
+          "tried": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "not_tried": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_path": { "type": ["string", "null"] },
+          "recommended_owner": { "type": "string" }
+        }
+      }
+    },
+
+    "follow_ons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["summary", "proposed_routing"],
+        "properties": {
+          "summary": { "type": "string" },
+          "proposed_routing": {
+            "enum": ["next-hop", "new-thread", "backlog", "out-of-scope"]
+          },
+          "rationale": { "type": "string" },
+          "evidence_path": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "plan_hindsight": {
+      "type": "string",
+      "description": "What I'd do differently. 'Nothing notable' is valid."
+    }
+  },
+
+  "definitions": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["primary"],
+      "properties": {
+        "primary": {
+          "type": "string",
+          "description": "commit:<sha>, repo-relative file path, or URL"
+        },
+        "csv": { "type": "string" },
+        "key_numbers": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "calculation": {
+          "type": "string",
+          "description": "Multi-line derivation if relevant"
+        }
+      }
+    }
+  }
+}

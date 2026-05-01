@@ -157,6 +157,21 @@ deserves its own plan rather than appending to the current one.
 - Get the new hop's slug (different from the thread slug; describes
   THIS hop's focus).
 - Get the new hop's hypothesis or first-step description.
+- **Check `thread.json.codex_worktrees[]`.** If any entry has
+  `status: "active"`, plan-N+1 source work continues on that
+  worktree branch — see `references/codex-handoff.md` "Lifetime
+  model" section ("One worktree per thread", "Many codex runs per
+  worktree", "Merge-back is a single terminal event ... All plan
+  hops are complete and the thread is ready to close"). This
+  workflow is **bookkeeping-only on `main`**; do NOT trigger the
+  merge-back script, do NOT recommend merge-back, and do NOT
+  instruct codex to branch off `main` for the new hop. The new
+  hop's source work stacks on top of the existing worktree-branch
+  HEAD as a fresh codex run against the same worktree (same
+  `cd <worktree> && source .envrc && codex` invocation, new handoff
+  prompt rendered from the new plan hop's step list using
+  `assets/templates/codex-handoff-prompt.md` with `BASE_COMMIT_SHA`
+  set to the worktree branch's current HEAD, not `origin/main`).
 
 **Steps:**
 
@@ -219,6 +234,13 @@ deserves its own plan rather than appending to the current one.
   not the closed one.
 - `handoff.md`'s "What the next session should do first" reflects
   the new hop's steps, not the closed hop's.
+- **If the thread has an active codex worktree, the worktree branch
+  and HEAD are unchanged** by this workflow (this is bookkeeping-only
+  on `main`; source work happens in a separate codex session against
+  the worktree, stacking commits on the existing branch HEAD).
+  `git -C <worktree> rev-parse --short HEAD` should match what it
+  was before the workflow ran. Worktree-side `git status` should be
+  unchanged (typically `?? .envrc` and `?? .venv` only).
 
 ---
 
