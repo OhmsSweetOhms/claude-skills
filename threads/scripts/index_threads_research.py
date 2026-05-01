@@ -13,10 +13,17 @@ Run from the project root (the directory containing .threads/ and .research/):
     python3 ~/.claude/skills/threads/scripts/index_threads_research.py
     python3 ~/.claude/skills/threads/scripts/index_threads_research.py --check
     python3 ~/.claude/skills/threads/scripts/index_threads_research.py --print
+    python3 ~/.claude/skills/threads/scripts/index_threads_research.py --summary
 
 Project root is discovered from the current working directory. Pass
 `--project-root <path>` to override (e.g. when invoking from a tool that
 doesn't cd into the project first).
+
+`--summary` is a read-only mode designed for SessionStart hooks: it
+emits a short human-readable status block (latest review, current
+metrics, open threads + their current_plan, recently-closed threads,
+superseded threads, goal targets) to stdout and writes nothing.
+Returns 0 silently if the project has no .threads/ or .research/.
 
 The threads.json (registry) and INDEX.json (research) are committed
 artifacts so agents can read them directly without walking the tree.
@@ -403,6 +410,7 @@ def render_thread_index(idx: ThreadIndex) -> dict[str, Any]:
         "summary": thread_summary_block(idx.threads),
         "validation": by_kind,
         "promotion_log": flatten_promotions(idx.threads),
+        "closure_log": _build_closure_log(idx.threads),
         "threads": idx.threads,
     }
 
@@ -425,6 +433,231 @@ def write_index(path: Path, payload: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Closure log (append-only thread retirement record)
+# ---------------------------------------------------------------------------
+#
+# The closure_log block in threads.json is the one piece of registry state
+# that is NOT fully derived from per-thread thread.json files. It accumulates
+# one entry per thread when that thread leaves the `active` state (closed or
+# superseded), and entries persist after the thread directory is deleted.
+# This lets the SessionStart `--summary` section "Recently retired" survive
+# the workflow where closed/superseded threads are pruned from the working
+# tree (per the 2026-05-01 memory-and-docs-cleanup plan, Phase 9 / 9a).
+#
+# Contract:
+#   - Reads existing closure_log from on-disk threads.json (preserves all).
+#   - For each non-active thread.json found on disk, ensures one entry exists
+#     (keyed by (thread_id, transition_date) for idempotence across reruns).
+#   - The indexer must run at least once after a thread closes, BEFORE that
+#     thread directory is deleted, or the entry is lost. The threads skill's
+#     close-thread step rebuilds the index, so this is automatic for normal
+#     workflows.
+
+def _build_closure_log(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing: list[dict[str, Any]] = []
+    if THREADS_INDEX_PATH.is_file():
+        try:
+            data = json.loads(THREADS_INDEX_PATH.read_text())
+            raw = data.get("closure_log")
+            if isinstance(raw, list):
+                existing = raw
+        except Exception:
+            existing = []
+
+    # Only `closed` and `superseded` are terminal states. `active`, `blocked`,
+    # `paused`, etc. are non-terminal and don't belong in the retirement log.
+    # Filter the existing log too so a previously-mis-logged non-terminal
+    # entry is dropped on rebuild rather than persisting forever.
+    TERMINAL = {"closed", "superseded"}
+    existing = [e for e in existing
+                if isinstance(e, dict) and e.get("final_status") in TERMINAL]
+
+    seen = {(e.get("thread_id"), e.get("transition_date")) for e in existing}
+    log = list(existing)
+    for t in threads:
+        status = t.get("status")
+        if status not in TERMINAL:
+            continue
+        key = (t["id"], t.get("updated"))
+        if key in seen:
+            continue
+        outcome = (t.get("outcome") or "").split("\n")[0]
+        if len(outcome) > 200:
+            outcome = outcome[:197] + "..."
+        log.append({
+            "thread_id": t["id"],
+            "subsystem": t.get("subsystem"),
+            "final_status": status,
+            "transition_date": t.get("updated"),
+            "outcome": outcome,
+            "superseded_by": t.get("superseded_by"),
+        })
+        seen.add(key)
+
+    log.sort(key=lambda e: (e.get("transition_date") or ""), reverse=True)
+    return log
+
+
+# ---------------------------------------------------------------------------
+# Summary mode (read-only; SessionStart-friendly)
+# ---------------------------------------------------------------------------
+
+# Where current_metrics lives. Phase 6 of the gps_design memory-and-docs-cleanup
+# thread defines the schema and populates this block; until then, we read what's
+# present on disk and emit "(not yet populated)" if absent. Once populated, the
+# preservation contract is the threads skill's responsibility (close-thread step
+# writes here; rebuilds preserve).
+def _read_on_disk_current_metrics() -> dict[str, Any] | None:
+    if not THREADS_INDEX_PATH.is_file():
+        return None
+    try:
+        data = json.loads(THREADS_INDEX_PATH.read_text())
+    except Exception:
+        return None
+    cm = data.get("current_metrics")
+    return cm if isinstance(cm, dict) else None
+
+
+def _collect_goal_targets() -> list[str]:
+    """Walk known project-specific JSON sources for `targets` blocks.
+
+    Each project that wants goal targets in the SessionStart summary lays them
+    down where this helper looks. Adding a project means adding a path here;
+    the helper is conservative — unknown projects produce no output.
+
+    Currently checks scenario_engine/scenarios/*.v2.json (gps_design).
+    """
+    out: list[str] = []
+    scenarios_dir = REPO_ROOT / "scenario_engine" / "scenarios"
+    if scenarios_dir.is_dir():
+        for path in sorted(scenarios_dir.glob("*.v2.json")):
+            try:
+                data = json.loads(path.read_text())
+            except Exception:
+                continue
+            targets = data.get("targets")
+            if not isinstance(targets, dict) or not targets:
+                continue
+            out.append(f"  {path.name}:")
+            for k, v in targets.items():
+                if isinstance(v, dict):
+                    val = v.get("value", v)
+                    out.append(f"    {k}: {val}")
+                else:
+                    out.append(f"    {k}: {v}")
+    return out
+
+
+def _latest_review_path() -> Path | None:
+    """Return the most-recent .threads/review-YYYY-MM-DD.md file, or None."""
+    if not THREADS_DIR.is_dir():
+        return None
+    candidates = sorted(THREADS_DIR.glob("review-*.md"), reverse=True)
+    return candidates[0] if candidates else None
+
+
+def render_summary(thread_payload: dict[str, Any]) -> str:
+    """Emit a short human-readable status block for SessionStart hooks.
+
+    The output is intentionally compact (~25-40 lines) since SessionStart hook
+    output is injected into the agent's context and consumes tokens.
+    """
+    threads = thread_payload.get("threads", [])
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append("Project status (auto-injected at session start)")
+    lines.append("=" * 60)
+
+    # Latest review
+    review = _latest_review_path()
+    if review is not None:
+        lines.append(f"Latest review: {review.relative_to(REPO_ROOT)}")
+    else:
+        lines.append("Latest review: (none found)")
+
+    # Current metrics (Phase 6 will populate; gracefully absent until then)
+    cm = _read_on_disk_current_metrics()
+    lines.append("")
+    if cm:
+        lines.append("Current metrics:")
+        for key, val in cm.items():
+            if isinstance(val, dict):
+                v = val.get("value")
+                scenario = val.get("scenario", "")
+                asof = val.get("asof_date") or val.get("asof", "")
+                tail = []
+                if scenario:
+                    tail.append(scenario)
+                if asof:
+                    tail.append(f"asof {asof}")
+                tail_str = f"  ({', '.join(tail)})" if tail else ""
+                lines.append(f"  {key}: {v}{tail_str}")
+            else:
+                lines.append(f"  {key}: {val}")
+    else:
+        lines.append("Current metrics: (not yet populated)")
+
+    # Open threads with current_plan (one-line-per-thread format keeps
+    # the section compact even for projects with many concurrent threads)
+    open_threads = [t for t in threads if t.get("status") == "active"]
+    open_threads.sort(key=lambda t: t.get("updated") or "", reverse=True)
+    lines.append("")
+    lines.append(f"Open threads ({len(open_threads)}):")
+    for t in open_threads:
+        plan = t.get("current_plan") or "(no plan)"
+        lines.append(f"  {t['id']} → {plan}")
+    if not open_threads:
+        lines.append("  (none)")
+
+    # Recently retired (last 7 days) — read from closure_log so the entries
+    # survive thread directory deletion. Closure log captures both `closed`
+    # and `superseded` transitions; superseded entries include the successor.
+    today = dt.date.today()
+    cutoff = (today - dt.timedelta(days=7)).isoformat()
+    log = thread_payload.get("closure_log") or []
+    retired_recent = [
+        e for e in log
+        if (e.get("transition_date") or "") >= cutoff
+    ]
+    lines.append("")
+    lines.append(f"Recently retired (last 7 days, {len(retired_recent)}):")
+    show_n = 7
+    for e in retired_recent[:show_n]:
+        status = e.get("final_status") or "?"
+        date = e.get("transition_date") or "?"
+        outcome = (e.get("outcome") or "").split("\n")[0]
+        if len(outcome) > 80:
+            outcome = outcome[:77] + "..."
+        if status == "superseded":
+            sb = e.get("superseded_by") or "(no successor)"
+            # Strip plan-file suffixes from successor for compact display
+            sb_short = sb.split("/plan-")[0] if "/plan-" in sb else sb
+            head = f"  {e['thread_id']} ({status} {date} → {sb_short})"
+        else:
+            head = f"  {e['thread_id']} ({status} {date})"
+        if outcome:
+            lines.append(f"{head} — {outcome}")
+        else:
+            lines.append(head)
+    if len(retired_recent) > show_n:
+        lines.append(f"  ... and {len(retired_recent) - show_n} more")
+    if not retired_recent:
+        lines.append("  (none)")
+
+    # Goal targets (project-specific; empty = silent)
+    target_lines = _collect_goal_targets()
+    lines.append("")
+    if target_lines:
+        lines.append("Goal targets:")
+        lines.extend(target_lines)
+    else:
+        lines.append("Goal targets: (not yet populated)")
+
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -434,6 +667,9 @@ def main() -> int:
                         help="validate only, do not write INDEX.json files; exit 1 if any findings")
     parser.add_argument("--print", action="store_true", dest="do_print",
                         help="print one-line summary + finding counts to stdout")
+    parser.add_argument("--summary", action="store_true",
+                        help="emit a SessionStart-friendly status block to stdout; "
+                             "read-only, no INDEX writes, silent for non-thread projects")
     parser.add_argument("--project-root", type=Path, default=None,
                         help="project root containing .threads/ and .research/ "
                              "(default: current working directory)")
@@ -441,6 +677,8 @@ def main() -> int:
 
     project_root = args.project_root or Path.cwd()
     if not (project_root / ".threads").is_dir() and not (project_root / ".research").is_dir():
+        if args.summary:
+            return 0  # silent for SessionStart in non-thread projects
         print(f"error: neither .threads/ nor .research/ found under {project_root}",
               file=sys.stderr)
         return 2
@@ -457,6 +695,12 @@ def main() -> int:
 
     thread_payload = render_thread_index(thread_idx)
     research_payload = render_research_index(research_idx)
+
+    if args.summary:
+        # Read-only mode for SessionStart hooks: emit the status block and
+        # return without touching the on-disk INDEX files.
+        print(render_summary(thread_payload))
+        return 0
 
     if not args.check:
         write_index(THREADS_INDEX_PATH, thread_payload)
