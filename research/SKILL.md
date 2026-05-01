@@ -188,7 +188,7 @@ Read `templates/research-report.md` for the skeleton.
    - **Tier 1 Recommendations:** Full entries with rationale, DOI/URL, flags, recommended action
    - **Tier 2 Recommendations:** Same format, briefer rationale
    - **Gap Analysis:** What wasn't found, where to look next
-   - **Suggested Next Steps:** Specific actionable follow-ups
+   - **Suggested Next Steps:** Specific actionable follow-ups. **For multi-step implementation work, recommend spawning a thread (under `<project>/.threads/<subsystem>/<slug>/`) — NOT a `docs/implementation-plan-*.md` file.** Implementation-plan docs are deprecated in favor of threads, which are designed to accrete plan hops, findings, and diagnostics across sessions. See "Recommending follow-up work" below for the decision rule and the pre-filled thread-spawn template.
    - **Raw Results Index:** Pointers to session directory files
 3. Write `report.md` to the session directory
 4. Write `CLAUDE.md` to the session directory (see below)
@@ -243,6 +243,49 @@ python3 ~/.claude/skills/threads/scripts/index_threads_research.py
 
 Run from the project root (the directory containing `.research/`). The script writes `<project>/.threads/threads.json` (the threads-skill registry) and `<project>/.research/INDEX.json` (the research-side mirror with reverse `linked_by_threads[]` for each session). Add `--check` to validate without writing; the command exits 1 if the new session's `spawning_thread` references a non-existent thread, if it has the `.threads/` prefix instead of the bare `subsystem/slug` form, or if any thread's `linked_research[]` points at a missing session. If the project has no `.threads/` directory, skip this step.
 
+### Recommending Follow-Up Work — Threads vs Docs
+
+When writing the Suggested Next Steps section, classify each follow-up by its shape, then pick the right destination:
+
+| If the follow-up is… | Recommend… |
+|---|---|
+| Multi-step implementation work spanning multiple sessions (new feature build-out, phased delivery, anything that will accrete plan hops + findings) | **A new thread** at `<project>/.threads/<subsystem>/<slug>/` |
+| Hypothesis-driven debugging that will accrete findings across sessions | **A new thread** |
+| A static spec, design intent, ICD, or interface contract (one-time write, doesn't evolve) | **A `docs/spec-*.md` file** |
+| A one-off code change (single edit, single PR, no follow-up needed) | **Direct implementation** — no doc/thread needed |
+| A research follow-up requiring more literature/code investigation | **Another `/research` session** (optionally spawned from a thread, with bidirectional `linked_research[]` / `spawning_thread` linkage) |
+
+**Implementation-plan docs (`docs/implementation-plan-*.md`) are DEPRECATED in favor of threads.** Do not generate `docs/implementation-plan-X.md` recommendations. If the work is multi-step and will evolve, it's a thread.
+
+**Project-conditional:** Only recommend thread spawning if `<project>/.threads/` exists. If the project has no `.threads/` directory, fall back to the appropriate `docs/spec-*.md` or `docs/<plan>.md` recommendation and note that adopting the threads skill would be useful for this kind of work.
+
+**Pre-filled thread-spawn template.** When the report recommends a new thread, include a ready-to-run snippet so the user can adopt it without re-extracting context:
+
+```markdown
+### Recommended thread spawn
+
+If you'd like to follow this report's <Phase / Initiative name> recommendations as a thread:
+
+  Subsystem:        <subsystem>      (e.g. gps-receiver, fpga, scenario_engine)
+  Slug:             <slug>           (e.g. l1c-phase-a, lifted from report content)
+  Linked research:  session-{SESSION_ID}
+  Parent doc(s):    <docs/spec-*.md path(s) if applicable>
+
+  Suggested plan-01 scope:
+    <one-paragraph scope, lifted from this report's recommendations>
+
+  Hard constraints (lift from this session's plan.json scope_constraints):
+    - <constraint>
+    - <constraint>
+
+  Related threads:
+    - <existing thread slug>  (relationship: <coordinator | sibling | substrate | ...>)
+```
+
+The user invokes the threads skill (e.g. via `/threads new` or by asking "spawn a thread for X"); the threads skill writes `thread.json.linked_research[].session_id = "session-{SESSION_ID}"` back-pointing to this session, completing the bidirectional handshake. The cross-project index refresh (next sub-section) validates the linkage.
+
+**Granularity rule.** One thread per cohesive multi-step initiative — typically grouped by phase. A "Phase A + Phase B" recommendation is two threads (or one thread that ramps from A to B via plan hops, depending on cohesion). Don't generate one thread per Suggested Next Step bullet; that's noise. Don't generate threads for Gap Analysis items either — gaps are open questions, not committed work; if/when committed, *that's* when the thread spawns.
+
 ### Final Output
 
 Tell the user:
@@ -250,6 +293,7 @@ Tell the user:
 - Key numbers: total results evaluated, Tier 1 count, Tier 2 count, gaps identified
 - Top 3 Tier 1 recommendations (title + one-line rationale)
 - Most significant gap identified
+- **If the report recommends a thread spawn:** name the proposed thread (`<subsystem>/<slug>`) and offer to invoke the threads skill to create it now. One concrete offer per cohesive initiative — don't pile up multiple thread offers in the same closing message.
 
 ### Domain Knowledge Promotion
 

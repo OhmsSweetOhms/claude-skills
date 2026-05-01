@@ -74,6 +74,47 @@ tags:
 ## Suggested Next Steps
 
 {NEXT_STEPS}
+<!--
+Classify each follow-up item before writing it:
+
+  - Multi-step implementation work (new feature, phased delivery, anything
+    that will accrete plan hops + findings across sessions) → recommend
+    spawning a thread under <project>/.threads/<subsystem>/<slug>/.
+    DO NOT recommend creating docs/implementation-plan-*.md — those are
+    deprecated in favor of threads.
+  - Hypothesis-driven debugging spanning multiple sessions → thread.
+  - Static spec / design intent / interface contract → docs/spec-*.md.
+  - One-off code change → direct implementation, no doc/thread needed.
+  - Research follow-up needing more literature/code → another /research
+    session, optionally spawned from a thread.
+
+If the project has no .threads/ directory, fall back to docs/spec-*.md
+or docs/<plan>.md and note that adopting the threads skill would help.
+
+For a multi-step initiative, include a pre-filled thread-spawn block:
+
+  ### Recommended thread spawn
+
+  Subsystem:        <subsystem>      (e.g. gps-receiver, fpga, scenario_engine)
+  Slug:             <slug>           (lift from this report's Phase / Initiative name)
+  Linked research:  session-{SESSION_ID}
+  Parent doc(s):    <docs/spec-*.md path(s) if applicable>
+
+  Suggested plan-01 scope:
+    <one-paragraph scope, lifted from this report's recommendations>
+
+  Hard constraints (lift from this session's plan.json scope_constraints):
+    - <constraint>
+    - <constraint>
+
+  Related threads:
+    - <existing thread slug>  (relationship: <coordinator | sibling | substrate | ...>)
+
+The threads skill will write thread.json.linked_research[] back-pointing
+here, completing the bidirectional handshake. Granularity: one thread
+per cohesive multi-step initiative, typically grouped by phase.
+Don't generate one thread per Suggested Next Step bullet.
+-->
 
 ---
 

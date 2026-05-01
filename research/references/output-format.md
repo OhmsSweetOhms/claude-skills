@@ -138,6 +138,43 @@ Specific actionable items:
 - Repos to watch or clone
 - Conferences to check for upcoming presentations
 
+**Threads vs docs — the destination decision rule for follow-up work:**
+
+| If the follow-up is… | Recommend… |
+|---|---|
+| Multi-step implementation work spanning multiple sessions | A new thread at `<project>/.threads/<subsystem>/<slug>/` |
+| Hypothesis-driven debugging that will accrete findings | A new thread |
+| A static spec / design intent / interface contract | A `docs/spec-*.md` file |
+| A one-off code change (single edit, single PR) | Direct implementation — no doc/thread |
+| More literature/code investigation | Another `/research` session |
+
+**Implementation-plan docs (`docs/implementation-plan-*.md`) are deprecated in favor of threads.** Do NOT recommend creating one. If the follow-up is multi-step and will evolve, it's a thread. Project-conditional: only recommend thread spawning when `<project>/.threads/` exists; otherwise fall back to `docs/spec-*.md` or `docs/<plan>.md` and note that adopting the threads skill would help.
+
+**For each multi-step follow-up, include a pre-filled thread-spawn block** that the user can adopt without re-extracting context:
+
+```
+### Recommended thread spawn
+
+  Subsystem:        <subsystem>      (e.g. gps-receiver, fpga, scenario_engine)
+  Slug:             <slug>           (lift from this report's Phase / Initiative name)
+  Linked research:  session-{SESSION_ID}
+  Parent doc(s):    <docs/spec-*.md path(s) if applicable>
+
+  Suggested plan-01 scope:
+    <one-paragraph scope, lifted from this report's recommendations>
+
+  Hard constraints (lift from plan.json scope_constraints):
+    - <constraint>
+    - <constraint>
+
+  Related threads:
+    - <existing thread slug>  (relationship: <coordinator | sibling | substrate | ...>)
+```
+
+The threads skill writes `thread.json.linked_research[].session_id` back-pointing here, completing the bidirectional handshake.
+
+**Granularity:** one thread per cohesive multi-step initiative, typically grouped by phase. A "Phase A + Phase B" recommendation is two threads (or one ramping thread, depending on cohesion). Don't generate one thread per Suggested Next Step bullet, and don't generate threads for Gap Analysis items — gaps are open questions, not committed work.
+
 ### 10. Domain Knowledge Discovered (when applicable)
 
 Include when the session's `domain-discoveries.json` has items. Summary table of domain knowledge discovered during the session that could be added to the domain reference file:
