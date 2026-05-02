@@ -26,7 +26,7 @@ a thread directory.
         <YYYYMMDD>-<source>-<subject>.md
       temp/                       # gitignored contents; regeneratable
         README.md                 # tracked; regeneration commands
-      data/                       # optional; committed uncaptureable
+      data/                       # optional; committed captures and fixtures
   <subsystem-2>/                  # additional subsystems as needed
 ```
 
@@ -54,7 +54,7 @@ Bootstrap, or infer from the repo's existing top-level directories.
 | `<thread>/external-comments/*.md` | Verbatim attribution of external feedback + triage tables. Raw content section never edited after initial capture. |
 | `<thread>/temp/` | Gitignored. Regeneratable outputs from running diagnostics: CSVs, NPZ, plots, logs. |
 | `<thread>/temp/README.md` | Tracked even though siblings are gitignored. Documents the regeneration command for each expected output. This is how the thread preserves "what was measured" without committing the bytes. |
-| `<thread>/data/` | Optional. For committed captures that CANNOT be regenerated (hardware traces, one-off environmental recordings). Omit if everything is regeneratable. |
+| `<thread>/data/` | Optional. For committed captures that CANNOT be regenerated, and for gate-dependent fixtures whose exact bytes must be present in a clean checkout. Omit if neither case exists. |
 
 ## Type A vs Type B — the load-bearing distinction
 
@@ -200,11 +200,46 @@ thread/plan-hop status enum.
   committing the bytes.
 - `data/` — optional. For committed captures that CANNOT be
   regenerated: hardware traces, one-off environmental recordings.
-  If everything is regeneratable, omit `data/` entirely.
+  Also use `data/` for gate-dependent fixtures: specific snapshots
+  that committed tests or CI gates load directly. If neither case
+  exists, omit `data/` entirely.
 
 **Rule:** if running a script from `diagnostics/` recreates the
-file, it belongs in `temp/`. Only commit bytes that can't be
-reproduced.
+file, it belongs in `temp/` unless a committed gate depends on that
+exact snapshot. Commit bytes only when they can't be reproduced or
+when they are gate-dependent fixtures.
+
+### When to promote `temp/` to `data/`
+
+The default bucket for a diagnostic output is still `temp/` when the
+output can be regenerated. Promote a `temp/` output to tracked
+`data/` when a committed artifact gate-depends on a specific
+snapshot of those bytes:
+
+- A unit/integration test, CI gate, or downstream diagnostic loads
+  the file directly.
+- A clean checkout would skip, weaken, or fail the gate because
+  `temp/` contents are gitignored.
+- Re-running the diagnostic is not part of the gate's setup, or the
+  diagnostic is not guaranteed to reproduce byte-identical output
+  with fixed inputs, seed, dependency versions, and numeric order.
+
+Once any of those are true, "regeneratable" is not enough. Use one
+of two explicit contracts:
+
+1. **Track the snapshot:** move it to `data/`, add or update
+   `data/README.md` with the regeneration command, the committed
+   gate that consumes it, and why exact bytes are tracked.
+2. **Regenerate deterministically in the gate:** keep it in `temp/`
+   only if the test setup recreates byte-identical output every run
+   and the command is documented in `temp/README.md`.
+
+Worked example: synth-tropo plan-02 M4 first wrote
+`temp/tropo_smoke_validation.json`. Plan-03 later added a PS.B12
+on-path gate that loaded that exact snapshot, so clean checkouts no
+longer had the fixture. The follow-up promoted the snapshot to
+`data/tropo_smoke_validation.json` and documented the consumer in
+`data/README.md`.
 
 Scratch text (thinking-out-loud notes, half-finished ideas) goes
 in `temp/` alongside generated outputs. No separate `notes/`

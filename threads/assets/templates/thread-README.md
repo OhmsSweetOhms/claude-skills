@@ -28,6 +28,9 @@
 
 ## Promoted artifacts
 
+Record diagnostic-to-test promotions and gate-dependent fixture
+promotions from `temp/` to `data/` here.
+
 | Date | From | To | Reason |
 |------|------|-----|--------|
 | *(none yet)* | | | |
