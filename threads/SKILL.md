@@ -85,6 +85,7 @@ section in `references/workflows.md`:
 | "Import Codex/claude.ai/colleague feedback" / "add external comment" | **Import external review** |
 | "Promote this diagnostic to a test" / "it's a regression gate now" | **Promote diagnostic** |
 | "Close the thread" / "mark thread as done" | **Close thread** |
+| "Retire closed threads" / "audit and delete closed thread directories" / "clean up the working tree" / "garbage-collect closed threads" | **Retire thread** |
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
 | "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |

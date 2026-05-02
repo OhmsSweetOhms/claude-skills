@@ -504,13 +504,170 @@ thread, or blocked indefinitely).
      rationale, what the thread established, what was ruled out,
      where follow-up work (if any) lives. Include the closure
      commit hash. Preserve older session-log entries as history.
-7. Don't delete the thread directory. It's the permanent record.
+7. Don't delete the thread directory in this workflow — Close
+   leaves the directory in place as the live record. Working-tree
+   deletion is a separate, audited operation; see **Retire thread**
+   below for the workflow that deletes closed/superseded thread
+   directories from the working tree while preserving their close
+   record in `<threads-path>/threads.json::closure_log`.
 
 **Verification:**
 - `thread.json.status` and `threads.json.threads[].status` agree.
 - The active plan hop's `outcome` is filled.
 - `handoff.md` no longer names a plan as "active" — it either
   reflects closure, names a successor, or describes the blocker.
+
+---
+
+## Retire thread
+
+**Trigger:** the working-tree footprint of `closed`/`superseded`
+threads has accumulated and the user wants to delete some of those
+directories. The close record persists in `closure_log`; only the
+on-disk directory disappears. Always done as an audited *batch*,
+never one-off.
+
+**Why this is its own workflow.** Closed thread directories are
+read indiscriminately by future agents and pollute grep output for
+live questions. But they often contain content that *isn't*
+captured anywhere else (commit messages of squash-merged-out work,
+narrative reconstructions, codex worktree findings). The audit
+distinguishes "trivial — safe to delete" from "needs promotion
+first" so nothing durable is lost.
+
+**Pre-flight (audit, read-only):**
+
+1. **Enumerate candidates.** Filter `<threads-path>/threads.json`
+   for `status in ("closed", "superseded")`. Group by topical
+   proximity if helpful — tightly-clustered threads (same parent,
+   same subsystem, same plan-02 cohort) often retire together with
+   much less external-cite cleanup than the raw count suggests
+   because most of their cross-references are intra-batch and
+   disappear together.
+
+2. **Inbound-cite scan, distinguishing two cite forms.** The
+   discriminator is whether a literal-string match for the
+   directory path appears in working-tree files:
+
+   - **Bare-ID form** (e.g., `<subsystem>/<YYYYMMDD>-<slug>`
+     mentioned in a comment, docstring, or markdown without
+     `.threads/` prefix): stable git-tag-like provenance. Survives
+     directory deletion because nothing dereferences it as a path.
+     **Leave alone.**
+   - **Path form** (e.g., `<threads-path>/<subsystem>/<slug>/...`
+     literal, or markdown link
+     `[label](../<slug>/README.md)`, or hardcoded
+     `os.path.join(...)` in a script): becomes a dangling pointer
+     when the directory disappears. **Must be scrubbed** — convert
+     path-form to bare-ID form, or update to point at the durable
+     replacement.
+
+   Run for each candidate slug:
+   ```bash
+   grep -rn "<thread-id>" --include="*.md" --include="*.py" \
+                          --include="*.json" --include="*.vhd" \
+       <code-paths> .threads/ 2>/dev/null \
+       | grep -v "/<slug>/" | grep -v ".threads/review-"
+   grep -rn "](.*<slug-tail>" .threads/ --include="*.md" 2>/dev/null
+   ```
+   The first surfaces all cites; the second is specifically for
+   markdown-link form which is the most common silent breakage.
+
+3. **Commit-SHA durability check.** For every commit-SHA cited
+   inside a candidate thread's `findings-*.md` (typically anchor
+   commits like "the proof landed at <sha>"), run:
+   ```bash
+   git merge-base --is-ancestor <sha> main && echo "in main" || echo "NOT in main"
+   ```
+   **Squash-merge gotcha.** If the closed thread had a codex
+   worktree that was squash-merged into main, the intra-branch
+   commits are *not* in main even though the diff is — only the
+   squash-merge commit is reachable. Any cited SHA that returns
+   "NOT in main" means the commit-message-as-durability
+   assumption fails: the narrative those commits carried (the
+   "why" written into the commit message body) needs a
+   `.research/` note *before* the directory can be retired.
+   Commit-message-as-durability only works under merge-commit /
+   fast-forward strategies; under squash-merge, only the
+   squash-commit's message survives.
+
+4. **Classify each candidate** as:
+   - **TRIVIAL** — no inbound cites in path-form; all cited SHAs
+     in main; no unpromoted technical content in
+     `findings-*.md`. Safe `git rm -r`.
+   - **NEEDS-SCRIPT-PROMOTION** — has inbound path-form cites or
+     scripts cited from live code/CLAUDE.md/tests. Move scripts
+     to a durable home (e.g., `<repo>/tools/`) and patch citers
+     before retire.
+   - **CARRIES-UNIQUE-FINDINGS** — `findings-*.md` (or
+     squash-merged-out commit messages per step 3) hold technical
+     content not captured in spec/test/code/closure_log. Lift
+     into `.research/<topic>.md` before retire.
+
+**Steps:**
+
+1. **Verify `closure_log` coverage.** Re-run the indexer
+   (`scripts/index_threads_research.py`) to ensure every
+   to-be-retired thread is already in
+   `<threads-path>/threads.json::closure_log`. The indexer copies
+   close records from on-disk `thread.json` to `closure_log` on
+   rebuild — that copy must happen *before* deletion or the close
+   metadata is lost.
+
+2. **Land the promotion / script-move work first.** For
+   CARRIES-UNIQUE-FINDINGS threads, write the `.research/` note
+   in the same commit as the deletion so the durability path is
+   atomic. For NEEDS-SCRIPT-PROMOTION, move scripts + patch citers
+   in the same commit. Don't split promotion from deletion across
+   commits — that creates a window where the durable record is
+   missing.
+
+3. **Patch path-form cites.** Convert markdown links, `.threads/`
+   path literals, and similar to bare-ID form. Standard
+   replacement: `[label](../path/file.md)` →
+   `` `bare-id` (closed YYYY-MM-DD, retired YYYY-MM-DD — durable record at <durable-path>) ``.
+
+4. **`git rm -r`** the audited batch.
+
+5. **Codex worktree boundary case.** If a retired thread had a
+   codex worktree (entry in `thread.json.codex_worktrees`), the
+   worktree directory is separate state that needs its own
+   cleanup. The pattern is **preserve content first, then force**:
+   `git worktree remove` triggers a safety check on **any**
+   untracked file present, including non-content
+   `.envrc`/`.venv/`/etc. — so `--force` is typically required,
+   and `--force` is only safe once you've moved the
+   *content-bearing* untracked files (handback `findings.md`,
+   codex-handback artifacts, etc.) somewhere outside the worktree.
+   Backup target: `/tmp/<descriptive-name>/` for ephemeral safety
+   net, or a `.research/` note if the content is durable enough to
+   keep long-term. Then `git worktree remove --force <path>`. Then
+   `git branch -d <branch>` (lowercase `-d`, the safe delete; the
+   branch tip should already be reachable from `main` if the
+   worktree is being retired — if `-d` refuses, the branch has
+   unmerged work and the retirement is premature).
+
+6. **Verify post-state.** Indexer rebuild should show the
+   retired thread *removed* from the registry but *present* in
+   `closure_log`. SessionStart "Recently retired" should still
+   surface them.
+
+**Verification:**
+- Indexer registry: every retired thread is gone.
+- `closure_log`: every retired thread is present with full close
+  metadata.
+- Smoke test: a non-affected test group (e.g., the project's
+  fastest unit suite) still passes — confirms no live code path
+  relied on a path-form cite into a deleted directory.
+- Grep sanity: zero `](.*<retired-slug>` markdown-link hits in
+  open-thread `.md` files.
+
+**Cohort sizing heuristic.** For batches of ~8+ candidates,
+spawn parallel sub-agents (3-5 threads each, batched by subsystem
+proximity so the inbound-cite grep targets are similar within a
+batch) and synthesize the classifications in main context. For
+smaller batches, do the full audit in main context — the agent
+overhead doesn't pay back.
 
 ---
 
