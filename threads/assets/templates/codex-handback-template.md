@@ -3,6 +3,7 @@
 Thread: `{{THREAD_ID}}`
 Plan file: `{{PLAN_FILE_PATH}}`
 Status: `{{STATUS}}`
+Closure status: `{{CLOSURE_STATUS_OR_OMITTED}}`
 Commit range: `{{BASE_AT_HOP_START}}..{{HEAD_AT_HANDBACK}}`
 
 ## Summary
@@ -34,8 +35,13 @@ Evidence: `{{evidence_path}}`
 
 Measured: {{observed_or_measured_value}}
 
+Caveats: {{[] or one-line summary; JSON gates[].caveats carries details}}
+
 Notes (required if verdict is `retired`, `deferred-to-firmware`, or
 the prose adds context the JSON row can't carry): one paragraph max.
+If the gate passed only because a local fixture, environment detail,
+or branch-local state existed, record that as a caveat rather than
+burying it in free prose.
 
 ## Engineering deliverables
 
