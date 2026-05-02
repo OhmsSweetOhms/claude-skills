@@ -253,6 +253,67 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 - `thread.json.codex_worktrees[0].status == "active"` and
   `path` / `branch` match what bootstrap printed.
 
+## Retroactive handback
+
+**Trigger:** a plan hop has already run or closed, but
+`codex-handback-<plan-id>.json` and `.md` were not produced at the
+time. This most often happens when a thread predates the structured
+handback contract.
+
+**Pre-flight:**
+
+- The thread has an existing Codex worktree in
+  `thread.json.codex_worktrees[]`; use that worktree rather than
+  cutting a new one.
+- Identify the plan id (`plan-02`, `plan-03`, etc.), the plan file,
+  and the commit range that contains the plan's source work.
+- Check both the main checkout and the worktree path for existing
+  `codex-handback-<plan-id>.json` / `.md` before reconstructing.
+- Accept that chat-only discoveries cannot be recovered. The
+  retroactive handback records committed evidence, not memory.
+
+**Steps:**
+
+1. **Resolve evidence.** Collect the plan file, `thread.json`,
+   `handoff.md`, relevant findings files, and the worktree commit
+   range. The range should be precise enough that Codex can list the
+   commits that belong to the hop without swallowing later work.
+
+2. **Fill the recovery prompt.** Use:
+   ```text
+   ~/.claude/skills/threads/assets/templates/codex-handback-retroactive-prompt.md
+   ```
+   Replace every placeholder, including the handback output paths and
+   schema path. The prompt should state whether the main session has
+   already closed the plan; if so, include `closure_status: closed`
+   or `superseded` as applicable.
+
+3. **Run Codex in the existing worktree.** The prompt is
+   reconstruction-only: no source edits, no thread bookkeeping edits,
+   only the two handback artifacts.
+
+4. **Commit the artifacts on the worktree branch.** Use a subject
+   like:
+   ```text
+   plan-02 retroactive handback: reconstruct closure from committed evidence
+   ```
+
+5. **Update main-side pointers.** On `main`, update the closed plan
+   hop's `outcome` prose with the worktree-only pointer described in
+   **Handback visibility before merge-back**. Do not copy the
+   handback artifacts into main manually; they arrive on main at
+   merge-back.
+
+6. **Process the reconstructed handback.** Run the same consumer
+   triage as a forward handback. Retroactive handbacks often have
+   empty session-only arrays, but gate caveats and blockers can still
+   be visible from committed evidence.
+
+**Status-review flag:** `status_review.py` flags a closed or
+superseded plan hop on a codex-enabled thread as
+`missing_codex_handback` when neither the main checkout nor the
+recorded worktree path contains the handback pair.
+
 ## Codex worktree merge-back
 
 **Trigger:** *only* when the user explicitly asks for it, AND the

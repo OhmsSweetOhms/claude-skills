@@ -142,6 +142,55 @@ def active_codex_worktrees_table(threads: list[dict], threads_path: Path, today:
     return ("\n".join(out), len(rows))
 
 
+def plan_id_for_hop(hop: dict) -> str:
+    """Return canonical plan id (plan-NN) from a plan_hops[] entry."""
+    filename = str(hop.get("file") or "")
+    name = Path(filename).name
+    if name.startswith("plan-") and len(name) >= 7 and name[5:7].isdigit():
+        return name[:7]
+    num = hop.get("num")
+    if isinstance(num, int):
+        return f"plan-{num:02d}"
+    return "plan-??"
+
+
+def _resolve_worktree_path(raw_path: str, project_root: Path) -> Path:
+    p = Path(raw_path).expanduser()
+    if p.is_absolute():
+        return p
+    return (project_root / p).resolve()
+
+
+def handback_pair_exists(thread_dir: Path, plan_id: str) -> bool:
+    return (
+        (thread_dir / f"codex-handback-{plan_id}.json").exists()
+        and (thread_dir / f"codex-handback-{plan_id}.md").exists()
+    )
+
+
+def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> bool:
+    """Return true if a handback pair is readable on main or a recorded worktree."""
+    main_thread_dir = threads_path / thread_id
+    if handback_pair_exists(main_thread_dir, plan_id):
+        return True
+
+    project_root = threads_path.parent
+    for wt in thread_data.get("codex_worktrees", []) or []:
+        raw_path = wt.get("path")
+        if not raw_path:
+            continue
+        wt_thread_dir = _resolve_worktree_path(raw_path, project_root) / ".threads" / thread_id
+        if handback_pair_exists(wt_thread_dir, plan_id):
+            return True
+    return False
+
+
+def hop_expected_codex_handback(hop: dict) -> bool:
+    """Heuristic guard to avoid flagging non-Codex historical plan hops."""
+    outcome = str(hop.get("outcome") or "").lower()
+    return "codex" in outcome or "worktree" in outcome
+
+
 def flag_triage(
     threads: list[dict],
     threads_path: Path,
@@ -237,6 +286,32 @@ def flag_triage(
                         ),
                     })
 
+        # Missing retroactive handback: a closed/superseded codex-backed plan hop
+        # references Codex/worktree execution but no structured handback pair is
+        # visible on main or in the recorded worktree path.
+        if thread_data.get("codex_worktrees"):
+            for hop in thread_data.get("plan_hops", []) or []:
+                if hop.get("status") not in ("closed", "superseded"):
+                    continue
+                if not hop_expected_codex_handback(hop):
+                    continue
+                plan_id = plan_id_for_hop(hop)
+                if plan_id == "plan-??":
+                    continue
+                if not handback_pair_visible(threads_path, tid, thread_data, plan_id):
+                    flags.append({
+                        "id": tid,
+                        "kind": "missing_codex_handback",
+                        "days": days,
+                        "summary": (
+                            f"Plan hop `{plan_id}` is `{hop.get('status')}` and "
+                            "appears to have used Codex/worktree execution, but no "
+                            f"`codex-handback-{plan_id}.json` / `.md` pair is visible "
+                            "on main or the recorded worktree path. Run **Retroactive "
+                            "handback** before relying on the closure record."
+                        ),
+                    })
+
     # De-duplicate by (id, kind)
     deduped = []
     seen = set()
@@ -252,8 +327,9 @@ def flag_triage(
         "missing_thread_json": 1,
         "corrupt_thread_json": 2,
         "orphaned_codex_worktree": 3,
-        "active_stale": 4,
-        "supersede_ref_unverified": 5,
+        "missing_codex_handback": 4,
+        "active_stale": 5,
+        "supersede_ref_unverified": 6,
     }
     deduped.sort(key=lambda f: (kind_order.get(f["kind"], 99), -f.get("days", 0)))
     return deduped

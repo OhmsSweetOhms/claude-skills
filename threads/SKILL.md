@@ -88,6 +88,7 @@ section in `references/workflows.md`:
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
 | "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |
+| "Recover a missing codex handback" / "retroactive handback" / "closed plan has no handback" | **Retroactive handback** (`references/codex-handoff.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 
 If the user's ask doesn't match cleanly, ask which operation they
@@ -255,6 +256,9 @@ Templates:
   `render_codex_handoff.py` substitutes mechanical worktree/thread
   values and leaves `HAND-CURATE` markers for the main agent to
   author.
+- `codex-handback-retroactive-prompt.md` — recovery prompt for a
+  closed or already-executed plan hop that lacks structured
+  handback artifacts.
 - `review-template.md` — index-scope status-review skeleton with
   AUTO-BEGIN/AUTO-END markers and boilerplate manual sections
   (strategic tiers, cross-tier file overlaps, critical-path
