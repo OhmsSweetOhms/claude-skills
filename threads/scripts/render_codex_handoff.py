@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Render the codex worktree handoff prompt for a plan hop.
+"""Render the codex worktree handoff scaffold for a plan hop.
 
 Reads the threads-skill template at
 ``~/.claude/skills/threads/assets/templates/codex-handoff-prompt.md``,
 substitutes ``{{...}}`` placeholders from thread state, worktree git
-state, and the plan file, and emits a ready-to-paste prompt.
+state, and the plan file path, and emits a scaffold for the main
+agent to hand-curate.
 
-The one substitution this script CANNOT auto-derive is the adjacent-
-threads briefing — adjacency is curated judgment, not a derivable
-fact. Pass ``--adjacent-threads <path>`` to inject one, or accept
-the default marker that flags the gap for the main agent to fill
-before handing the prompt to the human.
+This script deliberately does NOT extract task, deliverables, tests,
+or constraints from the plan. A launch-ready codex prompt is a
+generative artifact: the main agent must compose the source-work
+assignment from the plan, handoff, and current repo state. The
+renderer only fills mechanical boilerplate and places explicit
+``HAND-CURATE`` markers where judgment is required.
+
+Adjacent-threads briefing is also curated judgment. Pass
+``--adjacent-threads <path>`` to inject one, or accept the default
+``HAND-CURATE`` marker.
 
 Usage:
     python3 render_codex_handoff.py \\
@@ -46,21 +52,19 @@ Anchored substitutions and their sources:
                                    hop sees the prior hop's terminal
                                    commit)
     {{MAIN_REPO_PATH}}           ← absolute path of --main-repo
-    {{TASK}}                     ← extracted from plan-NN.md "## Task"
-    {{DELIVERABLES_BULLETS}}     ← extracted from plan-NN.md
-    {{FOCUSED_TEST_MODULES}}     ← extracted from plan-NN.md
-    {{REGRESSION_BASELINE_CMD}}  ← extracted from plan-NN.md or default
+    {{TASK_SCAFFOLD}}            ← HAND-CURATE marker with source refs
+    {{READ_THESE_FIRST_SCAFFOLD}} ← HAND-CURATE marker with source refs
+    {{STEP_BY_STEP_SCAFFOLD}}    ← HAND-CURATE marker with source refs
+    {{DELIVERABLES_SCAFFOLD}}    ← HAND-CURATE marker with source refs
+    {{HARD_CONSTRAINTS_SCAFFOLD}} ← HAND-CURATE marker with source refs
+    {{FOCUSED_TESTS_SCAFFOLD}}   ← HAND-CURATE marker with source refs
+    {{REGRESSION_BASELINE_SCAFFOLD}} ← HAND-CURATE marker with source refs
+    {{RUNTIME_INVARIANT_SCAFFOLD}} ← HAND-CURATE marker with source refs
     {{ADJACENT_THREADS_BRIEFING}} ← --adjacent-threads file or marker
     {{RECORDING_DISCIPLINE_BLOCK}} ← read verbatim from
                                      templates/recording-discipline.md
     {{THREAD_ID}}                ← --thread-id
     {{PLAN_ID}}                  ← --plan-id
-
-Extraction is best-effort. When a section can't be found, a TODO
-marker is emitted in its place and a warning is printed to stderr.
-The main agent is expected to review the rendered output before
-handing it to the human (the `<!-- TODO[render_codex_handoff]: ... -->`
-markers are the audit handle).
 """
 
 from __future__ import annotations
@@ -78,19 +82,11 @@ RECORDING_DISCIPLINE_PATH = (
     SKILL_ROOT / "assets" / "templates" / "recording-discipline.md"
 )
 
-# Marker emitted when a substitution can't be auto-derived. The main
-# agent must replace these before handing the prompt to the human.
-TODO_MARKER = (
-    "<!-- TODO[render_codex_handoff]: {field} not extractable from "
-    "plan file. Canonical headings the renderer looks for are "
-    "`## Task` / `## Deliverables` / `## Tests` (or `## Verification`). "
-    "Populate this section manually OR add the missing canonical "
-    "heading to the plan file and re-render. -->"
-)
-
 ADJACENT_THREADS_DEFAULT_MARKER = (
-    "<!-- MAIN AGENT: populate adjacent-threads briefing here, "
-    "or write 'No adjacent threads.' before handing prompt to user -->"
+    "<!-- HAND-CURATE[adjacent-threads]: Main agent, summarize "
+    "adjacent threads only if they matter to this codex run. Write "
+    "'No adjacent threads.' if none are relevant. Remove this marker "
+    "before handing the prompt to the user. -->"
 )
 
 
@@ -215,86 +211,135 @@ def find_plan_file(thread_dir: Path, plan_id: str) -> Path:
     return candidates[0]
 
 
-def extract_section(
-    text: str, heading_pattern: str, *, max_level: int = 3
-) -> str | None:
-    """Extract a markdown section by heading.
-
-    ``heading_pattern`` is a regex matched case-insensitively against
-    the heading text (without the ``##`` prefix). Returns the body up
-    to the next heading at the same or higher level, or ``None`` if
-    the heading isn't found.
-    """
-    pattern = re.compile(
-        r"^(#{1," + str(max_level) + r"})\s+(.+)$", re.MULTILINE
-    )
-    headings = list(pattern.finditer(text))
-    for i, match in enumerate(headings):
-        level = len(match.group(1))
-        title = match.group(2).strip()
-        if re.search(heading_pattern, title, re.IGNORECASE):
-            start = match.end()
-            end = len(text)
-            for nxt in headings[i + 1:]:
-                if len(nxt.group(1)) <= level:
-                    end = nxt.start()
-                    break
-            return text[start:end].strip()
-    return None
+def count_lines(path: Path) -> int:
+    """Count text lines for source-reference markers."""
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        die(f"failed to read {path}: {exc}")
+    return max(1, len(text.splitlines()))
 
 
-def extract_task(plan_text: str) -> str | None:
-    for pattern in (r"^task$", r"^what to do$", r"^goal$", r"^objective$"):
-        section = extract_section(plan_text, pattern)
-        if section:
-            return section
-    return None
+def repo_relative(path: Path, repo: Path) -> str:
+    """Return a stable POSIX-ish source path for prompt markers."""
+    try:
+        return path.relative_to(repo).as_posix()
+    except ValueError:
+        return str(path)
 
 
-def extract_deliverables(plan_text: str) -> str | None:
-    for pattern in (
-        r"^deliverables$",
-        r"^concrete deliverables$",
-        r"deliverables",
-    ):
-        section = extract_section(plan_text, pattern)
-        if section:
-            bullets = [
-                line for line in section.splitlines()
-                if line.lstrip().startswith(("- ", "* ", "+ "))
-            ]
-            return "\n".join(bullets) if bullets else section
-    return None
-
-
-def extract_test_modules(plan_text: str) -> str | None:
-    """Pull dotted-path test module names from a tests/verification section."""
-    for pattern in (r"^tests$", r"^test ", r"verification"):
-        section = extract_section(plan_text, pattern)
-        if not section:
-            continue
-        modules = re.findall(r"[\w_]+(?:\.[\w_]+)*\.tests?\.[\w_]+", section)
-        if not modules:
-            continue
-        seen: set[str] = set()
-        unique: list[str] = []
-        for module in modules:
-            if module not in seen:
-                seen.add(module)
-                unique.append(module)
-        return " ".join(unique)
-    return None
-
-
-def extract_regression_baseline(
-    plan_text: str, default: str = "run_tests.py rx"
+def hand_curate_marker(
+    *,
+    field: str,
+    instruction: str,
+    plan_ref: str,
+    plan_lines: int,
+    handoff_ref: str | None,
+    handoff_lines: int | None,
 ) -> str:
-    section = extract_section(plan_text, r"regression baseline")
-    if section:
-        fence = re.search(r"```(?:bash|sh)?\s*\n(.+?)\n```", section, re.DOTALL)
-        if fence:
-            return fence.group(1).strip()
-    return default
+    refs = [f"Raw plan material: `{plan_ref}` lines 1-{plan_lines}."]
+    if handoff_ref and handoff_lines:
+        refs.append(
+            f"Current-state handoff material: `{handoff_ref}` lines "
+            f"1-{handoff_lines}."
+        )
+    refs_text = " ".join(refs)
+    return (
+        f"<!-- HAND-CURATE[{field}]: Main agent, {instruction} "
+        f"{refs_text} Remove this marker before handing the prompt "
+        f"to the user. -->"
+    )
+
+
+def build_scaffold_substitutions(
+    *,
+    main_repo: Path,
+    plan_file: Path,
+    thread_dir: Path,
+) -> dict[str, str]:
+    plan_ref = repo_relative(plan_file, main_repo)
+    plan_lines = count_lines(plan_file)
+
+    handoff_file = thread_dir / "handoff.md"
+    handoff_ref: str | None = None
+    handoff_lines: int | None = None
+    if handoff_file.exists():
+        handoff_ref = repo_relative(handoff_file, main_repo)
+        handoff_lines = count_lines(handoff_file)
+
+    marker_args = {
+        "plan_ref": plan_ref,
+        "plan_lines": plan_lines,
+        "handoff_ref": handoff_ref,
+        "handoff_lines": handoff_lines,
+    }
+    return {
+        "TASK_SCAFFOLD": hand_curate_marker(
+            field="task",
+            instruction=(
+                "compose the concise source-work assignment for this "
+                "codex run. Include only the current plan hop's scope."
+            ),
+            **marker_args,
+        ),
+        "READ_THESE_FIRST_SCAFFOLD": hand_curate_marker(
+            field="read-these-first",
+            instruction=(
+                "list the files, references, and command outputs the "
+                "codex agent must read before editing."
+            ),
+            **marker_args,
+        ),
+        "STEP_BY_STEP_SCAFFOLD": hand_curate_marker(
+            field="step-by-step",
+            instruction=(
+                "turn the plan into an execution sequence with clear "
+                "stop points and no unrelated exploration."
+            ),
+            **marker_args,
+        ),
+        "DELIVERABLES_SCAFFOLD": hand_curate_marker(
+            field="deliverables",
+            instruction=(
+                "write concrete expected file changes and artifacts. "
+                "Preserve multi-line bullets when needed."
+            ),
+            **marker_args,
+        ),
+        "HARD_CONSTRAINTS_SCAFFOLD": hand_curate_marker(
+            field="hard-constraints",
+            instruction=(
+                "surface non-negotiable constraints, source-only "
+                "boundaries, branch/worktree rules, and known traps."
+            ),
+            **marker_args,
+        ),
+        "FOCUSED_TESTS_SCAFFOLD": hand_curate_marker(
+            field="focused-tests",
+            instruction=(
+                "write the exact focused verification commands as "
+                "fenced bash, using the worktree venv."
+            ),
+            **marker_args,
+        ),
+        "REGRESSION_BASELINE_SCAFFOLD": hand_curate_marker(
+            field="regression-baseline",
+            instruction=(
+                "write the exact before-final-commit regression "
+                "baseline commands as fenced bash."
+            ),
+            **marker_args,
+        ),
+        "RUNTIME_INVARIANT_SCAFFOLD": hand_curate_marker(
+            field="runtime-invariant",
+            instruction=(
+                "state any plan-specific runtime invariant that codex "
+                "must preserve, or write that there is no additional "
+                "runtime invariant beyond the constraints above."
+            ),
+            **marker_args,
+        ),
+    }
 
 
 def render(
@@ -321,8 +366,6 @@ def render(
         die(f"thread directory not found: {thread_dir}")
 
     plan_file = find_plan_file(thread_dir, plan_id)
-    plan_text = plan_file.read_text()
-
     if not TEMPLATE_PATH.exists():
         die(f"template not found: {TEMPLATE_PATH}")
     template = TEMPLATE_PATH.read_text()
@@ -367,27 +410,15 @@ def render(
         )
     base_sha = git_rev_parse_short(worktree_path)
 
-    task = extract_task(plan_text)
-    if not task:
-        warn(f"could not extract Task section from {plan_file.name}")
-        task = TODO_MARKER.format(field="TASK")
-
-    deliverables = extract_deliverables(plan_text)
-    if not deliverables:
-        warn(f"could not extract Deliverables section from {plan_file.name}")
-        deliverables = TODO_MARKER.format(field="DELIVERABLES_BULLETS")
-
-    test_modules = extract_test_modules(plan_text)
-    if not test_modules:
-        warn(f"could not extract test modules from {plan_file.name}")
-        test_modules = TODO_MARKER.format(field="FOCUSED_TEST_MODULES")
-
-    regression_cmd = extract_regression_baseline(plan_text)
-
     briefing = (
         adjacent_threads
         if adjacent_threads is not None
         else ADJACENT_THREADS_DEFAULT_MARKER
+    )
+    scaffold_substitutions = build_scaffold_substitutions(
+        main_repo=main_repo,
+        plan_file=plan_file,
+        thread_dir=thread_dir,
     )
 
     substitutions: dict[str, str] = {
@@ -396,14 +427,11 @@ def render(
         "BRANCH": branch,
         "BASE_COMMIT_SHA": base_sha,
         "MAIN_REPO_PATH": str(main_repo),
-        "TASK": task,
-        "DELIVERABLES_BULLETS": deliverables,
-        "FOCUSED_TEST_MODULES": test_modules,
-        "REGRESSION_BASELINE_CMD": regression_cmd,
         "ADJACENT_THREADS_BRIEFING": briefing,
         "THREAD_ID": thread_id,
         "PLAN_ID": plan_id,
     }
+    substitutions.update(scaffold_substitutions)
     if recording_block is not None:
         substitutions["RECORDING_DISCIPLINE_BLOCK"] = recording_block
 
@@ -421,9 +449,10 @@ def render(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Render codex handoff prompt for a plan hop. "
-            "Substitutes thread/git/plan-file values into the threads-"
-            "skill template and prints a ready-to-paste prompt."
+            "Render a codex handoff scaffold for a plan hop. "
+            "Substitutes mechanical thread/git values into the threads-"
+            "skill template and leaves HAND-CURATE markers for "
+            "substantive prompt sections."
         ),
     )
     parser.add_argument(

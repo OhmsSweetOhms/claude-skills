@@ -7,8 +7,9 @@ bookkeeping on `main`.
 Two workflows, mirroring the dispatch table in `SKILL.md`:
 
 - **Codex worktree handoff** — set up an isolated worktree at thread
-  inception (idempotent; safe to re-run), generate the agent's prompt,
-  hand it off. Re-invokeable across the thread's plan hops.
+  inception (idempotent; safe to re-run), render the agent-prompt
+  scaffold, hand-curate the substantive sections, then hand it off.
+  Re-invokeable across the thread's plan hops.
 - **Codex worktree merge-back** — run **once**, only at thread close,
   and **only on explicit user request**. Merges the long-lived
   worktree branch into `main`.
@@ -99,13 +100,16 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 - The thread exists at `.threads/<subsystem>/<YYYYMMDD>-<slug>/` and
   has an active plan with a clear next-step bullet list in
   `handoff.md` "What the next session should do first". If those
-  bullets are vague, sharpen them before starting — the codex prompt
-  is built from them.
+  bullets are vague, sharpen them before starting — the hand-curated
+  codex prompt uses them as source material.
 - The main checkout has a usable `.venv` (else the symlink trick
   doesn't help — the agent will fall back to the system Python and
   hit the SciPy/NumPy ABI trap from issue #1).
 - `git fetch origin main` succeeds (else bootstrap can't cut a
   fresh-from-`origin/main` branch).
+- The current plan hop has enough raw material for the main agent to
+  author a launch prompt. The renderer creates a scaffold; it does
+  not infer task scope, deliverables, tests, or constraints.
 
 **Steps:**
 
@@ -132,6 +136,16 @@ codex worktree on X", "spawn codex on X", "run codex on X".
      into `thread.json` (only on first creation; idempotent re-runs
      skip this).
 
+   If you already know the thread id and plan id, render the prompt
+   scaffold in the same invocation:
+   ```bash
+   bash ~/.claude/skills/threads/scripts/bootstrap_codex_worktree.sh \
+       chi-square-raim-design \
+       --thread-id receiver/20260427-chi-square-raim-design \
+       --plan-id plan-03 \
+       --render-prompt-out .threads/receiver/20260427-chi-square-raim-design/codex-handoff-plan-03.md
+   ```
+
 3. **Update `thread.json` with the worktree link** (first-time
    bootstrap only). Paste the printed snippet into the thread's
    `thread.json` as `codex_worktrees[0]`. Set `status: "active"`
@@ -141,13 +155,24 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    python3 ~/.claude/skills/threads/scripts/index_threads_research.py
    ```
 
-4. **Compose the codex prompt.** Copy
-   `assets/templates/codex-handoff-prompt.md` and substitute the
-   `{{...}}` placeholders. Pull `{{TASK}}` and
-   `{{DELIVERABLES_BULLETS}}` directly from the thread's
-   `handoff.md` "What the next session should do first" — that
-   section was specifically written to be cold-start-readable, so
-   it transfers verbatim with minimal editing.
+4. **Render the scaffold, then hand-curate the codex prompt.** If
+   step 2 did not use `--render-prompt-out`, run:
+   ```bash
+   python3 ~/.claude/skills/threads/scripts/render_codex_handoff.py \
+       --main-repo . \
+       --worktree-path ../gps_design-chi-square-raim-design \
+       --thread-id receiver/20260427-chi-square-raim-design \
+       --plan-id plan-03 \
+       --out .threads/receiver/20260427-chi-square-raim-design/codex-handoff-plan-03.md
+   ```
+   The renderer fills only mechanical boilerplate: worktree path,
+   branch, current worktree commit, main checkout path, handback
+   paths, recording discipline, and rule text. It intentionally
+   leaves `HAND-CURATE` markers for task scope, read-first context,
+   step sequence, deliverables, hard constraints, focused tests, and
+   regression baseline, plus any plan-specific runtime invariant.
+   Replace every marker with authored content before the prompt is
+   shown to the user or pasted into codex.
 
 5. **You (the user) open a sidecar terminal** — a separate
    tab, window, or pane in your terminal app on this same machine —
@@ -157,7 +182,7 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    source .envrc
    codex
    ```
-   Then paste the rendered handoff prompt from step 4 as the first
+   Then paste the hand-curated handoff prompt from step 4 as the first
    turn. The codex TUI is the watch-and-interact surface: events
    stream live, approval gates fire when codex wants to run a tool,
    and you can interject mid-thought.
