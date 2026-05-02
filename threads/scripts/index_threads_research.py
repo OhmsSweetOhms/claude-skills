@@ -238,6 +238,7 @@ def extract_thread(path: Path, existing_session_ids: set[str]) -> tuple[dict[str
         "linked_research_ids": linked_session_ids,
         "external_research_refs": external_session_refs,
         "promotions": raw.get("promotions") or [],
+        "codex_worktrees": raw.get("codex_worktrees") or [],
         "thread_json_path": str(path.relative_to(REPO_ROOT)),
     }
     return summary, findings

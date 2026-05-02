@@ -554,8 +554,10 @@ prompt enforces this with a "do NOT touch `.threads/`" instruction.
   orthogonal. A codex worktree carries source code; an external
   review is a feedback artefact pasted verbatim into
   `external-comments/`. They can co-exist on the same thread.
-- **Status review.** `status_review.py` reads `thread.json.codex_worktrees[]`
-  and surfaces active worktrees in its AUTO-block. A `status: active`
+- **Status review.** `index_threads_research.py` copies
+  `thread.json.codex_worktrees[]` into each `threads.json`
+  registry entry. `status_review.py` reads that registry copy and
+  surfaces active worktrees in its AUTO-block. A `status: active`
   worktree on a `closed` or `superseded` thread is flagged as an
   orphaned worktree (cleanup needed).
 - **Codex handback.** Every Codex hop should end with

@@ -18,7 +18,8 @@ Top-level machine-readable index. Listed once per repo.
       "status": "active",
       "started": "2026-04-14",
       "updated": "2026-04-18",
-      "current_plan": "plan-NN-<slug>.md"
+      "current_plan": "plan-NN-<slug>.md",
+      "codex_worktrees": []
     }
   ],
   "promotion_log": [
@@ -46,6 +47,10 @@ Top-level machine-readable index. Listed once per repo.
 - `threads[].current_plan` — bare filename (no path prefix). When
   `status` is `closed` or `superseded`, this still points at the
   last active plan hop.
+- `threads[].codex_worktrees[]` — copy of the per-thread
+  `thread.json.codex_worktrees[]` array, preserved in full so
+  registry consumers can surface active, merged, or abandoned
+  worktree state without re-reading every `thread.json`.
 - `promotion_log[]` — append-only. Every promotion adds one entry.
   Never rewrite historical entries.
 - `promotion_log[]` field naming: `from`/`to` (paths) match the
@@ -167,9 +172,10 @@ Per-thread manifest. Authoritative for what's in this thread.
 - `temp[]` — register of expected `temp/` outputs. Gitignored on
   disk. `regenerate_with` is the exact shell command to recreate
   the file.
-- `data[]` — same shape as `temp[]` minus `regenerate_with`
-  (because data can't be regenerated). Often empty; populate only
-  for hardware traces or one-off captures.
+- `data[]` — expected tracked data captures or fixtures. Use for
+  files that cannot be regenerated and for gate-dependent exact
+  snapshots that must be present in a clean checkout. Keep refresh
+  commands in `data/README.md` rather than `regenerate_with`.
 - `linked_research[]` — see `research-integration.md` for
   bidirectional-link semantics.
 - `promotions[]` — historical record of diagnostics promoted to
