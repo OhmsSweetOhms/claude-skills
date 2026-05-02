@@ -99,7 +99,7 @@ def active_threads_table(threads: list[dict]) -> str:
 
 
 def active_codex_worktrees_table(threads: list[dict], threads_path: Path, today: datetime.date) -> tuple[str, int]:
-    """Walk every thread.json and surface codex_worktrees[] entries with status:active.
+    """Surface registry codex_worktrees[] entries with status:active.
 
     Returns (markdown_table, count). An "active" worktree on a closed
     or superseded thread is included in the table (so it's visible
@@ -108,10 +108,15 @@ def active_codex_worktrees_table(threads: list[dict], threads_path: Path, today:
     """
     rows = []
     for t in threads:
-        thread_data = load_thread(threads_path, t["id"])
-        if thread_data is None or thread_data.get("__corrupt__"):
-            continue
-        for wt in thread_data.get("codex_worktrees", []) or []:
+        worktrees = t.get("codex_worktrees")
+        if worktrees is None:
+            # Back-compat for registries generated before codex_worktrees[]
+            # was copied into each threads.json entry.
+            thread_data = load_thread(threads_path, t["id"])
+            if thread_data is None or thread_data.get("__corrupt__"):
+                continue
+            worktrees = thread_data.get("codex_worktrees", []) or []
+        for wt in worktrees or []:
             if wt.get("status") != "active":
                 continue
             started = wt.get("started", "?")
@@ -277,6 +282,10 @@ def flag_triage(
             })
             continue
 
+        worktree_thread_data = dict(thread_data)
+        if "codex_worktrees" in t:
+            worktree_thread_data["codex_worktrees"] = t.get("codex_worktrees") or []
+
         # superseded_by sanity (top-level field, optional)
         sb = t.get("superseded_by")
         if sb:
@@ -305,7 +314,7 @@ def flag_triage(
         # The thread is supposed to be done but the worktree never landed — cleanup
         # needed (either merge-back was skipped or the worktree should be abandoned).
         if t["status"] in ("closed", "superseded"):
-            for wt in thread_data.get("codex_worktrees", []) or []:
+            for wt in worktree_thread_data.get("codex_worktrees", []) or []:
                 if wt.get("status") == "active":
                     flags.append({
                         "id": tid,
@@ -322,7 +331,7 @@ def flag_triage(
         # Missing retroactive handback: a closed/superseded codex-backed plan hop
         # references Codex/worktree execution but no structured handback pair is
         # visible on main or in the recorded worktree path.
-        if thread_data.get("codex_worktrees"):
+        if worktree_thread_data.get("codex_worktrees"):
             for hop in thread_data.get("plan_hops", []) or []:
                 if hop.get("status") not in ("closed", "superseded"):
                     continue
@@ -331,7 +340,7 @@ def flag_triage(
                 plan_id = plan_id_for_hop(hop)
                 if plan_id == "plan-??":
                     continue
-                if not handback_pair_visible(threads_path, tid, thread_data, plan_id):
+                if not handback_pair_visible(threads_path, tid, worktree_thread_data, plan_id):
                     flags.append({
                         "id": tid,
                         "kind": "missing_codex_handback",
@@ -348,7 +357,7 @@ def flag_triage(
         # Untriaged handback findings: the handback exists and contains
         # actionable content, but no codex-handback-plan-NN-triage.md record
         # is visible alongside it yet.
-        if thread_data.get("codex_worktrees"):
+        if worktree_thread_data.get("codex_worktrees"):
             for hop in thread_data.get("plan_hops", []) or []:
                 if hop.get("status") == "active":
                     continue
@@ -357,7 +366,7 @@ def flag_triage(
                 plan_id = plan_id_for_hop(hop)
                 if plan_id == "plan-??":
                     continue
-                locations = handback_locations(threads_path, tid, thread_data, plan_id)
+                locations = handback_locations(threads_path, tid, worktree_thread_data, plan_id)
                 if not locations or handback_triage_record_exists(locations, plan_id):
                     continue
                 handback = load_handback_json(locations[0], plan_id)

@@ -80,7 +80,8 @@ the enum.
       "status": "active",
       "started": "2026-04-14",
       "updated": "2026-04-18",
-      "current_plan": "plan-NN-<slug>.md"
+      "current_plan": "plan-NN-<slug>.md",
+      "codex_worktrees": []
     }
   ],
   "promotion_log": [
