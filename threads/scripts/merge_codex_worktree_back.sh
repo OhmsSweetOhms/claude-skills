@@ -14,18 +14,27 @@
 # --rewrite-paths runs sed substitutions on tracked files in main after
 # the merge for known stale-layout symbols (e.g. gps_receiver/threads ->
 # .threads). Skip unless the worktree branched off a stale-layout commit.
+#
+# If main carries only closure-session bookkeeping in .threads/ and/or
+# .research/INDEX.json, the script offers to stash that overlay, merge the
+# worktree branch, then pop the overlay back for the follow-up bookkeeping
+# commit. Non-bookkeeping dirty state is still refused.
 
 set -euo pipefail
 
 WORKTREE=""
 REPO=""
 REWRITE=0
+BOOKKEEPING_STASHED=0
+BOOKKEEPING_STASH_REF=""
+BOOKKEEPING_STASH_MSG=""
+BOOKKEEPING_POP_CONFLICT=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo)          REPO="$2"; shift 2 ;;
         --rewrite-paths) REWRITE=1; shift ;;
-        --help|-h)       sed -n '2,18p' "$0"; exit 0 ;;
+        --help|-h)       sed -n '2,21p' "$0"; exit 0 ;;
         -*)              echo "unknown flag: $1" >&2; exit 2 ;;
         *)               WORKTREE="$1"; shift ;;
     esac
@@ -52,23 +61,116 @@ if [ "$WORKTREE" = "$REPO" ]; then
     exit 2
 fi
 
+dirty_main_paths() {
+    git -C "$REPO" status --porcelain --untracked-files=all |
+        while IFS= read -r line; do
+            path="${line:3}"
+            case "$path" in
+                *" -> "*)
+                    printf '%s\n' "${path%% -> *}"
+                    printf '%s\n' "${path#* -> }"
+                    ;;
+                *)
+                    printf '%s\n' "$path"
+                    ;;
+            esac
+        done |
+        sort -u
+}
+
+is_bookkeeping_path() {
+    case "$1" in
+        .threads|.threads/*|.research/INDEX.json) return 0 ;;
+        *)                                        return 1 ;;
+    esac
+}
+
+print_path_list() {
+    local title="$1"
+    shift
+    echo "$title"
+    for f in "$@"; do
+        echo "  $f"
+    done
+}
+
 BRANCH="$(git -C "$WORKTREE" rev-parse --abbrev-ref HEAD)"
 if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "HEAD" ]; then
     echo "worktree is on '$BRANCH'; refusing (need a feature branch)" >&2
     exit 2
 fi
 
-# Pre-flight: main must be on main and clean.
+# Pre-flight: main must be on main; closure bookkeeping can be stashed.
 MAIN_BRANCH="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
 if [ "$MAIN_BRANCH" != "main" ]; then
     echo "main checkout is on '$MAIN_BRANCH', not 'main'; aborting" >&2
     echo "  (cd $REPO && git checkout main) first" >&2
     exit 2
 fi
-if ! git -C "$REPO" diff --quiet || ! git -C "$REPO" diff --cached --quiet; then
-    echo "main checkout has uncommitted changes; aborting" >&2
-    echo "  commit, stash, or discard them first" >&2
-    exit 2
+
+MAIN_DIRTY_PATHS=()
+mapfile -t MAIN_DIRTY_PATHS < <(dirty_main_paths)
+if [ "${#MAIN_DIRTY_PATHS[@]}" -gt 0 ]; then
+    BOOKKEEPING_DIRTY_PATHS=()
+    OTHER_DIRTY_PATHS=()
+    for f in "${MAIN_DIRTY_PATHS[@]}"; do
+        if is_bookkeeping_path "$f"; then
+            BOOKKEEPING_DIRTY_PATHS+=("$f")
+        else
+            OTHER_DIRTY_PATHS+=("$f")
+        fi
+    done
+
+    echo "main checkout has uncommitted state:"
+    for f in "${MAIN_DIRTY_PATHS[@]}"; do
+        echo "  $f"
+    done
+    echo
+
+    if [ "${#OTHER_DIRTY_PATHS[@]}" -gt 0 ]; then
+        print_path_list "Non-bookkeeping dirty paths:" "${OTHER_DIRTY_PATHS[@]}" >&2
+        echo >&2
+        echo "Refusing to merge with non-bookkeeping dirty state on main." >&2
+        echo "Park those changes separately, then re-run merge-back." >&2
+        exit 2
+    fi
+
+    print_path_list "Closure-session bookkeeping candidates:" "${BOOKKEEPING_DIRTY_PATHS[@]}"
+    echo
+    echo "This is the common closure-session case: main already has"
+    echo ".threads/.research bookkeeping that should become a follow-up"
+    echo "commit after the worktree merge."
+    echo
+    echo "Options:"
+    echo "  (a) abort so you can commit or stash manually."
+    echo "  (s) stash this bookkeeping now, merge the worktree branch,"
+    echo "      then pop the bookkeeping overlay back afterwards."
+    echo
+    read -r -p "Choice [a/s]: " MAIN_DIRTY_CHOICE
+    case "$MAIN_DIRTY_CHOICE" in
+        s|S)
+            BOOKKEEPING_STASH_MSG="threads merge-back bookkeeping overlay for $BRANCH $(date +%Y-%m-%dT%H%M%S)"
+            git -C "$REPO" stash push -u -m "$BOOKKEEPING_STASH_MSG" -- "${BOOKKEEPING_DIRTY_PATHS[@]}"
+            BOOKKEEPING_STASHED=1
+            BOOKKEEPING_STASH_REF="stash@{0}"
+            MAIN_DIRTY_AFTER_STASH=()
+            mapfile -t MAIN_DIRTY_AFTER_STASH < <(dirty_main_paths)
+            if [ "${#MAIN_DIRTY_AFTER_STASH[@]}" -gt 0 ]; then
+                print_path_list "main still has dirty paths after bookkeeping stash:" "${MAIN_DIRTY_AFTER_STASH[@]}" >&2
+                echo "Aborting before merge. Restore the stash with:" >&2
+                echo "  git -C \"$REPO\" stash pop $BOOKKEEPING_STASH_REF" >&2
+                exit 2
+            fi
+            ;;
+        a|A|"")
+            echo "aborting. Commit or stash bookkeeping, then re-run."
+            exit 0
+            ;;
+        *)
+            echo "unrecognised choice; aborting" >&2
+            exit 2
+            ;;
+    esac
 fi
 
 # Inspect worktree state: any modified or untracked files?
@@ -79,7 +181,7 @@ fi
 UNCOMMITTED=$({ git -C "$WORKTREE" diff --name-only HEAD; \
                 git -C "$WORKTREE" ls-files --others --exclude-standard; } \
               | grep -Ev '^(\.envrc|\.venv|\.venv/.*)$' \
-              | sort -u)
+              | sort -u || true)
 
 if [ -n "$UNCOMMITTED" ]; then
     echo "Worktree has UNCOMMITTED state on branch '$BRANCH':"
@@ -153,11 +255,33 @@ if ! git merge --no-ff "$BRANCH"; then
     echo
     echo "merge FAILED. The repo is in a half-merged state — resolve" >&2
     echo "conflicts, then 'git merge --continue' or 'git merge --abort'." >&2
+    if [ "$BOOKKEEPING_STASHED" -eq 1 ]; then
+        echo >&2
+        echo "Bookkeeping overlay is still stashed as $BOOKKEEPING_STASH_REF." >&2
+        echo "After the merge is continued or aborted, restore it with:" >&2
+        echo "  git -C \"$REPO\" stash pop $BOOKKEEPING_STASH_REF" >&2
+    fi
     exit 1
 fi
 
 MERGE_COMMIT="$(git rev-parse --short HEAD)"
 TODAY="$(date +%Y-%m-%d)"
+
+if [ "$BOOKKEEPING_STASHED" -eq 1 ]; then
+    echo
+    echo "Restoring main-side bookkeeping overlay from $BOOKKEEPING_STASH_REF..."
+    if git stash pop "$BOOKKEEPING_STASH_REF"; then
+        echo "Bookkeeping overlay restored. It is intentionally uncommitted."
+    else
+        BOOKKEEPING_POP_CONFLICT=1
+        echo >&2
+        echo "Bookkeeping overlay pop reported conflicts or failed." >&2
+        echo "Resolve the bookkeeping overlay, then commit it as the" >&2
+        echo "post-merge closure/bookkeeping commit. Git usually keeps" >&2
+        echo "the stash entry when pop conflicts; do not drop it until" >&2
+        echo "the overlay is recovered." >&2
+    fi
+fi
 
 # Step 3: optional path-substitution for stale-layout fixups.
 if [ "$REWRITE" -eq 1 ]; then
@@ -181,6 +305,34 @@ cat <<EOF
 
 Merge committed: $MERGE_COMMIT
 
+EOF
+
+if [ "$BOOKKEEPING_STASHED" -eq 1 ]; then
+    cat <<EOF
+
+Main-side bookkeeping overlay:
+
+  The script stashed .threads/.research bookkeeping before the merge
+  and popped it back afterwards.
+
+  Stash message:
+    $BOOKKEEPING_STASH_MSG
+
+  Review the restored overlay before committing:
+    git status
+    git diff
+
+  If stash pop produced conflicts, resolve them now. The follow-up
+  bookkeeping commit should carry the closure-session state, plus the
+  actual merge metadata from this run:
+    codex_worktrees[<i>].merged_into = "$MERGE_COMMIT"
+    codex_worktrees[<i>].merged_at   = "$TODAY"
+
+EOF
+fi
+
+cat <<EOF
+
 Next steps (run by hand, in this order):
 
   1. .venv/bin/python -m unittest <focused tests>
@@ -194,16 +346,21 @@ Next steps (run by hand, in this order):
   3. Update the thread's handoff.md with a session-log entry
      describing the close + merge transition.
 
-  4. Run the **Close thread** workflow (sets thread.status = closed).
+  4. Run or verify the **Close thread** workflow
+     (sets thread.status = closed).
 
   5. Regenerate the registry:
         python3 ~/.claude/skills/threads/scripts/index_threads_research.py
 
-  6. Commit thread.json + handoff.md + threads.json + INDEX.json
-     together (single bookkeeping commit).
+  6. Commit the thread bookkeeping + threads.json + INDEX.json
+     together (single post-merge bookkeeping commit).
 
   7. Clean up the worktree:
         git worktree remove "$WORKTREE"
         git branch -d "$BRANCH"
 
 EOF
+
+if [ "$BOOKKEEPING_POP_CONFLICT" -eq 1 ]; then
+    exit 1
+fi
