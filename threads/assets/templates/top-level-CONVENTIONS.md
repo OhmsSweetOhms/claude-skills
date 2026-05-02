@@ -199,11 +199,14 @@ merged_into: []                      # commit hashes required once merged
   running diagnostics. `temp/README.md` (tracked) documents
   regeneration commands.
 - `data/` — optional. For committed captures that CANNOT be
-  regenerated (hardware traces, one-off recordings).
+  regenerated (hardware traces, one-off recordings), plus
+  gate-dependent fixtures whose exact bytes are consumed by
+  committed tests or CI gates.
 
 **Rule:** if running a script from `diagnostics/` recreates the
-file, it belongs in `temp/`. Only commit bytes that can't be
-reproduced.
+file, it belongs in `temp/` unless a committed gate depends on that
+exact snapshot. Commit bytes only when they can't be reproduced or
+when they are gate-dependent fixtures.
 
 ---
 

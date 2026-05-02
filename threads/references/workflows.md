@@ -315,6 +315,11 @@ thread's `diagnostics/` and wants to track it.
    {"file": "temp/<output>", "plan_hop": N, "regenerate_with": "<exact shell cmd>"}
    ```
    Also update `temp/README.md` to add the regen command row.
+   Before a committed test or CI gate consumes that output, apply
+   the `references/layout.md` **When to promote `temp/` to
+   `data/`** rule: either promote the exact snapshot to `data/`
+   and document its consumer in `data/README.md`, or make the gate
+   regenerate byte-identical output as part of setup.
 3. Update `thread.json.updated`.
 
 **Verification:**

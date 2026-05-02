@@ -30,7 +30,7 @@ like:
   temp/                          ← regeneratable outputs (gitignored)
     README.md                    ← regeneration commands (tracked)
   external-comments/             ← Codex / claude.ai / colleague input
-  data/                          ← optional; committed uncaptureable files
+  data/                          ← optional; committed captures and fixtures
 ```
 
 ## Starting a new thread
@@ -63,7 +63,8 @@ The `/threads` skill (if installed) automates these steps.
   directory is gitignored — contents never get committed. Instead,
   maintain a tracked `temp/README.md` that lists each expected
   output and the command to regenerate it. If an output cannot be
-  regenerated (hardware trace, one-off recording), put it in
+  regenerated (hardware trace, one-off recording), or if a
+  committed test/gate depends on a specific snapshot, put it in
   `data/` instead and commit the bytes.
 - **Findings**: write `findings-<YYYY-MM-DD>.md` when a plan hop
   closes or a decision point is reached. Never overwrite — new
