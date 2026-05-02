@@ -191,4 +191,14 @@ and unresolved `gates[].caveats[]` item as one of:
 - `accepted as-is`: record as context with no code or thread action.
 
 Use `scripts/triage_codex_handback.py` for the first pass when an
-artifact is available.
+artifact is available:
+
+```bash
+python3 ~/.claude/skills/threads/scripts/triage_codex_handback.py \
+  <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json \
+  --out <main-checkout>/.threads/<thread-id>/codex-handback-<plan-id>-triage.md
+```
+
+The script's classifications are recommendations. The main session
+may edit them, but it must preserve one row per handback item and a
+clear disposition before merge-back or next-hop activation.

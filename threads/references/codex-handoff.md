@@ -314,6 +314,57 @@ superseded plan hop on a codex-enabled thread as
 `missing_codex_handback` when neither the main checkout nor the
 recorded worktree path contains the handback pair.
 
+## Process codex handback
+
+**Trigger:** a forward or retroactive handback exists and the main
+session needs to decide what to do with `discoveries[]`,
+`follow_ons[]`, `investigations[]`, `blockers[]`, or unresolved
+`gates[].caveats[]`. Run this before merge-back, before activating
+the next plan hop, or any time status review flags
+`untriaged_codex_handback`.
+
+**Steps:**
+
+1. **Locate the handback JSON.** If the artifacts are worktree-only,
+   use `thread.json.codex_worktrees[].path` and the plan id:
+   ```bash
+   python3 ~/.claude/skills/threads/scripts/triage_codex_handback.py \
+       <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json
+   ```
+
+2. **Classify every row.** Use exactly one disposition per item:
+   - `pre-merge blocker` — resolve on the worktree before
+     merge-back. Gate caveats that affect CI, clean-checkout
+     behavior, portability, or reproducibility usually land here.
+   - `post-merge follow-up` — route into a new plan hop, new thread,
+     or backlog after merge.
+   - `accepted as-is` — retain as context; no code or thread action.
+
+3. **Record the decision.** Save the reviewed table as:
+   ```text
+   <thread>/codex-handback-<plan-id>-triage.md
+   ```
+   Prefer the main checkout thread directory so the triage record is
+   visible before worktree merge-back. If the record must live on the
+   worktree branch temporarily, use the same filename next to the
+   handback pair and mention it in `handoff.md`.
+
+4. **Act on pre-merge blockers before merge-back.** If a row is a
+   pre-merge blocker, either resolve it on the worktree branch and
+   cite the resolving commit in the triage table, or explicitly
+   decide not to merge yet. Do not bury it as a future follow-up.
+
+5. **Route post-merge follow-ups.** Create or update the successor
+   plan hop, a new thread, or a backlog note. The arm/PS.B12 spawn
+   intent from the synth-tropo session is an example of main-session
+   routing that does not belong in a Codex handback unless Codex
+   emitted it.
+
+**Status-review flag:** `status_review.py` flags
+`untriaged_codex_handback` when a visible handback contains blockers,
+follow-ons, discovery follow-ups, or unresolved gate caveats but no
+`codex-handback-<plan-id>-triage.md` record is visible.
+
 ## Codex worktree merge-back
 
 **Trigger:** *only* when the user explicitly asks for it, AND the
@@ -337,6 +388,10 @@ proceed on explicit confirmation.
 - `thread.json.codex_worktrees[<i>].status == "active"` for the
   worktree being merged. If `merged` already, the worktree was
   landed in a prior pass — abort.
+- Every visible `codex-handback-<plan-id>.json` with actionable
+  blockers, follow-ons, discovery follow-ups, or unresolved
+  `gates[].caveats[]` has been processed by **Process codex
+  handback**. No `pre-merge blocker` row remains unresolved.
 
 **Steps:**
 

@@ -168,11 +168,12 @@ def handback_pair_exists(thread_dir: Path, plan_id: str) -> bool:
     )
 
 
-def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> bool:
-    """Return true if a handback pair is readable on main or a recorded worktree."""
+def handback_locations(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> list[Path]:
+    """Return thread dirs where a handback pair is readable."""
+    locations: list[Path] = []
     main_thread_dir = threads_path / thread_id
     if handback_pair_exists(main_thread_dir, plan_id):
-        return True
+        locations.append(main_thread_dir)
 
     project_root = threads_path.parent
     for wt in thread_data.get("codex_worktrees", []) or []:
@@ -181,8 +182,40 @@ def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict,
             continue
         wt_thread_dir = _resolve_worktree_path(raw_path, project_root) / ".threads" / thread_id
         if handback_pair_exists(wt_thread_dir, plan_id):
+            locations.append(wt_thread_dir)
+    return locations
+
+
+def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> bool:
+    """Return true if a handback pair is readable on main or a recorded worktree."""
+    return bool(handback_locations(threads_path, thread_id, thread_data, plan_id))
+
+
+def handback_triage_record_exists(thread_dirs: list[Path], plan_id: str) -> bool:
+    return any((d / f"codex-handback-{plan_id}-triage.md").exists() for d in thread_dirs)
+
+
+def handback_has_actionable_items(handback: dict) -> bool:
+    if handback.get("blockers"):
+        return True
+    if handback.get("follow_ons"):
+        return True
+    for discovery in handback.get("discoveries", []) or []:
+        if discovery.get("follow_up_needed"):
             return True
+    for gate in handback.get("gates", []) or []:
+        for caveat in gate.get("caveats", []) or []:
+            if not caveat.get("resolved_by"):
+                return True
     return False
+
+
+def load_handback_json(thread_dir: Path, plan_id: str) -> dict | None:
+    p = thread_dir / f"codex-handback-{plan_id}.json"
+    try:
+        return json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def hop_expected_codex_handback(hop: dict) -> bool:
@@ -312,6 +345,36 @@ def flag_triage(
                         ),
                     })
 
+        # Untriaged handback findings: the handback exists and contains
+        # actionable content, but no codex-handback-plan-NN-triage.md record
+        # is visible alongside it yet.
+        if thread_data.get("codex_worktrees"):
+            for hop in thread_data.get("plan_hops", []) or []:
+                if hop.get("status") == "active":
+                    continue
+                if not hop_expected_codex_handback(hop):
+                    continue
+                plan_id = plan_id_for_hop(hop)
+                if plan_id == "plan-??":
+                    continue
+                locations = handback_locations(threads_path, tid, thread_data, plan_id)
+                if not locations or handback_triage_record_exists(locations, plan_id):
+                    continue
+                handback = load_handback_json(locations[0], plan_id)
+                if handback and handback_has_actionable_items(handback):
+                    flags.append({
+                        "id": tid,
+                        "kind": "untriaged_codex_handback",
+                        "days": days,
+                        "summary": (
+                            f"`codex-handback-{plan_id}.json` contains blockers, "
+                            "follow-ons, discovery follow-ups, or unresolved gate "
+                            "caveats, but no triage record is visible. Run "
+                            "`triage_codex_handback.py` and classify each item "
+                            "before merge-back or next-hop activation."
+                        ),
+                    })
+
     # De-duplicate by (id, kind)
     deduped = []
     seen = set()
@@ -328,8 +391,9 @@ def flag_triage(
         "corrupt_thread_json": 2,
         "orphaned_codex_worktree": 3,
         "missing_codex_handback": 4,
-        "active_stale": 5,
-        "supersede_ref_unverified": 6,
+        "untriaged_codex_handback": 5,
+        "active_stale": 6,
+        "supersede_ref_unverified": 7,
     }
     deduped.sort(key=lambda f: (kind_order.get(f["kind"], 99), -f.get("days", 0)))
     return deduped
