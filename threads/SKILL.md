@@ -65,6 +65,11 @@ For exact JSON shapes, `references/schemas.md` has the
 `threads.json`, `thread.json`, and external-comment frontmatter
 contracts with examples.
 
+For Codex worktree sessions, `references/codex-handback.md` defines
+the handback artifact pair (`codex-handback-<plan-id>.json` and
+`.md`), the recording discipline, lifecycle visibility rules, and
+the consumer triage step before merge-back or next-hop activation.
+
 ## Operations — dispatch table
 
 When the user's request matches one of these, follow the named

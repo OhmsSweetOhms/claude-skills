@@ -217,6 +217,52 @@ contract: a worktree marked `merged` with no commit hash is
 indistinguishable from one that was deleted and forgotten. The
 hash forces merge to be a real git operation.
 
+## Codex handback JSON
+
+Each Codex worktree hop emits a JSON handback next to its Markdown
+summary:
+
+```text
+<worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json
+```
+
+The authoritative schema is
+`assets/schemas/codex-handback.schema.json`. See
+`references/codex-handback.md` for the lifecycle and consumer
+workflow. Field summary:
+
+- `schema_version` — currently `"2"`.
+- `plan_id` — plan id such as `plan-03`.
+- `thread_id` — canonical thread id.
+- `session_date` — ISO date.
+- `status` — Codex progress/outcome:
+  `complete | gate-incomplete | blocked | scope-cut`.
+- `closure_status` — optional thread/plan lifecycle state:
+  `active | blocked | superseded | closed`; omit for normal forward
+  handbacks until the main session closes the hop.
+- `worktree` — branch, hop-start base, handback head, optional
+  terminal SHA/commit range, and `diff_stat`.
+- `commits[]` — `{sha, subject, role, has_verification_trailer?}`.
+- `tests` — optional aggregate test count/log metadata.
+- `regression_baseline` — optional command/result/log metadata.
+- `gates[]` — acceptance-gate verdicts with optional
+  `caveats[]` for portability, reproducibility, validity, coverage,
+  or scope caveats.
+- `engineering_deliverables[]` — optional path-level landed/partial/
+  deferred/removed summary.
+- `discoveries[]` — Codex-spontaneous observations.
+- `investigations[]` — user-prompted mid-session inquiries.
+- `blockers[]` — blockers with command evidence and proposed owner.
+- `follow_ons[]` — proposed next-hop, new-thread, backlog, or
+  out-of-scope follow-ups.
+- `plan_hindsight` — short retrospective string.
+
+Schema compatibility: the v2 JSON schema remains tolerant of
+unknown fields so historical handbacks validate. Current templates
+define stricter emission discipline: new gates should emit
+`caveats: []` when no caveat exists, and lifecycle closure should
+use `closure_status` rather than overloading `status`.
+
 ### `external_reviews[]` merged_into contract
 
 When `disposition == "merged"`, `merged_into[]` is required and
