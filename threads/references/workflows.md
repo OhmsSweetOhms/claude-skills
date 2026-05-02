@@ -94,6 +94,11 @@ the layout.
   `thread.json`).
 - Get the **starting context** for plan-01: what's known so far,
   what hypothesis the first hop tests.
+- Decide whether this thread will hand source-code work to Codex. For
+  active code-writing threads, routine posture is to bootstrap the
+  Codex worktree at thread inception and render the first prompt
+  scaffold immediately. For docs-only or research-only threads, record
+  the skip rationale in `handoff.md`.
 
 **Steps:**
 
@@ -129,13 +134,28 @@ the layout.
    don't fabricate detail beyond what they gave you.
 6. Copy `assets/templates/temp-README.md` → `temp/README.md`. The
    table starts empty (will populate as diagnostics emit outputs).
-7. Update `<threads-path>/threads.json`: append the new thread to
+7. If this is a code-writing thread, run the **Codex worktree
+   handoff** workflow now:
+   - Bootstrap the worktree with
+     `scripts/bootstrap_codex_worktree.sh <slug>`.
+   - Paste the emitted `codex_worktrees[]` entry into `thread.json`.
+   - Render the first prompt scaffold with `--render-prompt-out` or
+     `scripts/render_codex_handoff.py`.
+   - Hand-curate every `HAND-CURATE` marker before showing the prompt
+     to the user or pasting it into Codex.
+
+   If the user explicitly defers worktree creation, add a short note
+   to the first `handoff.md` session-log entry so a future session
+   knows the omission was intentional.
+8. Update `<threads-path>/threads.json`: append the new thread to
    `threads[]`. Don't touch `promotion_log[]`.
-8. Add a single entry to `thread.json.plan_hops[]`:
+9. Add a single entry to `thread.json.plan_hops[]`:
    `{"num": 1, "file": "plan-01-<slug>.md", "status": "active", "outcome": null}`.
-9. Tell the user: thread directory created, plan-01 has the
+10. Tell the user: thread directory created, plan-01 has the
    starter content from your message — review and refine before
-   starting the actual investigation.
+   starting the actual investigation. If a worktree was bootstrapped,
+   also point to the rendered scaffold path and state that it still
+   needs hand-curation before launch.
 
 **Verification:**
 - Both JSON files parse.
@@ -169,9 +189,9 @@ deserves its own plan rather than appending to the current one.
   hop's source work stacks on top of the existing worktree-branch
   HEAD as a fresh codex run against the same worktree (same
   `cd <worktree> && source .envrc && codex` invocation, new handoff
-  prompt rendered from the new plan hop's step list using
-  `assets/templates/codex-handoff-prompt.md` with `BASE_COMMIT_SHA`
-  set to the worktree branch's current HEAD, not `origin/main`).
+  scaffold rendered with `scripts/render_codex_handoff.py` and then
+  hand-curated before launch. `BASE_COMMIT_SHA` is the worktree
+  branch's current HEAD, not `origin/main`).
 
 **Steps:**
 
