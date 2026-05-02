@@ -10,6 +10,8 @@
 #
 # Usage:
 #   bash bootstrap_codex_worktree.sh <thread-slug> [--repo <path>] [--branch <name>]
+#       [--thread-id <subsystem/YYYYMMDD-slug>] [--plan-id plan-NN]
+#       [--render-prompt-out <path>] [--adjacent-threads <path>]
 #
 # Defaults:
 #   --repo:   git rev-parse --show-toplevel (current main checkout)
@@ -18,20 +20,30 @@
 # Outputs to stdout:
 #   - worktree path, branch, base commit, venv link target
 #   - JSON snippet to paste into the thread's thread.json (first creation only)
+#   - optional codex handoff scaffold path when --render-prompt-out is used
 
 set -euo pipefail
 
 SLUG=""
 REPO=""
 BRANCH=""
+THREAD_ID=""
+PLAN_ID=""
+RENDER_PROMPT_OUT=""
+ADJACENT_THREADS=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --repo)    REPO="$2"; shift 2 ;;
-        --branch)  BRANCH="$2"; shift 2 ;;
-        --help|-h) sed -n '2,21p' "$0"; exit 0 ;;
-        -*)        echo "unknown flag: $1" >&2; exit 2 ;;
-        *)         SLUG="$1"; shift ;;
+        --repo)              REPO="$2"; shift 2 ;;
+        --branch)            BRANCH="$2"; shift 2 ;;
+        --thread-id)         THREAD_ID="$2"; shift 2 ;;
+        --plan-id)           PLAN_ID="$2"; shift 2 ;;
+        --render-prompt-out) RENDER_PROMPT_OUT="$2"; shift 2 ;;
+        --adjacent-threads)  ADJACENT_THREADS="$2"; shift 2 ;;
+        --help|-h)           sed -n '2,23p' "$0"; exit 0 ;;
+        -*)                  echo "unknown flag: $1" >&2; exit 2 ;;
+        *)                   SLUG="$1"; shift ;;
     esac
 done
 
@@ -57,6 +69,58 @@ PARENT="$(dirname "$REPO")"
 WORKTREE="$PARENT/${REPO_NAME}-${SLUG}"
 
 cd "$REPO"
+
+infer_thread_id() {
+    local slug="$1"
+    local -a matches=()
+    local path rel
+
+    if [ ! -d "$REPO/.threads" ]; then
+        return 1
+    fi
+
+    while IFS= read -r path; do
+        rel="${path#"$REPO/.threads/"}"
+        matches+=("$rel")
+    done < <(
+        find "$REPO/.threads" -mindepth 2 -maxdepth 2 -type d \
+            \( -name "$slug" -o -name "*-$slug" \) 2>/dev/null | sort
+    )
+
+    if [ "${#matches[@]}" -eq 1 ]; then
+        printf '%s\n' "${matches[0]}"
+        return 0
+    fi
+    if [ "${#matches[@]}" -gt 1 ]; then
+        echo "ambiguous thread slug '$slug'; pass --thread-id explicitly." >&2
+        printf '  matches:\n' >&2
+        printf '    %s\n' "${matches[@]}" >&2
+        return 1
+    fi
+    return 1
+}
+
+infer_plan_id() {
+    local thread_id="$1"
+    local thread_json="$REPO/.threads/$thread_id/thread.json"
+    if [ ! -f "$thread_json" ]; then
+        return 1
+    fi
+    python3 -c '
+import json, re, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+current = data.get("current_plan") or ""
+if not current:
+    hops = data.get("plan_hops") or []
+    active = [h for h in hops if h.get("status") == "active" and h.get("file")]
+    if active:
+        current = sorted(active, key=lambda h: h.get("num", 0))[-1]["file"]
+match = re.search(r"(plan-\d+)", current)
+if match:
+    print(match.group(1))
+' "$thread_json"
+}
 
 # Detect existing worktree at target path.
 EXISTED=0
@@ -102,6 +166,36 @@ export PYTHON="${WORKTREE}/.venv/bin/python"
 EOF
 echo ".envrc written: $ENVRC"
 
+if [ -n "$RENDER_PROMPT_OUT" ]; then
+    if [ -z "$THREAD_ID" ]; then
+        THREAD_ID="$(infer_thread_id "$SLUG" || true)"
+    fi
+    if [ -z "$THREAD_ID" ]; then
+        echo "cannot render prompt scaffold: pass --thread-id <subsystem/YYYYMMDD-slug>" >&2
+        exit 2
+    fi
+    if [ -z "$PLAN_ID" ]; then
+        PLAN_ID="$(infer_plan_id "$THREAD_ID" || true)"
+    fi
+    if [ -z "$PLAN_ID" ]; then
+        echo "cannot render prompt scaffold: pass --plan-id plan-NN" >&2
+        exit 2
+    fi
+
+    RENDER_CMD=(
+        python3 "$SCRIPT_DIR/render_codex_handoff.py"
+        --main-repo "$REPO"
+        --worktree-path "$WORKTREE"
+        --thread-id "$THREAD_ID"
+        --plan-id "$PLAN_ID"
+        --out "$RENDER_PROMPT_OUT"
+    )
+    if [ -n "$ADJACENT_THREADS" ]; then
+        RENDER_CMD+=(--adjacent-threads "$ADJACENT_THREADS")
+    fi
+    "${RENDER_CMD[@]}"
+fi
+
 cat <<EOF
 
 Done. Worktree ready.
@@ -116,9 +210,17 @@ Hand the codex agent this env:
   cd "$WORKTREE"
   source .envrc
 
-Then paste the codex-handoff prompt
-(see ~/.claude/skills/threads/assets/templates/codex-handoff-prompt.md)
-with substitutions filled in from the thread's handoff.md.
+Then paste the hand-curated codex-handoff prompt. Generate the
+scaffold with --render-prompt-out, or run:
+
+  python3 ~/.claude/skills/threads/scripts/render_codex_handoff.py \\
+      --main-repo "$REPO" \\
+      --worktree-path "$WORKTREE" \\
+      --thread-id "<subsystem/YYYYMMDD-slug>" \\
+      --plan-id "<plan-NN>" \\
+      --out ".threads/<subsystem>/<YYYYMMDD-slug>/codex-handoff-<plan-NN>.md"
+
+Replace every HAND-CURATE marker before pasting it to codex.
 
 EOF
 
