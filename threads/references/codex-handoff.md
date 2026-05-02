@@ -382,9 +382,12 @@ proceed on explicit confirmation.
 - All plan hops in `thread.json.plan_hops[]` are `closed` or
   `superseded`.
 - The user explicitly requested the merge.
-- The main checkout's working tree is clean (`git status` empty),
-  or any local edits don't overlap the worktree branch's files.
-  Overlaps are flagged interactively by the merge-back script.
+- The main checkout is either clean, or dirty only with
+  closure-session bookkeeping under `.threads/` and
+  `.research/INDEX.json`. The merge-back script can stash that
+  bookkeeping, merge the worktree branch, then pop the bookkeeping
+  overlay back for the follow-up commit. Park unrelated dirty files
+  separately before merge-back.
 - `thread.json.codex_worktrees[<i>].status == "active"` for the
   worktree being merged. If `merged` already, the worktree was
   landed in a prior pass — abort.
@@ -402,6 +405,11 @@ proceed on explicit confirmation.
    ```
    It:
    - Verifies the worktree exists and is on the expected branch.
+   - Checks main-side uncommitted state. If dirty state is limited
+     to `.threads/` and `.research/INDEX.json`, it offers the
+     closure-session overlay path: stash the bookkeeping, merge the
+     worktree branch, then pop the bookkeeping back afterward. If
+     any non-bookkeeping files are dirty, it refuses the merge.
    - Checks for uncommitted state in the worktree (modified +
      untracked). If present, lists the files and asks the user
      whether to (a) abort and commit them on the worktree branch
@@ -415,16 +423,42 @@ proceed on explicit confirmation.
      `--no-ff` preserves the codex-handoff lineage as a merge
      commit; the merge commit's body should describe what the
      thread accomplished (the script prompts you to write it).
+   - If a main-side bookkeeping overlay was stashed, pops it after
+     a successful merge. The restored edits are intentionally left
+     uncommitted so the main session can update `merged_into`,
+     `merged_at`, rerun the indexer, and commit the closure
+     bookkeeping as a follow-up commit.
    - On `--copy-uncommitted-and-merge` (option (b) above): copies
      uncommitted files from the worktree into the main working
      tree first, then proceeds with the merge.
-2. **Run focused tests with the venv Python:**
+2. **If the merge conflicts on bookkeeping files, keep the merge
+   commit focused on landing the worktree branch.** In the
+   synth-tropo close, the worktree branch carried older
+   `README.md`, `handoff.md`, `thread.json`, registry, and research
+   index state while `main` had newer closure bookkeeping. The
+   practical resolution was:
+   - let the merge commit take the worktree branch's bookkeeping for
+     those conflicted paths so the branch history lands cleanly;
+   - continue the merge;
+   - pop the stashed main-side bookkeeping overlay;
+   - update `codex_worktrees[].merged_into` / `merged_at` with the
+     actual merge commit; and
+   - commit that restored closure state as the post-merge
+     bookkeeping commit.
+
+   If the script exited after a merge conflict and it had stashed
+   bookkeeping, it prints the stash reference. Restore it only after
+   `git merge --continue` or `git merge --abort`:
+   ```bash
+   git stash pop stash@{0}
+   ```
+3. **Run focused tests with the venv Python:**
    ```bash
    .venv/bin/python -m unittest <focused test modules>
    ```
    The system `python3` may have a SciPy/NumPy ABI mismatch on this
    host. Always go through `.venv/bin/python` for project imports.
-3. **Path-substitution if the branch was based on stale layout.** If
+4. **Path-substitution if the branch was based on stale layout.** If
    the worktree branch was cut very early in the thread and the
    `main` layout has since moved (e.g., the pre-`.threads/` move),
    the merged files may carry stale path references. Run:
@@ -434,28 +468,28 @@ proceed on explicit confirmation.
    It applies the project's known stale-layout sed substitutions
    (today: `gps_receiver/threads → .threads`). Extend the script's
    sed line if a future layout move adds another mapping.
-4. **Update `thread.json`** to record the merge:
+5. **Update `thread.json`** to record the merge:
    - Set `codex_worktrees[<i>].status = "merged"`.
    - Set `merged_into` to the merge commit hash on `main`.
    - Set `merged_at` to today's ISO date.
    This is the audit-trail equivalent of `external_reviews[].merged_into`.
-5. **Update the thread's `handoff.md`** with a new session-log entry
+6. **Update the thread's `handoff.md`** with a new session-log entry
    at the top describing the close-and-merge transition. Refresh
    "Current state" and "Blockers / in flight" to reflect that
    nothing is in flight on the worktree any more. If any plan-hop
    `outcome` prose pointed at worktree-only handback artifacts,
    preserve that pointer and append the merge commit if needed; see
    `references/codex-handback.md`.
-6. **Close the thread** via the standard threads-skill **Close thread**
+7. **Close the thread** via the standard threads-skill **Close thread**
    workflow (sets `thread.json.status = "closed"`, sets the active
    plan hop to `closed` with an outcome, etc.).
-7. **Regenerate the registry** as the final step:
+8. **Regenerate the registry** as the final step:
    ```bash
    python3 ~/.claude/skills/threads/scripts/index_threads_research.py
    ```
    Commit the regenerated `.threads/threads.json` and
    `.research/INDEX.json` together with the handoff edits.
-8. **Clean up the worktree:**
+9. **Clean up the worktree:**
    ```bash
    git worktree remove /path/to/worktree
    git branch -d <slug>
@@ -565,8 +599,12 @@ prompt enforces this with a "do NOT touch `.threads/`" instruction.
   The main session consumes those artifacts using
   `references/codex-handback.md` before closing the hop, starting a
   follow-on hop, or merging the worktree back.
-- **Close thread.** Step 6 of merge-back invokes the standard
-  **Close thread** workflow. Ordering matters: merge first
-  (so the close commit is on `main` with the source code already
-  landed), then close. A closed thread with `codex_worktrees[<i>].status == "active"`
-  is the orphan-worktree case the status-review flags.
+- **Close thread.** The merge-back close step invokes the standard
+  **Close thread** workflow. Ordering matters at commit granularity:
+  the source merge lands first, then the closure bookkeeping lands
+  as the follow-up commit. If the close workflow already produced
+  uncommitted `.threads/` / `.research/INDEX.json` edits in the same
+  session, stash that overlay before merge-back and pop it afterward
+  instead of committing it ahead of the source merge. A closed thread
+  with `codex_worktrees[<i>].status == "active"` is the
+  orphan-worktree case the status-review flags.
