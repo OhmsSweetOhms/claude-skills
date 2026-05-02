@@ -2,11 +2,12 @@
 
 > Paste this whole block into the codex agent's first message.
 > Replace the `{{...}}` placeholders with values from the bootstrap
-> output (or use `render_codex_handoff.py` to substitute them
-> mechanically). Don't remove the rules section — the agent's
-> source-only / no-commit discipline depends on it. Don't remove
-> the Recording discipline section — the main session relies on it
-> for the audit trail.
+> output (or use `render_codex_handoff.py` to render the scaffold).
+> Then replace every `HAND-CURATE` marker with authored content
+> before handing it to the user. Don't remove the rules section —
+> the agent's source-only / no-commit discipline depends on it.
+> Don't remove the Recording discipline section — the main session
+> relies on it for the audit trail.
 
 ---
 
@@ -19,7 +20,7 @@ write the two handback artifacts named below.
 ## Where you're working
 
 - **Worktree:** `{{WORKTREE_PATH}}`
-- **Branch:** `{{BRANCH}}` (cut from `origin/main` at `{{BASE_COMMIT_SHA}}`)
+- **Branch:** `{{BRANCH}}` (current worktree HEAD: `{{BASE_COMMIT_SHA}}`)
 - **Main checkout (read-only reference):** `{{MAIN_REPO_PATH}}`
 
 The worktree is long-lived for this thread — earlier plan hops on
@@ -36,27 +37,37 @@ mismatch). Project imports will fail under it. Either source the
 worktree's `.envrc` (which exports `PYTHON` pinned to the venv
 path), or invoke `.venv/bin/python` directly.
 
-## What to do
+## Read these BEFORE editing (primary sources)
 
-{{TASK}}
+{{READ_THESE_FIRST_SCAFFOLD}}
 
-Concrete deliverables:
+## What to do — Task
 
-- {{DELIVERABLES_BULLETS}}
+{{TASK_SCAFFOLD}}
 
-Tests to run when you think you're done:
+### Concrete deliverables
 
-```bash
-cd {{WORKTREE_PATH}}
-.venv/bin/python -m unittest {{FOCUSED_TEST_MODULES}}
-```
+{{DELIVERABLES_SCAFFOLD}}
 
-Regression baseline (run before final commit):
+## Hard constraints (read carefully — these are load-bearing)
 
-```bash
-cd {{WORKTREE_PATH}}
-.venv/bin/python {{REGRESSION_BASELINE_CMD}}
-```
+{{HARD_CONSTRAINTS_SCAFFOLD}}
+
+## Step-by-step execution
+
+{{STEP_BY_STEP_SCAFFOLD}}
+
+## Tests to run before producing the handback
+
+{{FOCUSED_TESTS_SCAFFOLD}}
+
+### Regression baseline (run before final commit)
+
+{{REGRESSION_BASELINE_SCAFFOLD}}
+
+## Hard runtime invariant — plan-specific
+
+{{RUNTIME_INVARIANT_SCAFFOLD}}
 
 ## Adjacent threads (briefing only — NOT your scope)
 

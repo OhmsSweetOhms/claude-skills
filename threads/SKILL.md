@@ -98,9 +98,11 @@ plan progresses, and merge back to `main` exactly once at thread
 close — and only when the user explicitly requests it. The
 merge-back script never auto-merges; it shows the incoming diff and
 prompts for confirmation. See `references/codex-handoff.md` for the
-full workflow, the pre-built bootstrap and merge-back scripts under
-`scripts/`, and the agent-prompt template under
-`assets/templates/codex-handoff-prompt.md`.
+full workflow, the pre-built bootstrap / scaffold-render / merge-back
+scripts under `scripts/`, and the agent-prompt scaffold template
+under `assets/templates/codex-handoff-prompt.md`. The renderer fills
+mechanical boilerplate only; the main agent must replace every
+`HAND-CURATE` marker before launch.
 
 ## Integration with `/research`
 
@@ -244,6 +246,10 @@ Templates:
 - `findings-template.md` — snapshot skeleton.
 - `external-comment-template.md` — verbatim + triage scaffold.
 - `temp-README.md` — regeneration-commands scaffold.
+- `codex-handoff-prompt.md` — Codex worktree prompt scaffold.
+  `render_codex_handoff.py` substitutes mechanical worktree/thread
+  values and leaves `HAND-CURATE` markers for the main agent to
+  author.
 - `review-template.md` — index-scope status-review skeleton with
   AUTO-BEGIN/AUTO-END markers and boilerplate manual sections
   (strategic tiers, cross-tier file overlaps, critical-path
