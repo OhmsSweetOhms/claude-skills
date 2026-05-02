@@ -65,6 +65,11 @@ For exact JSON shapes, `references/schemas.md` has the
 `threads.json`, `thread.json`, and external-comment frontmatter
 contracts with examples.
 
+For Codex worktree sessions, `references/codex-handback.md` defines
+the handback artifact pair (`codex-handback-<plan-id>.json` and
+`.md`), the recording discipline, lifecycle visibility rules, and
+the consumer triage step before merge-back or next-hop activation.
+
 ## Operations — dispatch table
 
 When the user's request matches one of these, follow the named
@@ -83,6 +88,8 @@ section in `references/workflows.md`:
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
 | "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |
+| "Recover a missing codex handback" / "retroactive handback" / "closed plan has no handback" | **Retroactive handback** (`references/codex-handoff.md`) |
+| "Triage codex handback findings" / "process codex handback" / "classify handback follow-ons" | **Process codex handback** (`references/codex-handoff.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 
 If the user's ask doesn't match cleanly, ask which operation they
@@ -250,6 +257,9 @@ Templates:
   `render_codex_handoff.py` substitutes mechanical worktree/thread
   values and leaves `HAND-CURATE` markers for the main agent to
   author.
+- `codex-handback-retroactive-prompt.md` — recovery prompt for a
+  closed or already-executed plan hop that lacks structured
+  handback artifacts.
 - `review-template.md` — index-scope status-review skeleton with
   AUTO-BEGIN/AUTO-END markers and boilerplate manual sections
   (strategic tiers, cross-tier file overlaps, critical-path

@@ -25,7 +25,13 @@
     "session_date": { "type": "string", "format": "date" },
     "status": {
       "type": "string",
-      "enum": ["complete", "gate-incomplete", "blocked", "scope-cut"]
+      "enum": ["complete", "gate-incomplete", "blocked", "scope-cut"],
+      "description": "Codex progress/outcome status for this handback. Thread or plan-hop lifecycle state lives in closure_status."
+    },
+    "closure_status": {
+      "type": ["string", "null"],
+      "enum": ["active", "blocked", "superseded", "closed", null],
+      "description": "Optional lifecycle state copied from the owning plan hop/thread when the main session closes or reconstructs the handback. Codex normally omits this for forward handbacks until the main session makes the closure decision."
     },
 
     "worktree": {
@@ -131,6 +137,38 @@
               "retired",
               "deferred-to-firmware"
             ]
+          },
+          "caveats": {
+            "type": "array",
+            "description": "Gate-level portability, reproducibility, validity, or scope caveats. New handbacks should emit [] when there are no caveats.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["kind", "summary", "impact"],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "portability",
+                    "reproducibility",
+                    "validity",
+                    "coverage",
+                    "scope",
+                    "other"
+                  ]
+                },
+                "summary": { "type": "string" },
+                "impact": {
+                  "type": "string",
+                  "description": "Why the caveat matters for future reruns, CI, merge-back, or interpretation of the verdict."
+                },
+                "evidence": { "$ref": "#/definitions/evidence" },
+                "recommended_action": { "type": "string" },
+                "resolved_by": {
+                  "type": ["string", "null"],
+                  "description": "Commit SHA, follow-up handback id, or null while unresolved."
+                }
+              }
+            }
           },
           "evidence_path": { "type": ["string", "null"] },
           "summary": { "type": "string" }

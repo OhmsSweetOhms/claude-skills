@@ -106,6 +106,10 @@ Use the markdown skeleton at:
 
   `~/.claude/skills/threads/assets/templates/codex-handback-template.md`
 
+The contract and consumer-side expectations are documented at:
+
+  `~/.claude/skills/threads/references/codex-handback.md`
+
 Both files are committed together as your terminal commit on this
 hop, with subject line:
 

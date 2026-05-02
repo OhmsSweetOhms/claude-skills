@@ -22,6 +22,12 @@ were specific to a sandboxed codex environment that this workflow
 no longer uses. They survive in the case-study handoff and in
 gps_design commits `4ca46a8` + `1f351dc` for the historical record.)
 
+For the artifact contract Codex must emit at the end of each hop,
+read `references/codex-handback.md`. That file defines the JSON and
+Markdown pair, lifecycle visibility while the files live only on the
+worktree branch, and the required consumer triage before merge-back
+or next-hop activation.
+
 ## Lifetime model — read this first
 
 The branch and worktree are **long-lived for the entire thread**:
@@ -73,6 +79,23 @@ The bootstrap script prints a JSON snippet to paste into
 make. Neither edits `thread.json` directly — JSON edits stay in the
 user's claude session where the rest of the thread's bookkeeping
 lives.
+
+### Handback visibility before merge-back
+
+Handback files are written on the Codex worktree branch. They do not
+appear in the main checkout until terminal merge-back. When a plan
+hop closes before the worktree is merged, update that hop's
+`thread.json::plan_hops[].outcome` on `main` with a prose pointer:
+
+```text
+(handback: codex-handback-<plan-id>.{json,md} on worktree branch
+<branch> at <worktree-head-sha>; path <absolute-worktree-path>)
+```
+
+The path and branch must match `thread.json::codex_worktrees[]`.
+After merge-back, leave the historical pointer in place or append
+`merged to main at <merge-sha>` if the original wording would
+otherwise confuse a cold-start reader.
 
 ## Why a worktree (and not a branch on main)
 
@@ -230,6 +253,118 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 - `thread.json.codex_worktrees[0].status == "active"` and
   `path` / `branch` match what bootstrap printed.
 
+## Retroactive handback
+
+**Trigger:** a plan hop has already run or closed, but
+`codex-handback-<plan-id>.json` and `.md` were not produced at the
+time. This most often happens when a thread predates the structured
+handback contract.
+
+**Pre-flight:**
+
+- The thread has an existing Codex worktree in
+  `thread.json.codex_worktrees[]`; use that worktree rather than
+  cutting a new one.
+- Identify the plan id (`plan-02`, `plan-03`, etc.), the plan file,
+  and the commit range that contains the plan's source work.
+- Check both the main checkout and the worktree path for existing
+  `codex-handback-<plan-id>.json` / `.md` before reconstructing.
+- Accept that chat-only discoveries cannot be recovered. The
+  retroactive handback records committed evidence, not memory.
+
+**Steps:**
+
+1. **Resolve evidence.** Collect the plan file, `thread.json`,
+   `handoff.md`, relevant findings files, and the worktree commit
+   range. The range should be precise enough that Codex can list the
+   commits that belong to the hop without swallowing later work.
+
+2. **Fill the recovery prompt.** Use:
+   ```text
+   ~/.claude/skills/threads/assets/templates/codex-handback-retroactive-prompt.md
+   ```
+   Replace every placeholder, including the handback output paths and
+   schema path. The prompt should state whether the main session has
+   already closed the plan; if so, include `closure_status: closed`
+   or `superseded` as applicable.
+
+3. **Run Codex in the existing worktree.** The prompt is
+   reconstruction-only: no source edits, no thread bookkeeping edits,
+   only the two handback artifacts.
+
+4. **Commit the artifacts on the worktree branch.** Use a subject
+   like:
+   ```text
+   plan-02 retroactive handback: reconstruct closure from committed evidence
+   ```
+
+5. **Update main-side pointers.** On `main`, update the closed plan
+   hop's `outcome` prose with the worktree-only pointer described in
+   **Handback visibility before merge-back**. Do not copy the
+   handback artifacts into main manually; they arrive on main at
+   merge-back.
+
+6. **Process the reconstructed handback.** Run the same consumer
+   triage as a forward handback. Retroactive handbacks often have
+   empty session-only arrays, but gate caveats and blockers can still
+   be visible from committed evidence.
+
+**Status-review flag:** `status_review.py` flags a closed or
+superseded plan hop on a codex-enabled thread as
+`missing_codex_handback` when neither the main checkout nor the
+recorded worktree path contains the handback pair.
+
+## Process codex handback
+
+**Trigger:** a forward or retroactive handback exists and the main
+session needs to decide what to do with `discoveries[]`,
+`follow_ons[]`, `investigations[]`, `blockers[]`, or unresolved
+`gates[].caveats[]`. Run this before merge-back, before activating
+the next plan hop, or any time status review flags
+`untriaged_codex_handback`.
+
+**Steps:**
+
+1. **Locate the handback JSON.** If the artifacts are worktree-only,
+   use `thread.json.codex_worktrees[].path` and the plan id:
+   ```bash
+   python3 ~/.claude/skills/threads/scripts/triage_codex_handback.py \
+       <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json
+   ```
+
+2. **Classify every row.** Use exactly one disposition per item:
+   - `pre-merge blocker` — resolve on the worktree before
+     merge-back. Gate caveats that affect CI, clean-checkout
+     behavior, portability, or reproducibility usually land here.
+   - `post-merge follow-up` — route into a new plan hop, new thread,
+     or backlog after merge.
+   - `accepted as-is` — retain as context; no code or thread action.
+
+3. **Record the decision.** Save the reviewed table as:
+   ```text
+   <thread>/codex-handback-<plan-id>-triage.md
+   ```
+   Prefer the main checkout thread directory so the triage record is
+   visible before worktree merge-back. If the record must live on the
+   worktree branch temporarily, use the same filename next to the
+   handback pair and mention it in `handoff.md`.
+
+4. **Act on pre-merge blockers before merge-back.** If a row is a
+   pre-merge blocker, either resolve it on the worktree branch and
+   cite the resolving commit in the triage table, or explicitly
+   decide not to merge yet. Do not bury it as a future follow-up.
+
+5. **Route post-merge follow-ups.** Create or update the successor
+   plan hop, a new thread, or a backlog note. The arm/PS.B12 spawn
+   intent from the synth-tropo session is an example of main-session
+   routing that does not belong in a Codex handback unless Codex
+   emitted it.
+
+**Status-review flag:** `status_review.py` flags
+`untriaged_codex_handback` when a visible handback contains blockers,
+follow-ons, discovery follow-ups, or unresolved gate caveats but no
+`codex-handback-<plan-id>-triage.md` record is visible.
+
 ## Codex worktree merge-back
 
 **Trigger:** *only* when the user explicitly asks for it, AND the
@@ -253,6 +388,10 @@ proceed on explicit confirmation.
 - `thread.json.codex_worktrees[<i>].status == "active"` for the
   worktree being merged. If `merged` already, the worktree was
   landed in a prior pass — abort.
+- Every visible `codex-handback-<plan-id>.json` with actionable
+  blockers, follow-ons, discovery follow-ups, or unresolved
+  `gates[].caveats[]` has been processed by **Process codex
+  handback**. No `pre-merge blocker` row remains unresolved.
 
 **Steps:**
 
@@ -303,7 +442,10 @@ proceed on explicit confirmation.
 5. **Update the thread's `handoff.md`** with a new session-log entry
    at the top describing the close-and-merge transition. Refresh
    "Current state" and "Blockers / in flight" to reflect that
-   nothing is in flight on the worktree any more.
+   nothing is in flight on the worktree any more. If any plan-hop
+   `outcome` prose pointed at worktree-only handback artifacts,
+   preserve that pointer and append the merge commit if needed; see
+   `references/codex-handback.md`.
 6. **Close the thread** via the standard threads-skill **Close thread**
    workflow (sets `thread.json.status = "closed"`, sets the active
    plan hop to `closed` with an outcome, etc.).
@@ -416,6 +558,11 @@ prompt enforces this with a "do NOT touch `.threads/`" instruction.
   and surfaces active worktrees in its AUTO-block. A `status: active`
   worktree on a `closed` or `superseded` thread is flagged as an
   orphaned worktree (cleanup needed).
+- **Codex handback.** Every Codex hop should end with
+  `codex-handback-<plan-id>.json` and `.md` on the worktree branch.
+  The main session consumes those artifacts using
+  `references/codex-handback.md` before closing the hop, starting a
+  follow-on hop, or merging the worktree back.
 - **Close thread.** Step 6 of merge-back invokes the standard
   **Close thread** workflow. Ordering matters: merge first
   (so the close commit is on `main` with the source code already

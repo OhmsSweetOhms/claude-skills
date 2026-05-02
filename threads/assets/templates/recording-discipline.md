@@ -13,6 +13,24 @@ the JSON schema: `gates[]`, `commits[]`, `worktree.diff_stat`,
 `status`. The closure record is the bookkeeping anchor for
 `thread.json::plan_hops[].outcome`.
 
+`status` records Codex's progress/outcome axis:
+`complete | gate-incomplete | blocked | scope-cut`. It is not the
+thread lifecycle enum. If the main session has already closed or
+superseded the plan, record that separate lifecycle state in
+`closure_status` (`active | blocked | superseded | closed`). For
+normal forward handbacks, omit `closure_status` until the main
+session makes the closure decision.
+
+Each `gates[]` entry should include `caveats: []` when there are no
+caveats. If a gate passes only because of local state, an
+untracked fixture, a branch-only artifact, an environment quirk, or
+another contingency that affects future validity, portability, or
+reproducibility, record it in that gate's `caveats[]`. Do not emit
+`status: complete` with that contingency only as a discovery
+footnote. If the caveat must be resolved before merge-back, also
+add a `blockers[]` entry or a `follow_ons[]` entry with routing
+that makes the pre-merge action explicit.
+
 **2. Mid-session inquiries as `investigations[]`.** When the user
 asks you to produce a theory, prove a hypothesis, run a diagnostic
 beyond the plan's deliverables, or assess an adjacent thread,
