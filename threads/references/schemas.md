@@ -229,8 +229,13 @@ Each Codex worktree hop emits a JSON handback next to its Markdown
 summary:
 
 ```text
-<worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json
+<worktree>/codex-handoff/<plan-id>/handback.json
 ```
+
+Legacy handbacks may exist at
+`<worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json`.
+New Codex runs use the root handoff inbox so `.threads/` remains
+main-session owned.
 
 The authoritative schema is
 `assets/schemas/codex-handback.schema.json`. See
@@ -256,6 +261,11 @@ workflow. Field summary:
   or scope caveats.
 - `engineering_deliverables[]` — optional path-level landed/partial/
   deferred/removed summary.
+- `handoff_artifact_summary` — optional counts for scripts, temp
+  files, and curated artifacts written under `codex-handoff/<plan-id>/`.
+- `handoff_artifacts[]` — optional inventory of session-created
+  helper material with a promotion recommendation for the main
+  session.
 - `discoveries[]` — Codex-spontaneous observations.
 - `investigations[]` — user-prompted mid-session inquiries.
 - `blockers[]` — blockers with command evidence and proposed owner.

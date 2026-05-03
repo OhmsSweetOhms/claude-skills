@@ -24,9 +24,9 @@ gps_design commits `4ca46a8` + `1f351dc` for the historical record.)
 
 For the artifact contract Codex must emit at the end of each hop,
 read `references/codex-handback.md`. That file defines the JSON and
-Markdown pair, lifecycle visibility while the files live only on the
-worktree branch, and the required consumer triage before merge-back
-or next-hop activation.
+Markdown pair, the root `codex-handoff/<plan-id>/` inbox, lifecycle
+visibility while the files live only on the worktree branch, and the
+required consumer triage before merge-back or next-hop activation.
 
 ## Lifetime model — read this first
 
@@ -80,22 +80,46 @@ make. Neither edits `thread.json` directly — JSON edits stay in the
 user's claude session where the rest of the thread's bookkeeping
 lives.
 
-### Handback visibility before merge-back
+### Handoff inbox and handback visibility before merge-back
 
-Handback files are written on the Codex worktree branch. They do not
-appear in the main checkout until terminal merge-back. When a plan
-hop closes before the worktree is merged, update that hop's
-`thread.json::plan_hops[].outcome` on `main` with a prose pointer:
+Each Codex run writes session output under the worktree root:
 
 ```text
-(handback: codex-handback-<plan-id>.{json,md} on worktree branch
-<branch> at <worktree-head-sha>; path <absolute-worktree-path>)
+<worktree>/codex-handoff/<plan-id>/
+  README.md
+  handback.json
+  handback.md
+  scripts/
+  temp/
+  artifacts/
+```
+
+`scripts/` holds throwaway probes, debug tests, and helpers.
+`temp/` holds bulky or disposable generated working files.
+`artifacts/` holds curated evidence cited by the handback. The main
+session reads this inbox after Codex exits and promotes only durable
+material into `.threads/`, tracked `data/`, permanent tests, or
+follow-up plans.
+
+Handback files are written on the Codex worktree branch. They do not
+appear in the main checkout until terminal merge-back unless the main
+session promotes or mirrors them. When a plan hop closes before the
+worktree is merged, update that hop's `thread.json::plan_hops[].outcome`
+on `main` with a prose pointer:
+
+```text
+(handback: codex-handoff/<plan-id>/handback.{json,md} on worktree
+branch <branch> at <worktree-head-sha>; path <absolute-worktree-path>)
 ```
 
 The path and branch must match `thread.json::codex_worktrees[]`.
 After merge-back, leave the historical pointer in place or append
 `merged to main at <merge-sha>` if the original wording would
 otherwise confuse a cold-start reader.
+
+Legacy worktree handbacks may still exist under
+`.threads/<thread-id>/codex-handback-<plan-id>.{json,md}`. New
+sessions should not write that layout.
 
 ## Why a worktree (and not a branch on main)
 
@@ -155,6 +179,11 @@ codex worktree on X", "spawn codex on X", "run codex on X".
      (`ln -s ../<repo>/.venv .venv`).
    - Writes `.envrc` exporting `PYTHON=<worktree>/.venv/bin/python`
      so any `source .envrc` pins Python to the venv-symlink path.
+   - Installs a worktree-local pre-commit hook that refuses staged
+     `.threads/` changes. Codex session material goes in the root
+     `codex-handoff/<plan-id>/` inbox.
+   - Creates `codex-handoff/<plan-id>/` with `scripts/`, `temp/`,
+     and `artifacts/` when `--plan-id` is provided or inferred.
    - Prints a `codex_worktrees[]` JSON snippet for the user to paste
      into `thread.json` (only on first creation; idempotent re-runs
      skip this).
@@ -189,13 +218,24 @@ codex worktree on X", "spawn codex on X", "run codex on X".
        --out .threads/receiver/20260427-chi-square-raim-design/codex-handoff-plan-03.md
    ```
    The renderer fills only mechanical boilerplate: worktree path,
-   branch, current worktree commit, main checkout path, handback
-   paths, recording discipline, and rule text. It intentionally
+   branch, current worktree commit, main checkout path, root handoff
+   inbox paths, recording discipline, and rule text. It intentionally
    leaves `HAND-CURATE` markers for task scope, read-first context,
    step sequence, deliverables, hard constraints, focused tests, and
    regression baseline, plus any plan-specific runtime invariant.
    Replace every marker with authored content before the prompt is
    shown to the user or pasted into codex.
+
+   The launch prompt may live as either:
+   - a separate `codex-handoff-<plan-id>.md` scaffold in the main
+     thread directory; or
+   - a hand-curated launch block at the top of `handoff.md` when the
+     project uses handoff-as-launch-prompt.
+
+   Both patterns keep ownership the same: the main session authors
+   the prompt and `.threads/` bookkeeping; Codex reads the prompt,
+   works in the isolated worktree, and writes session output under
+   `codex-handoff/<plan-id>/`.
 
 5. **You (the user) open a sidecar terminal** — a separate
    tab, window, or pane in your terminal app on this same machine —
@@ -239,9 +279,9 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    natural lineage that the merge-back absorbs as one unit at
    thread close.
 
-   `handoff.md` updates and the indexer regen happen on `main`, not
-   on the worktree branch — see the "Bookkeeping interactions"
-   section below.
+   `.threads/` updates and the indexer regen happen on `main`, not
+   on the worktree branch. Codex writes only source/test changes and
+   `codex-handoff/<plan-id>/` session material.
 
 **Verification:**
 
@@ -256,9 +296,9 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 ## Retroactive handback
 
 **Trigger:** a plan hop has already run or closed, but
-`codex-handback-<plan-id>.json` and `.md` were not produced at the
-time. This most often happens when a thread predates the structured
-handback contract.
+`codex-handoff/<plan-id>/handback.json` and `.md` were not produced
+at the time. This most often happens when a thread predates the
+structured handback contract.
 
 **Pre-flight:**
 
@@ -267,8 +307,8 @@ handback contract.
   cutting a new one.
 - Identify the plan id (`plan-02`, `plan-03`, etc.), the plan file,
   and the commit range that contains the plan's source work.
-- Check both the main checkout and the worktree path for existing
-  `codex-handback-<plan-id>.json` / `.md` before reconstructing.
+- Check both the new root inbox and the legacy `.threads/` location
+  for existing handback files before reconstructing.
 - Accept that chat-only discoveries cannot be recovered. The
   retroactive handback records committed evidence, not memory.
 
@@ -283,14 +323,14 @@ handback contract.
    ```text
    ~/.claude/skills/threads/assets/templates/codex-handback-retroactive-prompt.md
    ```
-   Replace every placeholder, including the handback output paths and
-   schema path. The prompt should state whether the main session has
-   already closed the plan; if so, include `closure_status: closed`
-   or `superseded` as applicable.
+   Replace every placeholder, including the root handoff output paths
+   and schema path. The prompt should state whether the main session
+   has already closed the plan; if so, include `closure_status:
+   closed` or `superseded` as applicable.
 
 3. **Run Codex in the existing worktree.** The prompt is
-   reconstruction-only: no source edits, no thread bookkeeping edits,
-   only the two handback artifacts.
+   reconstruction-only: no source edits, no `.threads/` edits, only
+   the root handoff artifacts.
 
 4. **Commit the artifacts on the worktree branch.** Use a subject
    like:
@@ -300,9 +340,9 @@ handback contract.
 
 5. **Update main-side pointers.** On `main`, update the closed plan
    hop's `outcome` prose with the worktree-only pointer described in
-   **Handback visibility before merge-back**. Do not copy the
-   handback artifacts into main manually; they arrive on main at
-   merge-back.
+   **Handoff inbox and handback visibility before merge-back**. The
+   main session may promote or mirror selected inbox content after
+   triage; do not have Codex write those promoted `.threads/` files.
 
 6. **Process the reconstructed handback.** Run the same consumer
    triage as a forward handback. Retroactive handbacks often have
@@ -329,7 +369,7 @@ the next plan hop, or any time status review flags
    use `thread.json.codex_worktrees[].path` and the plan id:
    ```bash
    python3 ~/.claude/skills/threads/scripts/triage_codex_handback.py \
-       <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json
+       <worktree>/codex-handoff/<plan-id>/handback.json
    ```
 
 2. **Classify every row.** Use exactly one disposition per item:
@@ -391,10 +431,12 @@ proceed on explicit confirmation.
 - `thread.json.codex_worktrees[<i>].status == "active"` for the
   worktree being merged. If `merged` already, the worktree was
   landed in a prior pass — abort.
-- Every visible `codex-handback-<plan-id>.json` with actionable
-  blockers, follow-ons, discovery follow-ups, or unresolved
-  `gates[].caveats[]` has been processed by **Process codex
-  handback**. No `pre-merge blocker` row remains unresolved.
+- Every visible `codex-handoff/<plan-id>/handback.json` or legacy
+  `codex-handback-<plan-id>.json` with actionable blockers,
+  follow-ons, discovery follow-ups, handoff artifacts needing
+  promotion, or unresolved `gates[].caveats[]` has been processed by
+  **Process codex handback**. No `pre-merge blocker` row remains
+  unresolved.
 
 **Steps:**
 
@@ -595,8 +637,9 @@ prompt enforces this with a "do NOT touch `.threads/`" instruction.
   worktree on a `closed` or `superseded` thread is flagged as an
   orphaned worktree (cleanup needed).
 - **Codex handback.** Every Codex hop should end with
-  `codex-handback-<plan-id>.json` and `.md` on the worktree branch.
-  The main session consumes those artifacts using
+  `codex-handoff/<plan-id>/handback.json` and `.md` on the worktree
+  branch, plus any helper scripts, temp files, or curated evidence
+  under the same inbox. The main session consumes those artifacts using
   `references/codex-handback.md` before closing the hop, starting a
   follow-on hop, or merging the worktree back.
 - **Close thread.** The merge-back close step invokes the standard

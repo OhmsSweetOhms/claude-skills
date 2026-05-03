@@ -206,6 +206,61 @@
       }
     },
 
+    "handoff_artifact_summary": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Counts of helper material created under codex-handoff/<plan-id>/ for main-session triage.",
+      "properties": {
+        "scripts": { "type": "integer", "minimum": 0 },
+        "temp_files": { "type": "integer", "minimum": 0 },
+        "artifacts": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "handoff_artifacts": {
+      "type": "array",
+      "description": "Session-created helper material in codex-handoff/<plan-id>/ that the main session should inspect or promote/discard.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["path", "kind", "status", "promotion_recommendation"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path under codex-handoff/<plan-id>/."
+          },
+          "kind": {
+            "enum": [
+              "script",
+              "debug-test",
+              "temp",
+              "artifact",
+              "log",
+              "plot",
+              "other"
+            ]
+          },
+          "status": {
+            "enum": ["written", "committed", "removed", "deferred"]
+          },
+          "gate_or_question": {
+            "type": ["string", "null"],
+            "description": "Gate, blocker, discovery, investigation, or question this artifact supports."
+          },
+          "promotion_recommendation": {
+            "type": "string",
+            "description": "promote-to-test, promote-to-thread-data, keep-as-artifact, discard, or a short free-form recommendation."
+          },
+          "evidence_commit": {
+            "type": ["string", "null"],
+            "description": "Commit SHA containing this artifact, if committed."
+          },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+
     "discoveries": {
       "type": "array",
       "description": "Unprompted, codex-flagged observations.",

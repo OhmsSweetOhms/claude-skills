@@ -3,8 +3,8 @@
 A Codex handback is the structured artifact pair a Codex worktree
 session writes at the end of a plan hop:
 
-- `codex-handback-<plan-id>.json`
-- `codex-handback-<plan-id>.md`
+- `codex-handoff/<plan-id>/handback.json`
+- `codex-handoff/<plan-id>/handback.md`
 
 The JSON is the machine-readable closure record. The Markdown is the
 human-readable companion. Together they are the only durable record
@@ -26,12 +26,21 @@ assets/templates/codex-handoff-prompt.md
     assets/templates/codex-handback-template.md
 
 Codex emits:
-  <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json
-  <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.md
+  <worktree>/codex-handoff/<plan-id>/handback.json
+  <worktree>/codex-handoff/<plan-id>/handback.md
+  <worktree>/codex-handoff/<plan-id>/scripts/
+  <worktree>/codex-handoff/<plan-id>/temp/
+  <worktree>/codex-handoff/<plan-id>/artifacts/
 ```
 
 The main session reads those artifacts before closing the plan hop,
 starting the next hop, or merging the worktree back.
+
+Legacy handbacks may still exist at
+`<worktree>/.threads/<thread-id>/codex-handback-<plan-id>.{json,md}`.
+Consumers should read both layouts. New Codex worktree sessions use
+the root `codex-handoff/<plan-id>/` inbox so `.threads/` remains
+main-session owned.
 
 ## JSON schema summary
 
@@ -71,6 +80,11 @@ Important optional fields:
   owner.
 - `engineering_deliverables`: path-level summary of landed, partial,
   deferred, or removed deliverables.
+- `handoff_artifact_summary`: counts for helper material written
+  under `codex-handoff/<plan-id>/`.
+- `handoff_artifacts`: inventory of scripts, debug tests, generated
+  temp files, and curated artifacts that the main session should
+  promote, keep, or discard.
 
 Gate entries must carry:
 
@@ -94,7 +108,7 @@ the stricter emission discipline for current handbacks.
 
 ## Recording discipline
 
-Every handback must answer three questions before Codex exits.
+Every handback must answer four questions before Codex exits.
 
 **1. What happened to the plan?** Record acceptance gates, commits,
 diff stat, deliverables, regression baseline, and `status`. This is
@@ -114,6 +128,18 @@ reproducibility, record it twice: once as the discovery and once on
 the affected `gates[].caveats[]` entry. Do not hide a gate caveat in
 free prose while emitting an otherwise clean `complete` handback.
 
+**4. What helper material did Codex create?** Scripts, debug tests,
+generated working files, and curated evidence live under the
+root-level `codex-handoff/<plan-id>/` inbox:
+
+- `scripts/` for throwaway probes, debug tests, and helpers.
+- `temp/` for bulky or disposable generated working files.
+- `artifacts/` for curated evidence cited by the handback.
+
+Record useful material in `handoff_artifacts[]` with a promotion
+recommendation. The main session decides what becomes `.threads/`
+bookkeeping, tracked `data/`, or permanent package tests.
+
 ## Lifecycle and visibility
 
 Handback artifacts live on the Codex worktree branch until the
@@ -123,8 +149,8 @@ checkout reader may not see the files in the main working tree yet.
 Required pointer convention while the handback is worktree-only:
 
 ```text
-(handback: codex-handback-<plan-id>.{json,md} on worktree branch
-<branch> at <worktree-head-sha>; path <absolute-worktree-path>)
+(handback: codex-handoff/<plan-id>/handback.{json,md} on worktree
+branch <branch> at <worktree-head-sha>; path <absolute-worktree-path>)
 ```
 
 Put that pointer in the closed plan hop's `outcome` prose on `main`
@@ -149,7 +175,10 @@ the handback before handing control back to the main session.
 Rules:
 
 - Codex writes both `.json` and `.md` artifacts before its final
-  commit for the hop.
+  commit for the hop, under `codex-handoff/<plan-id>/`.
+- Codex does not edit `.threads/`. The root handoff inbox is the
+  only place for session handback files, helper scripts, generated
+  temp files, and curated artifacts.
 - Codex validates JSON against
   `assets/schemas/codex-handback.schema.json`.
 - Codex may omit `closure_status` unless the main session has
@@ -195,7 +224,7 @@ artifact is available:
 
 ```bash
 python3 ~/.claude/skills/threads/scripts/triage_codex_handback.py \
-  <worktree>/.threads/<thread-id>/codex-handback-<plan-id>.json \
+  <worktree>/codex-handoff/<plan-id>/handback.json \
   --out <main-checkout>/.threads/<thread-id>/codex-handback-<plan-id>-triage.md
 ```
 

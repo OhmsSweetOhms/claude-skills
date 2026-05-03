@@ -642,8 +642,8 @@ first" so nothing durable is lost.
    untracked file present, including non-content
    `.envrc`/`.venv/`/etc. — so `--force` is typically required,
    and `--force` is only safe once you've moved the
-   *content-bearing* untracked files (handback `findings.md`,
-   codex-handback artifacts, etc.) somewhere outside the worktree.
+   *content-bearing* untracked files (`codex-handoff/<plan-id>/`
+   inboxes, handback `findings.md`, etc.) somewhere outside the worktree.
    Backup target: `/tmp/<descriptive-name>/` for ephemeral safety
    net, or a `.research/` note if the content is durable enough to
    keep long-term. Then `git worktree remove --force <path>`. Then

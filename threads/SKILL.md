@@ -66,9 +66,10 @@ For exact JSON shapes, `references/schemas.md` has the
 contracts with examples.
 
 For Codex worktree sessions, `references/codex-handback.md` defines
-the handback artifact pair (`codex-handback-<plan-id>.json` and
-`.md`), the recording discipline, lifecycle visibility rules, and
-the consumer triage step before merge-back or next-hop activation.
+the root worktree handoff inbox (`codex-handoff/<plan-id>/` with
+`handback.json`, `handback.md`, `scripts/`, `temp/`, and
+`artifacts/`), the recording discipline, lifecycle visibility rules,
+and the consumer triage step before merge-back or next-hop activation.
 
 ## Operations — dispatch table
 
@@ -96,7 +97,7 @@ section in `references/workflows.md`:
 If the user's ask doesn't match cleanly, ask which operation they
 want before acting. Don't invent new operations.
 
-The codex-handoff pair is a delivery mechanism for thread work, not
+The codex handoff inbox is a delivery mechanism for thread work, not
 a separate domain — a thread already has a plan; codex executes
 source-code work in an isolated worktree while bookkeeping stays on
 `main`. The worktree + branch are **long-lived across the thread's

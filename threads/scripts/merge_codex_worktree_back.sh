@@ -175,12 +175,12 @@ fi
 
 # Inspect worktree state: any modified or untracked files?
 # Filter out worktree-local infrastructure that bootstrap created
-# (.envrc, .venv symlink, pycache prefix dir). git's per-worktree
+# (.envrc, .venv symlink, .codex-hooks). git's per-worktree
 # exclude is shared across all worktrees in the common gitdir, so
 # we filter here in the merge-back instead of in bootstrap.
 UNCOMMITTED=$({ git -C "$WORKTREE" diff --name-only HEAD; \
                 git -C "$WORKTREE" ls-files --others --exclude-standard; } \
-              | grep -Ev '^(\.envrc|\.venv|\.venv/.*)$' \
+              | grep -Ev '^(\.envrc|\.venv|\.venv/.*|\.codex-hooks|\.codex-hooks/.*)$' \
               | sort -u || true)
 
 if [ -n "$UNCOMMITTED" ]; then
