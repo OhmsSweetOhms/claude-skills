@@ -1,10 +1,10 @@
-The handback artifacts (`codex-handback-<plan-id>.json` and
-`codex-handback-<plan-id>.md`) are the ONLY record the main session
-will see of this session. Chat output ends when this session ends;
-nothing in the transcript survives unless you commit it to a file
-the main session reads.
+The handback artifacts (`codex-handoff/<plan-id>/handback.json` and
+`codex-handoff/<plan-id>/handback.md`) are the ONLY record the main
+session will see of this session. Chat output ends when this session
+ends; nothing in the transcript survives unless you commit it to a
+file the main session reads.
 
-Three things you MUST record before terminating the session:
+Four things you MUST record before terminating the session:
 
 **1. Plan execution as closure record.** Gate verdicts, anchor
 commits, engineering deliverables, regression baseline, diff stat.
@@ -57,9 +57,25 @@ that surprised you — append a `discoveries[]` entry. These are
 unprompted; investigations are prompted. The split is the audit
 trail: `triggered_by` distinguishes them.
 
+**4. Session-created helper material as `handoff_artifacts[]`.** Any
+script, debug test, generated file, log, plot, reduced table, or other
+helper artifact you create for the session must live under the
+root-level `codex-handoff/<plan-id>/` inbox, not under `.threads/`.
+Use:
+
+- `scripts/` for throwaway probes, debug tests, and helper scripts
+- `temp/` for bulky or disposable generated working files
+- `artifacts/` for curated evidence cited by the handback
+
+Record each durable or potentially useful file in
+`handoff_artifacts[]` with its path, kind, status, and promotion
+recommendation. If the file is disposable scratch, either omit it or
+mark the recommendation as `discard`. The main session promotes
+selected material into `.threads/`, permanent tests, or tracked data.
+
 **Calibration.** If you find yourself answering something
 substantive in chat without writing it down, stop and ask: which
-of the three buckets does this belong in? If none, it's not
+of the four buckets does this belong in? If none, it's not
 substantive. If one, write it before continuing the dialogue —
 otherwise it will be lost when the session ends, and the main
 session will have no way to recover it.

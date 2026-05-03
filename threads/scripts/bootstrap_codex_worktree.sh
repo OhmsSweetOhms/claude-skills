@@ -20,6 +20,7 @@
 # Outputs to stdout:
 #   - worktree path, branch, base commit, venv link target
 #   - JSON snippet to paste into the thread's thread.json (first creation only)
+#   - root codex-handoff/<plan-id>/ inbox when the plan id is known
 #   - optional codex handoff scaffold path when --render-prompt-out is used
 
 set -euo pipefail
@@ -32,6 +33,7 @@ PLAN_ID=""
 RENDER_PROMPT_OUT=""
 ADJACENT_THREADS=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HANDOFF_INBOX=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -122,6 +124,39 @@ if match:
 ' "$thread_json"
 }
 
+prepare_handoff_inbox() {
+    local thread_id="$1"
+    local plan_id="$2"
+    local dir="$WORKTREE/codex-handoff/$plan_id"
+    local readme="$dir/README.md"
+    local template="$SCRIPT_DIR/../assets/templates/codex-handoff-dir-README.md"
+
+    mkdir -p "$dir/scripts" "$dir/temp" "$dir/artifacts"
+
+    if [ ! -f "$readme" ]; then
+        if [ -f "$template" ]; then
+            sed \
+                -e "s|{{PLAN_ID}}|$plan_id|g" \
+                -e "s|{{THREAD_ID}}|$thread_id|g" \
+                -e "s|{{WORKTREE_PATH}}|$WORKTREE|g" \
+                "$template" > "$readme"
+        else
+            cat > "$readme" <<EOF
+# Codex Handoff Inbox — $plan_id
+
+Thread: \`$thread_id\`
+Worktree: \`$WORKTREE\`
+
+Codex writes handback.json, handback.md, scripts/, temp/, and artifacts/
+here. The main session promotes durable material after triage.
+EOF
+        fi
+    fi
+
+    HANDOFF_INBOX="$dir"
+    echo "handoff inbox ready: $dir"
+}
+
 # Detect existing worktree at target path.
 EXISTED=0
 if git worktree list --porcelain | awk '/^worktree /{print $2}' | grep -qx "$WORKTREE"; then
@@ -166,16 +201,24 @@ export PYTHON="${WORKTREE}/.venv/bin/python"
 EOF
 echo ".envrc written: $ENVRC"
 
+bash "$SCRIPT_DIR/install_worktree_codex_hooks.sh" "$WORKTREE"
+
+if [ -z "$THREAD_ID" ]; then
+    THREAD_ID="$(infer_thread_id "$SLUG" || true)"
+fi
+if [ -n "$THREAD_ID" ] && [ -z "$PLAN_ID" ]; then
+    PLAN_ID="$(infer_plan_id "$THREAD_ID" || true)"
+fi
+if [ -n "$THREAD_ID" ] && [ -n "$PLAN_ID" ]; then
+    prepare_handoff_inbox "$THREAD_ID" "$PLAN_ID"
+else
+    echo "handoff inbox not created: pass --thread-id and --plan-id to prepare codex-handoff/<plan-id>." >&2
+fi
+
 if [ -n "$RENDER_PROMPT_OUT" ]; then
-    if [ -z "$THREAD_ID" ]; then
-        THREAD_ID="$(infer_thread_id "$SLUG" || true)"
-    fi
     if [ -z "$THREAD_ID" ]; then
         echo "cannot render prompt scaffold: pass --thread-id <subsystem/YYYYMMDD-slug>" >&2
         exit 2
-    fi
-    if [ -z "$PLAN_ID" ]; then
-        PLAN_ID="$(infer_plan_id "$THREAD_ID" || true)"
     fi
     if [ -z "$PLAN_ID" ]; then
         echo "cannot render prompt scaffold: pass --plan-id plan-NN" >&2
@@ -204,6 +247,7 @@ Done. Worktree ready.
   branch:      $BRANCH
   base commit: ${BASE_COMMIT} ($(git -C "$WORKTREE" log -1 --format=%s 2>/dev/null || echo '?'))
   venv:        $VENV_LINK -> $VENV_TARGET
+  handoff:     ${HANDOFF_INBOX:-"(not created; pass --thread-id and --plan-id)"}
 
 Hand the codex agent this env:
 
@@ -220,7 +264,12 @@ scaffold with --render-prompt-out, or run:
       --plan-id "<plan-NN>" \\
       --out ".threads/<subsystem>/<YYYYMMDD-slug>/codex-handoff-<plan-NN>.md"
 
-Replace every HAND-CURATE marker before pasting it to codex.
+Before launch, make sure the worktree has:
+
+  "$WORKTREE/codex-handoff/<plan-NN>/"
+
+The bootstrap script creates it automatically when it knows --plan-id.
+Replace every HAND-CURATE marker before pasting the prompt to codex.
 
 EOF
 

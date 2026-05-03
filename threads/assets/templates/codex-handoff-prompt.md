@@ -14,14 +14,16 @@
 You are a Codex helper running inside an isolated git worktree on the
 `{{REPO_NAME}}` project. Your job is **focused source-code work** for
 one plan hop of an investigation thread. Thread bookkeeping happens
-on the main checkout, not here — do not touch `.threads/` EXCEPT to
-write the two handback artifacts named below.
+on the main checkout, not here — do not write under `.threads/`.
+This session has a root handoff inbox for all Codex-created session
+material.
 
 ## Where you're working
 
 - **Worktree:** `{{WORKTREE_PATH}}`
 - **Branch:** `{{BRANCH}}` (current worktree HEAD: `{{BASE_COMMIT_SHA}}`)
 - **Main checkout (read-only reference):** `{{MAIN_REPO_PATH}}`
+- **Session handoff inbox:** `{{HANDOFF_DIR}}`
 
 The worktree is long-lived for this thread — earlier plan hops on
 this branch may already have commits. Run
@@ -95,8 +97,18 @@ the transcript survives unless you commit it to the handback files.
 
 Write two files at the end of your work:
 
-- `{{WORKTREE_PATH}}/.threads/{{THREAD_ID}}/codex-handback-{{PLAN_ID}}.json`
-- `{{WORKTREE_PATH}}/.threads/{{THREAD_ID}}/codex-handback-{{PLAN_ID}}.md`
+- `{{HANDBACK_JSON_PATH}}`
+- `{{HANDBACK_MD_PATH}}`
+
+Put any session-created helper material under this same inbox:
+
+- `{{HANDOFF_SCRIPTS_DIR}}` — throwaway probes, debug tests, helper scripts
+- `{{HANDOFF_TEMP_DIR}}` — bulky or disposable generated working files
+- `{{HANDOFF_ARTIFACTS_DIR}}` — curated evidence cited by the handback
+
+If the handback cites a file as evidence, put the cited file under
+`artifacts/`. If a file is only scratch used to produce evidence, put
+it under `temp/`.
 
 The JSON must validate against:
 
@@ -110,13 +122,13 @@ The contract and consumer-side expectations are documented at:
 
   `~/.claude/skills/threads/references/codex-handback.md`
 
-Both files are committed together as your terminal commit on this
-hop, with subject line:
+The handback inbox is committed as your terminal commit on this hop,
+with subject line:
 
   `{{PLAN_ID}} handback: structured artifact for main-agent ingestion`
 
-This is the ONE carve-out from the "no `.threads/` edits" rule —
-because the handback IS the handoff from you to the main session.
+Do not copy or mirror these files into `.threads/`. The main session
+will read this inbox and decide what to promote.
 
 ## Recording discipline
 
@@ -125,9 +137,10 @@ because the handback IS the handoff from you to the main session.
 ## Rules
 
 1. **Source-only.** Edit code, tests, JSON specs in this worktree.
-   Do NOT edit anything under `.threads/` EXCEPT the two handback
-   files named above. Thread bookkeeping (thread.json, handoff.md,
-   findings docs, plan files) is the user's responsibility on `main`.
+   Do NOT edit anything under `.threads/`. Thread bookkeeping
+   (thread.json, handoff.md, findings docs, plan files) is the
+   user's responsibility on `main`. Session helper files, generated
+   data, logs, and handback files go under `{{HANDOFF_DIR}}`.
 
 2. **Commits land on the worktree branch only — never on `main`,
    never push.** Cadence: one commit per logical sub-deliverable.
@@ -165,11 +178,12 @@ because the handback IS the handoff from you to the main session.
    hook will reject the commit anyway, and bypassing breaks the
    guard's whole-system invariant.
 
-6. **Final summary in chat:** point at the two handback file paths
+6. **Final summary in chat:** point at the handoff inbox and the two
+   handback file paths
    and paste:
    - the JSON `status` field's value
    - counts: `gates`, `discoveries`, `investigations`, `blockers`,
-     `follow_ons`
+     `follow_ons`, `handoff_artifacts`
    - the regression baseline pass/fail line
 
    Nothing else. The handback artifacts ARE the report.

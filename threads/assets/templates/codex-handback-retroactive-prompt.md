@@ -38,8 +38,12 @@ Read these before writing:
 
 Write exactly these two files:
 
-- `{{WORKTREE_PATH}}/.threads/{{THREAD_ID}}/codex-handback-{{PLAN_ID}}.json`
-- `{{WORKTREE_PATH}}/.threads/{{THREAD_ID}}/codex-handback-{{PLAN_ID}}.md`
+- `{{WORKTREE_PATH}}/codex-handoff/{{PLAN_ID}}/handback.json`
+- `{{WORKTREE_PATH}}/codex-handoff/{{PLAN_ID}}/handback.md`
+
+Create the parent directory if it does not already exist. Put any
+reconstruction helper notes or temporary scripts under that same
+`codex-handoff/{{PLAN_ID}}/` directory, not under `.threads/`.
 
 Commit only those two files with subject:
 
@@ -74,10 +78,9 @@ Commit only those two files with subject:
    local fixture, branch-only file, environment quirk, or other
    contingency, record it in that gate's `caveats[]`.
 
-6. Do not edit source code. Do not edit thread bookkeeping files
-   other than the two handback artifacts above. The main session owns
-   `thread.json`, `handoff.md`, plan-hop closure prose, and registry
-   regeneration.
+6. Do not edit source code. Do not edit `.threads/` at all. The main
+   session owns `thread.json`, `handoff.md`, plan-hop closure prose,
+   artifact promotion, and registry regeneration.
 
 ## Validation
 

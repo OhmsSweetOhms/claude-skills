@@ -47,6 +47,15 @@ burying it in free prose.
 
 - `{{path}}` — `{{status}}` — `{{commit_sha}}` — {{one-line summary}}
 
+## Handoff inbox artifacts
+
+Session-created helper material under `codex-handoff/{{PLAN_ID}}/`.
+The main session will promote or discard these after triage.
+
+- `scripts/{{name}}` — `{{script|debug-test}}` — `{{written|committed|removed|deferred}}` — recommendation: `{{promote-to-test|keep-as-artifact|discard|...}}` — {{one-line summary}}
+- `artifacts/{{name}}` — `{{artifact|log|plot}}` — `{{written|committed|removed|deferred}}` — recommendation: `{{promote-to-thread-data|keep-as-artifact|discard|...}}` — {{one-line summary}}
+- `temp/{{name}}` — `temp` — `{{written|removed|deferred}}` — recommendation: `{{discard|promote-to-thread-data|...}}` — {{one-line summary}}
+
 ## Discoveries
 
 Unprompted observations made while doing the plan work.

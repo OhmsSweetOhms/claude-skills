@@ -52,6 +52,12 @@ Anchored substitutions and their sources:
                                    hop sees the prior hop's terminal
                                    commit)
     {{MAIN_REPO_PATH}}           ← absolute path of --main-repo
+    {{HANDOFF_DIR}}              ← <worktree>/codex-handoff/<plan-id>
+    {{HANDBACK_JSON_PATH}}       ← {{HANDOFF_DIR}}/handback.json
+    {{HANDBACK_MD_PATH}}         ← {{HANDOFF_DIR}}/handback.md
+    {{HANDOFF_SCRIPTS_DIR}}      ← {{HANDOFF_DIR}}/scripts
+    {{HANDOFF_TEMP_DIR}}         ← {{HANDOFF_DIR}}/temp
+    {{HANDOFF_ARTIFACTS_DIR}}    ← {{HANDOFF_DIR}}/artifacts
     {{TASK_SCAFFOLD}}            ← HAND-CURATE marker with source refs
     {{READ_THESE_FIRST_SCAFFOLD}} ← HAND-CURATE marker with source refs
     {{STEP_BY_STEP_SCAFFOLD}}    ← HAND-CURATE marker with source refs
@@ -409,6 +415,7 @@ def render(
             f"falling back to thread-id slug '{branch}'"
         )
     base_sha = git_rev_parse_short(worktree_path)
+    handoff_dir = worktree_path / "codex-handoff" / plan_id
 
     briefing = (
         adjacent_threads
@@ -427,6 +434,12 @@ def render(
         "BRANCH": branch,
         "BASE_COMMIT_SHA": base_sha,
         "MAIN_REPO_PATH": str(main_repo),
+        "HANDOFF_DIR": str(handoff_dir),
+        "HANDBACK_JSON_PATH": str(handoff_dir / "handback.json"),
+        "HANDBACK_MD_PATH": str(handoff_dir / "handback.md"),
+        "HANDOFF_SCRIPTS_DIR": str(handoff_dir / "scripts"),
+        "HANDOFF_TEMP_DIR": str(handoff_dir / "temp"),
+        "HANDOFF_ARTIFACTS_DIR": str(handoff_dir / "artifacts"),
         "ADJACENT_THREADS_BRIEFING": briefing,
         "THREAD_ID": thread_id,
         "PLAN_ID": plan_id,

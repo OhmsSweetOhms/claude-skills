@@ -166,27 +166,44 @@ def _resolve_worktree_path(raw_path: str, project_root: Path) -> Path:
     return (project_root / p).resolve()
 
 
-def handback_pair_exists(thread_dir: Path, plan_id: str) -> bool:
+def legacy_handback_pair_exists(thread_dir: Path, plan_id: str) -> bool:
     return (
         (thread_dir / f"codex-handback-{plan_id}.json").exists()
         and (thread_dir / f"codex-handback-{plan_id}.md").exists()
     )
 
 
+def handoff_inbox_pair_exists(repo_root: Path, plan_id: str) -> bool:
+    inbox = repo_root / "codex-handoff" / plan_id
+    return (inbox / "handback.json").exists() and (inbox / "handback.md").exists()
+
+
 def handback_locations(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> list[Path]:
-    """Return thread dirs where a handback pair is readable."""
+    """Return directories where a handback pair is readable.
+
+    New handbacks live at <worktree>/codex-handoff/<plan-id>/.
+    Legacy handbacks may still live next to the thread manifest under
+    .threads/<thread-id>/codex-handback-<plan-id>.*.
+    """
     locations: list[Path] = []
+    project_root = threads_path.parent
+
+    if handoff_inbox_pair_exists(project_root, plan_id):
+        locations.append(project_root / "codex-handoff" / plan_id)
+
     main_thread_dir = threads_path / thread_id
-    if handback_pair_exists(main_thread_dir, plan_id):
+    if legacy_handback_pair_exists(main_thread_dir, plan_id):
         locations.append(main_thread_dir)
 
-    project_root = threads_path.parent
     for wt in thread_data.get("codex_worktrees", []) or []:
         raw_path = wt.get("path")
         if not raw_path:
             continue
-        wt_thread_dir = _resolve_worktree_path(raw_path, project_root) / ".threads" / thread_id
-        if handback_pair_exists(wt_thread_dir, plan_id):
+        wt_root = _resolve_worktree_path(raw_path, project_root)
+        if handoff_inbox_pair_exists(wt_root, plan_id):
+            locations.append(wt_root / "codex-handoff" / plan_id)
+        wt_thread_dir = wt_root / ".threads" / thread_id
+        if legacy_handback_pair_exists(wt_thread_dir, plan_id):
             locations.append(wt_thread_dir)
     return locations
 
@@ -197,7 +214,11 @@ def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict,
 
 
 def handback_triage_record_exists(thread_dirs: list[Path], plan_id: str) -> bool:
-    return any((d / f"codex-handback-{plan_id}-triage.md").exists() for d in thread_dirs)
+    return any(
+        (d / f"codex-handback-{plan_id}-triage.md").exists()
+        or (d / "triage.md").exists()
+        for d in thread_dirs
+    )
 
 
 def handback_has_actionable_items(handback: dict) -> bool:
@@ -212,11 +233,17 @@ def handback_has_actionable_items(handback: dict) -> bool:
         for caveat in gate.get("caveats", []) or []:
             if not caveat.get("resolved_by"):
                 return True
+    for artifact in handback.get("handoff_artifacts", []) or []:
+        recommendation = str(artifact.get("promotion_recommendation") or "").lower()
+        if recommendation and recommendation not in {"discard", "none", "no promotion"}:
+            return True
     return False
 
 
 def load_handback_json(thread_dir: Path, plan_id: str) -> dict | None:
-    p = thread_dir / f"codex-handback-{plan_id}.json"
+    p = thread_dir / "handback.json"
+    if not p.exists():
+        p = thread_dir / f"codex-handback-{plan_id}.json"
     try:
         return json.loads(p.read_text())
     except (OSError, json.JSONDecodeError):
@@ -348,8 +375,9 @@ def flag_triage(
                         "summary": (
                             f"Plan hop `{plan_id}` is `{hop.get('status')}` and "
                             "appears to have used Codex/worktree execution, but no "
-                            f"`codex-handback-{plan_id}.json` / `.md` pair is visible "
-                            "on main or the recorded worktree path. Run **Retroactive "
+                            f"`codex-handoff/{plan_id}/handback.json` / `.md` pair "
+                            "or legacy codex-handback pair is visible on main or the "
+                            "recorded worktree path. Run **Retroactive "
                             "handback** before relying on the closure record."
                         ),
                     })
@@ -376,9 +404,10 @@ def flag_triage(
                         "kind": "untriaged_codex_handback",
                         "days": days,
                         "summary": (
-                            f"`codex-handback-{plan_id}.json` contains blockers, "
-                            "follow-ons, discovery follow-ups, or unresolved gate "
-                            "caveats, but no triage record is visible. Run "
+                            f"`codex-handoff/{plan_id}/handback.json` or a legacy "
+                            "codex handback contains blockers, follow-ons, discovery "
+                            "follow-ups, handoff artifacts needing promotion, or "
+                            "unresolved gate caveats, but no triage record is visible. Run "
                             "`triage_codex_handback.py` and classify each item "
                             "before merge-back or next-hop activation."
                         ),

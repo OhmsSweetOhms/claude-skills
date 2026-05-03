@@ -6,7 +6,8 @@ classification table for the main session to review/edit. It is
 intentionally conservative: blockers and unresolved gate caveats are
 pre-merge blockers; explicit follow-ons are post-merge follow-ups
 unless their text says they affect CI, clean checkouts, reproducibility,
-or merge readiness.
+or merge readiness. New handbacks may also include
+handoff_artifacts[] entries for files under codex-handoff/<plan-id>/.
 """
 from __future__ import annotations
 
@@ -94,6 +95,27 @@ def classify_follow_on(follow_on: dict[str, Any]) -> tuple[str, str]:
     )
 
 
+def classify_handoff_artifact(artifact: dict[str, Any]) -> tuple[str, str]:
+    recommendation = compact(artifact.get("promotion_recommendation")).lower()
+    if recommendation in {"", "discard", "none", "no promotion"}:
+        return (CLASS_ACCEPT_AS_IS, "Artifact is marked disposable or has no promotion recommendation.")
+    if text_matches_pre_merge(
+        artifact.get("path"),
+        artifact.get("kind"),
+        artifact.get("gate_or_question"),
+        artifact.get("promotion_recommendation"),
+        artifact.get("summary"),
+    ):
+        return (
+            CLASS_PRE_MERGE,
+            "Artifact appears to affect a gate, CI, clean-checkout behavior, or merge readiness.",
+        )
+    return (
+        CLASS_POST_MERGE,
+        "Main session should decide whether to promote, keep, or discard this handoff artifact.",
+    )
+
+
 def classify_gate_caveat(caveat: dict[str, Any]) -> tuple[str, str]:
     if caveat.get("resolved_by"):
         return (CLASS_ACCEPT_AS_IS, f"Caveat is already resolved by `{caveat['resolved_by']}`.")
@@ -165,6 +187,21 @@ def collect_items(handback: dict[str, Any]) -> list[dict[str, str]]:
             "rationale": rationale,
         })
 
+    for i, artifact in enumerate(handback.get("handoff_artifacts", []) or [], start=1):
+        classification, rationale = classify_handoff_artifact(artifact)
+        items.append({
+            "id": compact(artifact.get("id") or f"handoff-artifact-{i}"),
+            "source": "handoff_artifacts[]",
+            "summary": compact(
+                artifact.get("summary")
+                or artifact.get("promotion_recommendation")
+                or artifact.get("path")
+            ),
+            "evidence": compact(artifact.get("path") or artifact.get("evidence_commit")),
+            "classification": classification,
+            "rationale": rationale,
+        })
+
     return items
 
 
@@ -181,7 +218,7 @@ def render_markdown(handback_path: Path, handback: dict[str, Any], items: list[d
         "",
     ]
     if not items:
-        return "\n".join(header + ["*(no discoveries, investigations, blockers, gate caveats, or follow-ons)*", ""])
+        return "\n".join(header + ["*(no discoveries, investigations, blockers, gate caveats, follow-ons, or handoff artifacts needing triage)*", ""])
 
     rows = [
         "| ID | Source | Summary | Evidence | Recommended classification | Rationale |",
@@ -203,7 +240,13 @@ def render_markdown(handback_path: Path, handback: dict[str, Any], items: list[d
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("handback_json", help="path to codex-handback-<plan-id>.json")
+    ap.add_argument(
+        "handback_json",
+        help=(
+            "path to codex-handoff/<plan-id>/handback.json "
+            "or legacy codex-handback-<plan-id>.json"
+        ),
+    )
     ap.add_argument("--out", help="optional path for the Markdown triage record")
     args = ap.parse_args()
 
