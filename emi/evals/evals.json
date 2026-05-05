@@ -1,0 +1,35 @@
+{
+  "skill_name": "emi",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Set up a new RE102 measurement folder for RM300 with horizontal noise-floor and UUT-on runs, using the TBMA1B antenna at 1 m and 1.5 dB cable loss.",
+      "expected_output": "Creates or proposes the measurement-set layout under data/re102/measurements/RM300, with measurement.json and run-level raw/derived/plots folders. Uses JSON metadata instead of relying on filenames.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "We have a direct 35 MHz signal-generator calibration into the RSA. Should I process it as RE102 field strength?",
+      "expected_output": "Explains that cabled signal-generator data should bypass antenna factors and be processed as receiver input power in dBm/dBuV, not dBuV/m.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "What do we need to do for CE102 with the TBL5016-1 50 uH LISN, a 20 dB attenuator before the RSA, and the SDG2042X at 192.168.0.2?",
+      "expected_output": "Describes CE102 as dBuV conducted voltage, uses the TBL5016-1 50uh correction plus dBm + 106.9897 + attenuator/cable corrections, avoids antenna factors, keeps 50uh-only as the active LISN configuration, and uses the SDG2042X system-check commands before UUT scans.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Set the SDG to the first CE102 system-check point and tell me what I should see on a scope.",
+      "expected_output": "Uses ce102 system-check-tone for 10 kHz on the SDG2042X, gives 88 dBuV / 71.0469 mVpp / 25.1189 mVrms, notes C1 and 50 ohm load, and warns that a high-Z scope without termination reads roughly double.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Can we do a direct SDG-to-RSA smoke test before the LISN check? The chain is SDG C1 to 20 dB attenuator to RSA.",
+      "expected_output": "Recommends the 100 kHz CE102 point, gives 7.1047 mVpp into 50 ohm and about -58.99 dBm expected at the RSA, uses ce102 system-check-tone plus system-check-scan or full ce102 scan, explains that the LISN correction makes corrected dBuV about 1.2 dB high without the LISN, and treats the result as a plumbing smoke test only.",
+      "files": []
+    }
+  ]
+}
