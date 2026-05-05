@@ -167,7 +167,10 @@ Suggested CE102 run roles:
 
 - `system_check`
 - `noise_floor`
+- `ambient`
 - `uut_on`
+- `hot`
+- `hot_config`
 - `debug`
 
 Suggested line identifiers:
@@ -183,3 +186,19 @@ CE102 `measurement.json` should record the LISN model/configuration, limit key,
 attenuator loss, source voltage class, and whether the system check passed.
 For this project, the active LISN configuration is `50uh`; do not encode
 `50uh_5ohm` as the default.
+
+For iterative engineering scans, keep the ambient baseline as the first run and
+then add hot/configuration runs in order:
+
+```text
+001_ambient/
+002_hot/
+003_hot_config_1/
+004_hot_config_2/
+005_hot_config_3/
+```
+
+Use the same ambient run for overlays unless the site, cable path, LISN setup,
+attenuator, RBW plan, or ambient conditions have changed enough to require a
+new baseline. Generated overlay/report SVGs belong in `reports/`, not inside
+one run directory, because they compare multiple runs.
