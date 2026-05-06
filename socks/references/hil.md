@@ -658,6 +658,165 @@ state transitions occur in the same order.
 
 ---
 
+## Streaming HIL Mode (post-ready streaming validation)
+
+Streaming HIL mode is an opt-in extension to Stage 17 for designs that need bulk-data
+validation over Ethernet (DSP/RF testing of PL blocks). It runs **after** the firmware
+emits its `pass_marker`, via the existing `firmware.post_ready_cmd` hook. Platform-agnostic
+— any HIL target with Ethernet + a TCP server in firmware can use it — and supports two
+test topologies:
+
+- **digital_loopback:** PL closes the IQ stream in fabric (e.g. `streaming_ctrl_0`
+  self-loop). Validates transport, framing, telemetry contract.
+- **analog_loopback:** PL routes the IQ stream through JESD204C → DAC → cable → ADC →
+  JESD204C → PL. Validates the analog signal chain post-quantization.
+
+### When to use
+
+Add `streaming.*` to `hil.json` when your DUT or system involves:
+- Bulk IQ data transport from PC to PL via Ethernet (e.g. gps_design at 4.096 MSPS;
+  rts_radar at ~250 MSPS).
+- PL-side AXI DMA + AXIS framing producing a CRC + counter telemetry stream on a
+  separate TCP port.
+- DSP or RF testing where the JTAG-to-AXI control surface is the wrong tool for
+  bulk-data ingress/egress.
+
+Existing modules (usart, can, i2c, spi, sdlc, dpll_v5) and systems (microzed-usart) do
+NOT need streaming mode and should leave `streaming` absent from their `hil.json`.
+
+### Schema (additive; backward-compatible)
+
+```json
+{
+  "streaming": {
+    "enabled": true,
+    "test_mode": "digital_loopback",
+    "ip": "192.168.1.10",
+    "iq_port": 5001,
+    "tlm_port": 5002,
+    "fs_hz": 4096000,
+    "connect_timeout_ms": 20000,
+    "run_timeout_ms": 60000,
+    "expected_signal_integrity": {
+      "_comment_digital": "digital_loopback: CRC + counter expectations",
+      "expected_sample_count": 1163,
+      "expected_byte_count": 4652,
+      "max_drop_count": 16,
+      "max_hdr_fail_count": 3,
+      "_comment_analog": "analog_loopback: replace above with SNR + spectral expectations",
+      "_expected_snr_db": 30.0,
+      "_tolerance_quantization_bits": 4,
+      "_tolerance_cable_loss_db": 1.5,
+      "_expected_pulse_compression_gain_db_pulsed_only": 21.7
+    },
+    "checker_cmd": ["python3", "tools/streaming_tcp_check.py"]
+  }
+}
+```
+
+### Required fields (when streaming.enabled=true)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `streaming.enabled` | bool | Opt-in flag. False or absent → behavior unchanged from base Stage 17 |
+| `streaming.test_mode` | enum | `digital_loopback` or `analog_loopback` |
+| `streaming.ip` | string | Target IP (R5 lwIP server) |
+| `streaming.iq_port` | int | TCP port for IQ ingress (host → target) |
+| `streaming.tlm_port` | int | TCP port for telemetry egress (target → host) |
+| `streaming.fs_hz` | int | Expected sample rate; helper validates header.fs_hz against this |
+
+### Optional fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `streaming.connect_timeout_ms` | `20000` | Bounded TCP connect retry deadline |
+| `streaming.run_timeout_ms` | `60000` | Per-scenario timeout |
+| `streaming.expected_signal_integrity.*` | — | Pass/fail thresholds; topology-conditional |
+| `streaming.checker_cmd` | — | Override for `firmware.post_ready_cmd` if streaming needs different invocation |
+
+### Lifecycle
+
+```
+Stage 17 firmware boot → pass_marker seen
+  ↓
+firmware.post_ready_cmd (or streaming.checker_cmd) invoked from project root
+  ↓
+consumer's checker imports `from socks.scripts.hil import streaming`
+  ↓
+Setup:
+  reader  = streaming.connect_telemetry(ip, tlm_port, connect_timeout_ms)
+  iq_sock = streaming.connect_iq(ip, iq_port, connect_timeout_ms)
+  baseline = streaming.read_telemetry_baseline(reader, n_frames=6)
+  ↓
+Run (one or more scenarios):
+  streaming.run_iq_scenario(name, reader, frames, sender)   # validates counters/CRC
+  streaming.run_header_negative(name, reader, hdr)          # validates hdr_fail++
+  streaming.run_sample_gap_negative(reader)                 # validates drop_count
+  ...
+  ↓
+Validate signal integrity:
+  streaming.validate_signal_integrity(test_mode, expected, final_telemetry)
+    digital_loopback: assert CRC + sample-count + byte-count match expected
+    analog_loopback:  assert measured SNR ≥ expected_snr_db (within tolerance)
+  ↓
+Teardown:
+  iq_sock.close(); reader.close()
+  emit "PASS: <test_mode> streaming validation matrix"
+  exit 0 (or non-zero on failure → Stage 17 FAIL)
+```
+
+### Helper module (`scripts/hil/streaming.py`)
+
+The skill ships a Python helper module that consumers' checker scripts import. It
+encodes the 32-byte header struct, 64-byte telemetry struct, bounded-retry connect,
+telemetry contract validation, scenario runners, and signal-integrity validators (both
+topologies). Consumers compose it; they do not reimplement the wire protocol or contract
+validation.
+
+The proven concrete reference is `<workspace-root>/socks/systems/zcu102-gps-streaming/tools/streaming_tcp_check.py`,
+which inlines the helper code today. The helper module under `scripts/hil/streaming.py`
+is the canonical lift of that pattern; the live `streaming_tcp_check.py` becomes a thin
+wrapper that reads `hil.json::streaming.*` and calls `streaming.default_digital_matrix(...)`.
+
+### Two-topology framing
+
+| Topology | What's in the loop | When to use | Signal-integrity gate |
+|----------|--------------------|-------------|------------------------|
+| `digital_loopback` | PC → PS → PL self-loop → PS → PC | Layer-1 transport bring-up; new PL block validation pre-analog | Deterministic CRC + counter advancement; no signal degradation |
+| `analog_loopback` | PC → PS → PL → JESD Tx → DAC → cable → ADC → JESD Rx → PL → PS → PC | Full analog signal-chain validation; first time the substrate is actually "in the loop" | Measured SNR ≥ expected (within quantization + cable-loss tolerance); optional spectral mask; pulsed consumers also assert pulse-compression gain |
+
+Both topologies share TCP framing, regmap shape, and the `post_ready_cmd` entry mechanism.
+The PL substrate routing differs (self-loop vs JESD chain), but that's a hardware-side
+concern owned by the consumer's substrate thread — the streaming HIL contract is
+rate-agnostic and topology-aware via `streaming.test_mode`.
+
+### Backward compatibility
+
+The streaming-mode extension is purely additive:
+- When `streaming` is absent from `hil.json`, behavior matches base Stage 14-19 flow.
+- When `streaming.enabled` is `false`, behavior is unchanged.
+- The 6 existing SOCKS modules' `hil.json` files were inspected for plan-01 closure of
+  `socks/20260424-hil-streaming-mode`; none have `streaming.*` fields. MicroZed-USART
+  Stage 14-15 regression preserved.
+
+### Reference implementations
+
+| Topology | Live reference | Status |
+|----------|----------------|--------|
+| `digital_loopback` | `<workspace-root>/socks/systems/zcu102-gps-streaming/hil.json` + `tools/streaming_tcp_check.py` | Stage 17 PASS 2026-04-28 (`samples=1163, crc=0x55244279, drop=16, hdr_fail=3, dma=0x0001100a`) |
+| `analog_loopback` | gates on `fpga/20260424-zcu102-streaming-system` plan-05 | Future (Layer -1 + analog substrate work in flight) |
+
+### Future named-stage promotion
+
+This first release uses the existing `firmware.post_ready_cmd` hook to invoke the
+streaming validation. A future plan hop in `socks/20260424-hil-streaming-mode` may
+promote `streaming.run_check()` from a `post_ready_cmd` callee into a first-class
+Stage 17.5 (or Stage 20) once: (a) the helper-library shape proves stable across
+both gps_design and rts_radar consumers, AND (b) per-stage telemetry separate from
+the firmware's exit code is needed for dashboard/status-reporting.
+
+---
+
 ## ILA Trigger Plan
 
 `ila_trigger_plan.json` is required for Stage 18. Place it in `build/hil/`.
