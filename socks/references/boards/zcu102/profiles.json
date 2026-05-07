@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "board": "zcu102",
+  "description": "Xilinx ZCU102 (Zynq UltraScale+ MPSoC, XCZU9EG) with ADI MxFE FMC daughter cards. Profiles in this catalog cover validated MxFE operating points; profile data (manifests + patches + upstream pristine subtrees) lives in each consuming project under its own `socks.json::adi.no_os_subtree` and `socks.json::adi.hdl_subtree`. The catalog is name-only — it lists which profiles are known + their high-level operating points + their hardware-validation status, NOT the patch bytes.",
+  "fmc_daughter_cards_supported": [
+    "ad9986-fmca",
+    "ad9081-fmca-ebz (reference design; some profiles work on AD9986-FMCA via chip-ID acceptance patch)"
+  ],
+  "profiles": {
+    "6144-jesd204b-m8l4": {
+      "description": "61.44 MHz PL link clock, 2.4576 Gbps lane rate, JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; SYSREF at 1.92 MHz LMFC.",
+      "device_compat": ["ad9081", "ad9986"],
+      "ad9986_via_chip_id_accept": true,
+      "jesd_encoding": "8b10b",
+      "operating_point_summary": {
+        "rx_link_clock_mhz": 61.44,
+        "tx_link_clock_mhz": 61.44,
+        "rx_lane_rate_gbps": 2.4576,
+        "tx_lane_rate_gbps": 2.4576,
+        "M": 8,
+        "L": 4,
+        "S": 1,
+        "NP": 16,
+        "fpga_refclk_mhz": 122.88,
+        "device_refclk_mhz": 245.76,
+        "sysref_mhz": 1.92,
+        "hmc7044_pll2_ghz": 2.94912
+      },
+      "validated_on": [],
+      "validated_date": null,
+      "validation_pending_reason": "Manual hardware re-validation gate (the four-stage Vivado env-source + Make build + XSDB program + iiod-UART query sequence) is deferred to a follow-on plan hop in the consuming project. Validated_date will be set when the gate fires PASS on real ZCU102 + AD9986-FMCA hardware and all five UART pass markers are observed.",
+      "uart_pass_markers": [
+        "JESD .* in DATA",
+        "Link status:\\s*DATA",
+        "Lane rate / 40:\\s*61\\.440 MHz",
+        "SYSREF alignment error: No",
+        "Running IIOD server"
+      ],
+      "patch_layout_contract": {
+        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-jesd204b-m8l4/",
+        "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-jesd204b-m8l4/manifest.json",
+        "expected_no_os_patch_count": 4,
+        "expected_hdl_patch_count_per_project": 2
+      }
+    }
+  },
+  "sources_when_picking_a_new_profile": [
+    {
+      "kind": "no-OS-upstream",
+      "url": "https://github.com/analogdevicesinc/no-OS",
+      "purpose": "ADI no-OS reference firmware for AD9081/AD9986; vendored as pristine + patch series in consuming projects."
+    },
+    {
+      "kind": "hdl-upstream",
+      "url": "https://github.com/analogdevicesinc/hdl",
+      "purpose": "ADI HDL reference designs (ad9081_fmca_ebz, etc.); vendored as pristine + per-profile patch series in consuming projects."
+    },
+    {
+      "kind": "adi-linux-dts-reference",
+      "path_pattern": "arch/arm64/boot/dts/xilinx/zynqmp-zcu102-rev*-ad9081-m*-l*-overlay.dts",
+      "where": "ADI Linux kernel tree (https://github.com/analogdevicesinc/linux)",
+      "purpose": "Cross-check authoritative source for M/L/S/NP combos and crossbar / converter-select values per profile."
+    },
+    {
+      "kind": "ad9081-api-enum-rx-virtual-converters",
+      "file_pattern": "drivers/adc/ad9081/api/adi_ad9081.h::adi_ad9081_adc_fine_ddc_converter_e",
+      "where": "ADI no-OS upstream",
+      "purpose": "Enumeration of FDDC virtual converter IDs (FDDC0_I = 0, FDDC0_Q = 1, FDDC1_I = 2, FDDC1_Q = 3, FDDC2_I = 4, ..., FDDC5_Q = 11)."
+    },
+    {
+      "kind": "ad9081-api-rx-crossbar-default-datapath",
+      "file_pattern": "drivers/adc/ad9081/api/adi_ad9081_adc.c",
+      "where": "ADI no-OS upstream",
+      "purpose": "Default routing of ADC pairs to FDDC virtual converters (ADC0 → FDDC0/2, ADC1 → FDDC1/3, ADC2 → FDDC4/6, ADC3 → FDDC5/7)."
+    },
+    {
+      "kind": "no-OS-app-rx-link-converter-select",
+      "file_pattern": "projects/ad9081/src/app_config.h::AD9081_RX_LINK_CONVERTER_SELECT",
+      "where": "ADI no-OS upstream",
+      "purpose": "Per-profile array selecting which FDDCs are emitted on which JESD virtual converters. 8-element array maps VC[0..7] -> FDDC enum values; cross-reference with the API enum to determine VC-to-physical-ADC mapping."
+    },
+    {
+      "kind": "no-OS-app-tx-link-converter-select",
+      "file_pattern": "projects/ad9081/src/app_config.h::AD9081_TX_*",
+      "where": "ADI no-OS upstream",
+      "purpose": "TX-side equivalents (AD9081_TX_JESD_M/L/S/NP, AD9081_TX_LOGICAL_LANE_MAPPING, AD9081_TX_DAC_CHAN_CROSSBAR, AD9081_TX_DAC_MAIN_CHAN_CROSSBAR). The pinned no-OS app at b45866d does NOT have a TX_LINK_CONVERTER_SELECT analog to RX; TX physical mapping requires a TX-data-path validation rather than inference from link-up markers alone."
+    },
+    {
+      "kind": "hmc7044-clock-tree-config",
+      "file_pattern": "projects/ad9081/src/app_clock.c",
+      "where": "ADI no-OS upstream",
+      "purpose": "Per-profile HMC7044 PLL2 + output-divider + SYSREF settings for the device + FPGA refclks."
+    }
+  ],
+  "methodology_for_new_profile_authoring": {
+    "summary": "Three-layer derivation: (1) read the no-OS app's per-profile *_LINK_CONVERTER_SELECT array; (2) cross-reference with the AD9081 API enum (adi_ad9081_adc_fine_ddc_converter_e for RX, equivalent DAC enum for TX); (3) cross-reference with the API's default crossbar datapath. (4) Cross-check the result against ADI Linux DTS overlay for the same M/L/S/NP combo.",
+    "rx_status": "Working RX methodology validated for the 6144-jesd204b-m8l4 profile (FDDC0/1/4/5 → ADC0/1/2/3).",
+    "tx_status": "TX methodology only partially proven from no-OS source. The pinned no-OS app has no TX LINK_CONVERTER_SELECT analog to RX; TX VC-to-DAC physical mapping requires a TX-data-path validation step (e.g., DAC output spectrum capture + per-channel correlation) before claiming a definitive mapping.",
+    "deferred_field_shape": "When the methodology is run-able but the result is unproven, populate the manifest's operating_point.<rx|tx>.physical_mapping with status='methodology-only' + source_files[] + crossbar_note + observed values, and explicitly disclaim VC-to-physical mapping. Do NOT leave the field empty / null / fabricated."
+  },
+  "catalog_authoring_rules": {
+    "genericization": "This catalog file is in the SOCKS skill repo (~/.claude/skills/socks/references/boards/zcu102/) and is shared by every consuming project on this board. Do NOT include project-specific paths, workspace-rooted paths, validated_evidence fields, first_validated_thread fields, or any other consuming-project provenance. Provenance lives in each consuming project's findings docs and links upward to a catalog entry by name only.",
+    "validated_date_lifecycle": "Set validated_date to a real ISO date only after a real hardware run on real ZCU102 + AD9986-FMCA hardware reaches all five UART pass markers. Software-only checks (patches apply, JSON parses, fingerprint scan clean) are NOT sufficient to set validated_date — they prove the patch system is structurally correct, not that the resulting configuration trains a JESD link in vivo.",
+    "profile_addition": "New profiles authored in any consuming project are added here by name + operating_point summary + uart_pass_markers + patch_layout_contract. The catalog does NOT carry the patch bytes themselves — those live in each consuming project's own ADI subtree per its socks.json::adi configuration."
+  }
+}
