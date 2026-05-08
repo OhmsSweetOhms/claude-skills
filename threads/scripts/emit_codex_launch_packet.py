@@ -169,7 +169,13 @@ def emit_packet(
     plan_id: str,
 ) -> str:
     return f"""\
+{plan_file}
+
 # Codex launch packet — {thread_id} / {plan_id}
+
+The plan-file absolute path is the first line of this packet so it
+can be copied without scrolling. The rest of this document is the
+launch context.
 
 ## Six mechanical facts
 
@@ -325,6 +331,12 @@ def main() -> None:
         out_path = Path(args.out).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(packet)
+        # The plan-file path is what the human will actually paste into
+        # Codex turn 1; print it on stdout BEFORE the "written to" line
+        # so the human sees it without having to open the saved file.
+        print(f"Plan file (paste this absolute path into Codex turn 1):")
+        print(f"  {plan_file}")
+        print()
         print(f"Codex launch packet written to:")
         print(f"  {out_path}")
     else:
