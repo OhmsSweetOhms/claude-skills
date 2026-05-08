@@ -30,6 +30,72 @@
       "prompt": "Can we do a direct SDG-to-RSA smoke test before the LISN check? The chain is SDG C1 to 20 dB attenuator to RSA.",
       "expected_output": "Recommends the 100 kHz CE102 point, gives 7.1047 mVpp into 50 ohm and about -58.99 dBm expected at the RSA, uses ce102 system-check-tone plus system-check-scan or full ce102 scan, explains that the LISN correction makes corrected dBuV about 1.2 dB high without the LISN, and treats the result as a plumbing smoke test only.",
       "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Get ready for CE102 hot config 16 using yesterday's ambient baseline. Do not run it yet.",
+      "expected_output": "Stages only the next CE102 run folder and run.json, verifies prior ambient/config artifacts and analyzer settings, reports the intended command/settings, and explicitly avoids live acquisition until a later go/apply instruction.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Go run the CE102 config we staged, then tell me whether it is the current best.",
+      "expected_output": "Runs the reviewed CE102 scan, preserves raw CSV, writes corrected JSON, generates per-run and ambient/config overlay/summary plot SVGs, runs limit-summary, updates run.json plot paths, compares key harmonic markers against the previous config, reports peak, worst margin, pass/fail, generated paths, and current-best status.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Make a focused CE102 overlay for ambient plus configs 13 through 15 and keep the harmonic labels useful for bench tuning.",
+      "expected_output": "Uses the existing ambient and selected run JSONs to regenerate focused plot/summary SVGs without touching raw data, stores them as plots rather than reports, keeps labels and limit line consistent, and expects harmonic-family markers such as F1/H1/H2 sorted by marker order rather than frequency-only labels.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Run a CE102 calibration run with the SDG2000 and RSA.",
+      "expected_output": "Stages or runs a CE102 calibration/system-check under data/ce102/calibration/<run_id>, uses the four tones 10 kHz, 100 kHz, 2 MHz, and 10 MHz, records SDG/RSA settings, injection path, losses, tone_plan.json, raw/derived/plots plus optional formal reports, and distinguishes direct-RSA smoke from the LISN-path measurement-system check.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "Run RE102 calibration with the SMA100A at the antenna port.",
+      "expected_output": "Keeps direct analyzer smoke separate from the formal antenna-port measurement-system check, uses SMA100A CW tones plus narrow analyzer sweeps, prefers interior TBMA1B points 35 MHz, 100 MHz, 1 GHz, and 2.9 GHz, and refuses live automation until injection plane, source-to-plane loss, measurement-path loss, frequency set, source limits, and attenuation are documented.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "Use the FPH for a GNSS L1/L2 scan instead of the RSA.",
+      "expected_output": "Selects --analyzer fph, uses --points 711, chooses --detector SAMP when needed for FPH GNSS scans, keeps preamp off for the first run, records attenuation and sweep count, and treats unexpected point count or preamp-query trouble as a stop/metadata-verification issue.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "Do a GNSS RF environment survey with the active TW3972XF antenna and score it against RE102.",
+      "expected_output": "Explains that the GNSS survey is non-MIL and must not use RE102/CE102 limits, dBuV/m conversion, antenna-factor correction, or compliance pass/fail. Requires current limit, bias-tee DC checks, no DC at analyzer input, initial attenuation, preamp off, and terminated baselines before powered antenna data.",
+      "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "Can we query :TRACe:DATA? TRACE1 directly to speed up this RSA run?",
+      "expected_output": "Avoids direct RSA trace readback, explains that the repo uses the safe RSA CSV store plus FTP path, and notes that FPH direct trace readout is a separate analyzer-specific path handled by the FPH driver.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "Initialize a new EMI test group for UUT123 that will include CE102 and RE102. We'll have indoor and outdoor runs later.",
+      "expected_output": "Uses the UUT/test-group-first layout data/uuts/UUT123/<campaign_id> with campaign.json plus ce102/ and re102/ method folders, each containing measurement.json, calibration/, runs/, and plots/. Treats indoor and outdoor as JSON site_conditions and eventual run metadata, not as directory levels.",
+      "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "Initialize a place for bench validation and direct analyzer smoke-check data. This is not a UUT.",
+      "expected_output": "Uses data/characterization/<dataset_id>/<campaign_id> rather than data/uuts, writes characterization campaign/measurement metadata with subject.is_uut=false, and keeps the same method folders for rsa/ce102/re102 with calibration, runs, and plots as appropriate.",
+      "files": []
+    },
+    {
+      "id": 16,
+      "prompt": "Initialize a new EMI test group for an unknown UUT. It should include CE102 now and RE102 later.",
+      "expected_output": "Allocates the next provisional data/uuts/uut_NNN/<campaign_id> directory, starting with uut_001 and then uut_002 as existing numbered UUTs are present. Does not create unknown_uut, and keeps CE102/RE102 setup state such as indoor/outdoor in JSON metadata and run labels rather than directory layers.",
+      "files": []
     }
   ]
 }
