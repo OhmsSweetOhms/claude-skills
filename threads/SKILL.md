@@ -90,6 +90,7 @@ section in `references/workflows.md`:
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
 | "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |
+| "Give me the launch facts" / "minimal launch packet" / "skip the scaffold" / "just print the codex launch path" / "I don't want hand-curation" | **Codex worktree handoff — Path B (minimal launch packet)** (`references/codex-handoff.md`) |
 | "Recover a missing codex handback" / "retroactive handback" / "closed plan has no handback" | **Retroactive handback** (`references/codex-handoff.md`) |
 | "Triage codex handback findings" / "process codex handback" / "classify handback follow-ons" | **Process codex handback** (`references/codex-handoff.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
