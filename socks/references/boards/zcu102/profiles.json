@@ -45,7 +45,7 @@
       }
     },
     "24576-jesd204b-m8l4": {
-      "description": "PL link clock at 245.76 MHz with lane rate 9.8304 Gbps, JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; device refclk 491.52 MHz; FPGA refclk 245.76 MHz; SYSREF at 1.92 MHz.",
+      "description": "PL link clock at 245.76 MHz with lane rate 9.8304 Gbps, JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; device refclk 491.52 MHz; FPGA GT refclk 491.52 MHz; ADXCVR exports refclk/2 as the 245.76 MHz link/device clock; SYSREF at 1.92 MHz.",
       "device_compat": ["ad9081", "ad9986"],
       "ad9986_via_chip_id_accept": true,
       "jesd_encoding": "8b10b",
@@ -58,14 +58,14 @@
         "L": 4,
         "S": 1,
         "NP": 16,
-        "fpga_refclk_mhz": 245.76,
+        "fpga_refclk_mhz": 491.52,
         "device_refclk_mhz": 491.52,
         "sysref_mhz": 1.92,
         "hmc7044_pll2_ghz": 2.94912
       },
-      "validated_on": [],
-      "validated_date": null,
-      "validation_summary": "Not hardware-validated yet. Plan-03d will set validated_date only after the consuming project reaches all five UART pass markers on real ZCU102 + AD9986-FMCA hardware and then re-validates the restored 6144 profile.",
+      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_date": "2026-05-08",
+      "validation_summary": "Hardware validation PASS on real ZCU102 + AD9986-FMCA hardware for the 24576-jesd204b-m8l4 profile. The consuming project reached all five UART pass markers at lane rate / 40 = 245.760 MHz.",
       "uart_pass_markers": [
         "JESD .* in DATA",
         "Link status:\\s*DATA",
