@@ -5,3 +5,5 @@
 4294967296
 # 2^31 literal used in synthesis checks
 2147483648
+# ZCU102 profile clock description; 61.44 MHz can false-positive as a street address.
+6[1]\.4[4] M[H]z PL link clock

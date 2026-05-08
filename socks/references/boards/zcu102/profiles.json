@@ -26,9 +26,9 @@
         "sysref_mhz": 1.92,
         "hmc7044_pll2_ghz": 2.94912
       },
-      "validated_on": [],
-      "validated_date": null,
-      "validation_pending_reason": "Manual hardware re-validation gate (the four-stage Vivado env-source + Make build + XSDB program + iiod-UART query sequence) is deferred to a follow-on plan hop in the consuming project. Validated_date will be set when the gate fires PASS on real ZCU102 + AD9986-FMCA hardware and all five UART pass markers are observed.",
+      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_date": "2026-05-07",
+      "validation_summary": "Manual hardware re-validation PASS on real ZCU102 + AD9986-FMCA hardware. The consuming project reached all five UART pass markers for the 6144-jesd204b-m8l4 profile.",
       "uart_pass_markers": [
         "JESD .* in DATA",
         "Link status:\\s*DATA",
