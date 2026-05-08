@@ -43,6 +43,43 @@
         "expected_no_os_patch_count": 4,
         "expected_hdl_patch_count_per_project": 2
       }
+    },
+    "24576-jesd204b-m8l4": {
+      "description": "PL link clock at 245.76 MHz with lane rate 9.8304 Gbps, JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; device refclk 491.52 MHz; FPGA refclk 245.76 MHz; SYSREF at 1.92 MHz.",
+      "device_compat": ["ad9081", "ad9986"],
+      "ad9986_via_chip_id_accept": true,
+      "jesd_encoding": "8b10b",
+      "operating_point_summary": {
+        "rx_link_clock_mhz": 245.76,
+        "tx_link_clock_mhz": 245.76,
+        "rx_lane_rate_gbps": 9.8304,
+        "tx_lane_rate_gbps": 9.8304,
+        "M": 8,
+        "L": 4,
+        "S": 1,
+        "NP": 16,
+        "fpga_refclk_mhz": 245.76,
+        "device_refclk_mhz": 491.52,
+        "sysref_mhz": 1.92,
+        "hmc7044_pll2_ghz": 2.94912
+      },
+      "validated_on": [],
+      "validated_date": null,
+      "validation_summary": "Not hardware-validated yet. Plan-03d will set validated_date only after the consuming project reaches all five UART pass markers on real ZCU102 + AD9986-FMCA hardware and then re-validates the restored 6144 profile.",
+      "uart_pass_markers": [
+        "JESD .* in DATA",
+        "Link status:\\s*DATA",
+        "Lane rate / 40:\\s*245\\.760 MHz",
+        "SYSREF alignment error: No",
+        "Running IIOD server"
+      ],
+      "patch_layout_contract": {
+        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/24576-jesd204b-m8l4/",
+        "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/24576-jesd204b-m8l4/manifest.json",
+        "expected_no_os_patch_count": 7,
+        "expected_hdl_patch_count_per_project": 2
+      }
     }
   },
   "sources_when_picking_a_new_profile": [

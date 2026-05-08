@@ -140,6 +140,48 @@ def _load_state_json(project_dir, name):
         return json.load(f)
 
 
+def _repo_root(project_dir):
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_dir, "rev-parse", "--show-toplevel"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=True,
+        )
+        return os.path.abspath(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        return os.path.abspath(project_dir)
+
+
+def _active_profile_marker_config(project_dir):
+    state = _load_state_json(project_dir, "adi-profile-apply.json") or {}
+    manifest_path = state.get("manifest_path")
+    if not manifest_path:
+        return None, None
+
+    candidates = []
+    if os.path.isabs(manifest_path):
+        candidates.append(manifest_path)
+    else:
+        candidates.append(os.path.join(_repo_root(project_dir), manifest_path))
+        candidates.append(os.path.join(project_dir, manifest_path))
+
+    manifest = None
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            with open(candidate, "r") as f:
+                manifest = json.load(f)
+            break
+    if not manifest:
+        return None, None
+
+    markers = manifest.get("uart_pass_markers")
+    if not markers:
+        return None, None
+    return markers, manifest.get("match_mode")
+
+
 def _is_no_os_flow(hil_config, project_dir):
     fw = hil_config.get("firmware", {}) if hil_config else {}
     if fw.get("flow") == "no_os_make":
@@ -156,12 +198,19 @@ def _select_serial_port(hil_config, override=None):
     return selected or find_serial_port(hil_config)
 
 
-def _pass_marker_config(hil_config):
+def _pass_marker_config(hil_config, project_dir=None):
     fw = hil_config.get("firmware", {}) if hil_config else {}
-    markers = hil_config.get("pass_markers") or fw.get("pass_markers")
+    markers = None
+    match_mode = None
+    if project_dir:
+        markers, match_mode = _active_profile_marker_config(project_dir)
+    if not markers:
+        markers = hil_config.get("pass_markers") or fw.get("pass_markers")
     if not markers:
         markers = [fw.get("pass_marker", "HIL_PASS")]
-    match_mode = hil_config.get("match_mode") or fw.get("match_mode", "all")
+    match_mode = (
+        match_mode or hil_config.get("match_mode") or fw.get("match_mode", "all")
+    )
     if match_mode not in ("any", "all"):
         raise ValueError("pass marker match_mode must be 'any' or 'all'")
     return markers, match_mode
@@ -265,7 +314,7 @@ def main() -> int:
 
     # Start UART capture before programming
     try:
-        pass_markers, match_mode = _pass_marker_config(hil_config)
+        pass_markers, match_mode = _pass_marker_config(hil_config, project_dir)
     except ValueError as e:
         print(f"\n  {fail_str()}: {e}")
         return 1

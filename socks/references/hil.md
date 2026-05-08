@@ -192,6 +192,16 @@ hand-written.
 | `debug.watch_addrs` | `{}` | Labelled AXI register addresses to read with `mrd` on failure |
 | `debug.jtag_axi_dump` | `{}` | Named register regions for JTAG-to-AXI dump on CPU fault |
 
+### ADI profile UART markers
+
+For ADI profile-based flows, Stage 17 first checks
+`build/state/adi-profile-apply.json` for the active profile manifest. If that
+manifest contains `uart_pass_markers`, those regex markers override the static
+`hil.json` markers. This keeps profile switching strict: changing only
+`socks.json::adi.active_profile` can move the gate from a 61.44 MHz
+lane-rate-/40 expectation to a 245.76 MHz expectation and back without editing
+`hil.json`.
+
 ---
 
 ## Modules Without AXI-Lite
