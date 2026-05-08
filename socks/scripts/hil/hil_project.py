@@ -31,6 +31,7 @@ from hil_lib import (
     expand_template, resolve_sources, board_family, boot_init_filename,
 )
 from hil_prep import maybe_generate_artifacts
+from adi_profile_apply import apply_active_profile
 from validate_trigger_plan import validate_trigger_plan
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -261,6 +262,13 @@ def main() -> int:
 
     build_cfg = socks_cfg.get("build", {}) if socks_cfg else {}
     if project_scope == "system" and build_cfg.get("flow", "vivado_native") == "adi_make":
+        if socks_cfg.get("adi"):
+            try:
+                print(f"\n  Applying ADI active profile before Stage 14...")
+                apply_active_profile(project_dir)
+            except Exception as e:
+                print(f"\n  ERROR: ADI active profile apply failed: {e}")
+                return 1
         build_cfg = dict(build_cfg)
         build_cfg.setdefault("board", socks_cfg.get("board", {}) if socks_cfg else {})
         build_dir = hil_build_dir(project_dir)

@@ -534,7 +534,10 @@ def main() -> int:
             hil_lib_dir = os.path.join(SCRIPT_DIR, "hil")
             sys.path.insert(0, hil_lib_dir)
             try:
-                from hil_lib import find_xsdb, find_xsct, check_pyserial, find_serial_port
+                from hil_lib import (
+                    find_xsdb, find_xsct, check_pyserial,
+                    find_serial_port, list_serial_candidates,
+                )
 
                 xsdb = find_xsdb()
                 if xsdb:
@@ -563,6 +566,10 @@ def main() -> int:
                 # UART port check
                 with open(hil_json) as _f:
                     hil_cfg = json.load(_f)
+                serial_candidates = list_serial_candidates(hil_cfg)
+                if serial_candidates:
+                    print_info(f"{'UART candidates':24s} "
+                               f"{', '.join(c['device'] for c in serial_candidates)}")
                 serial_port = find_serial_port(hil_cfg)
                 if serial_port and os.path.exists(serial_port):
                     print_result(f"{'UART port':24s} {serial_port}", True)
@@ -660,6 +667,7 @@ def main() -> int:
                         uart_detected=uart_ok,
                         uart_port=serial_port if uart_ok else None,
                         jtag_target=first_target if jtag_ok else None,
+                        uart_candidates=serial_candidates,
                     )
 
             except ImportError:

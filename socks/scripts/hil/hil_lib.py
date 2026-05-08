@@ -11,6 +11,7 @@ Provides:
 """
 
 import atexit
+import glob
 import json
 import os
 import re
@@ -148,6 +149,128 @@ def check_pyserial():
 # Serial port discovery
 # ---------------------------------------------------------------------------
 
+def _port_key(port):
+    device = port.get("device") if isinstance(port, dict) else port.device
+    match = re.search(r'(\d+)$', device)
+    suffix = int(match.group(1)) if match else -1
+    return (re.sub(r'\d+$', '', device), suffix, device)
+
+
+def _interface_key(port):
+    if isinstance(port, dict):
+        value = port.get("interface_index")
+        if value is not None:
+            return value
+        location = str(port.get("location") or "")
+        interface = str(port.get("interface") or "")
+    else:
+        location = str(getattr(port, "location", "") or "")
+        interface = str(getattr(port, "interface", "") or "")
+    match = re.search(r'[:.](\d+)$', location)
+    if match:
+        return int(match.group(1))
+    match = re.search(r'(\d+)$', interface)
+    if match:
+        return int(match.group(1))
+    return _port_key(port)[1]
+
+
+def _port_to_candidate(port):
+    return {
+        "device": port.device,
+        "name": getattr(port, "name", None),
+        "description": getattr(port, "description", None),
+        "hwid": getattr(port, "hwid", None),
+        "vid": f"{port.vid:04x}" if getattr(port, "vid", None) is not None else None,
+        "pid": f"{port.pid:04x}" if getattr(port, "pid", None) is not None else None,
+        "serial_number": getattr(port, "serial_number", None),
+        "location": getattr(port, "location", None),
+        "manufacturer": getattr(port, "manufacturer", None),
+        "product": getattr(port, "product", None),
+        "interface": getattr(port, "interface", None),
+        "interface_index": _interface_key(port),
+    }
+
+
+def list_serial_candidates(hil_config=None):
+    """Return all serial candidates matching the board VID/PID when present."""
+    try:
+        import serial.tools.list_ports
+    except ImportError:
+        return []
+
+    vid = None
+    pid = None
+    if hil_config and "board" in hil_config:
+        board = hil_config["board"]
+        vid_str = board.get("serial_vid")
+        pid_str = board.get("serial_pid")
+        if vid_str:
+            vid = int(vid_str, 16)
+        if pid_str:
+            pid = int(pid_str, 16)
+
+    ports = list(serial.tools.list_ports.comports())
+    if vid and pid:
+        matches = [p for p in ports if p.vid == vid and p.pid == pid]
+    elif vid:
+        matches = [p for p in ports if p.vid == vid]
+    else:
+        matches = [p for p in ports
+                   if "ttyUSB" in p.device or "ttyACM" in p.device]
+
+    return [_port_to_candidate(p) for p in sorted(matches, key=_port_key)]
+
+
+def firmware_uart_role(hil_config=None):
+    """Infer the UART role from hil.json firmware processor settings."""
+    fw = hil_config.get("firmware", {}) if hil_config else {}
+    explicit = fw.get("uart_role")
+    if explicit:
+        return str(explicit).lower()
+    processor = firmware_processor(hil_config or {})
+    if "cortexa53" in processor.lower() or "a53" in processor.lower():
+        return "a53"
+    if "cortexr5" in processor.lower() or "r5" in processor.lower():
+        return "r5"
+    return "default"
+
+
+def select_uart_by_role(role, candidates, hil_config=None):
+    """Select a UART device from candidates for a logical firmware role.
+
+    ZCU102 CP2108 exposes multiple UART interfaces. In the ADI/SOCKS topology
+    interface 0 is the A53 no-OS console and interface 1 is the R5 streaming
+    console; the ttyUSB suffix can move between hosts.
+    """
+    if not candidates:
+        return None
+
+    fw = hil_config.get("firmware", {}) if hil_config else {}
+    board = hil_config.get("board", {}) if hil_config else {}
+    overrides = fw.get("uart_ports", {}) or board.get("uart_ports", {})
+    if isinstance(overrides, dict):
+        override = overrides.get(role)
+        if override:
+            return override
+
+    sorted_candidates = sorted(candidates, key=_port_key)
+    preset = str(board.get("preset", "")).lower()
+    family = str(board.get("family", "")).lower()
+    is_zcu102 = preset == "zcu102" or family == "zynqmp"
+    if is_zcu102:
+        role_to_interface = {"a53": 0, "r5": 1}
+        wanted = role_to_interface.get(str(role).lower())
+        if wanted is not None:
+            matches = [p for p in sorted_candidates
+                       if _interface_key(p) == wanted]
+            if matches:
+                return matches[0]["device"] if isinstance(matches[0], dict) else matches[0].device
+
+    first = sorted_candidates[0]
+    return first["device"] if isinstance(first, dict) else first.device
+
+
 def find_serial_port(hil_config=None):
     """Auto-detect board serial port from hil.json config or fallback."""
     try:
@@ -175,26 +298,14 @@ def find_serial_port(hil_config=None):
             pid = int(pid_str, 16)
         fallback = board.get("serial_fallback")
 
-    def _port_key(port):
-        match = re.search(r'(\d+)$', port.device)
-        suffix = int(match.group(1)) if match else -1
-        return (re.sub(r'\d+$', '', port.device), suffix, port.device)
-
-    def _interface_key(port):
-        location = str(getattr(port, "location", "") or "")
-        match = re.search(r'[:.](\d+)$', location)
-        if match:
-            return int(match.group(1))
-        interface = str(getattr(port, "interface", "") or "")
-        match = re.search(r'(\d+)$', interface)
-        if match:
-            return int(match.group(1))
-        return _port_key(port)[1]
-
     def _select_port(matches):
         if not matches:
             return None
-        matches = sorted(matches, key=_port_key)
+        candidates = [_port_to_candidate(p) for p in sorted(matches, key=_port_key)]
+        role = firmware_uart_role(hil_config)
+        selected = select_uart_by_role(role, candidates, hil_config)
+        if selected:
+            return selected
         streaming_name = str(uart_cfg.get("streaming", "")).lower()
         is_zcu102 = (
             str(board_preset).lower() == "zcu102" or

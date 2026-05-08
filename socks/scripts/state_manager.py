@@ -331,7 +331,8 @@ class StateManager:
     def set_hardware_capabilities(self, jtag_detected: bool,
                                   uart_detected: bool,
                                   uart_port: Optional[str] = None,
-                                  jtag_target: Optional[str] = None) -> None:
+                                  jtag_target: Optional[str] = None,
+                                  uart_candidates: Optional[List[dict]] = None) -> None:
         """Persist hardware detection results from Stage 0."""
         state = self.load()
         if state is None:
@@ -340,6 +341,7 @@ class StateManager:
             "jtag_detected": jtag_detected,
             "uart_detected": uart_detected,
             "uart_port": uart_port,
+            "uart_candidates": uart_candidates or [],
             "jtag_target": jtag_target,
             "timestamp": datetime.now().isoformat(),
         }

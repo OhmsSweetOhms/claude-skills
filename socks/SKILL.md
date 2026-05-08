@@ -241,9 +241,9 @@ plan authoring, and troubleshooting.
 | 12 | CLAUDE.md | *Claude writes docs* | `references/structure-module.md` or `references/structure-system.md`, `references/claude_notes.md` |
 | 13 | SOCKS Self-Audit | `scripts/self_audit.py` | -- |
 | 14-19 | **HIL Flow** | *See `references/hil.md`* | *Requires `hil.json` in project root* |
-| 14 | HIL: Vivado Project + trigger validation | `scripts/hil/hil_project.py` | `references/hil.md` |
+| 14 | HIL: Vivado Project + trigger validation | `scripts/hil/hil_project.py` | `references/hil.md`; `references/adi-vendoring-profiles.md` for ADI profiles |
 | 15 | HIL: Implementation | `scripts/hil/hil_impl.py` | `references/hil.md` |
-| 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` + guidance | `references/hil.md` (§ Firmware Authoring Guide) |
+| 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` + guidance | `references/hil.md` (§ Firmware Authoring Guide; ADI no-OS Make) |
 | 17 | HIL: Program + Test | `scripts/hil/hil_run.py` | `references/hil.md` |
 | 18 | HIL: ILA Capture + ARM Debug | `scripts/hil/hil_ila.py` | `references/hil.md` (VCD required, debug build) |
 | 19 | HIL: ILA Verify | `scripts/hil/hil_verify.py` | `references/hil.md` (VCD required) |
@@ -342,10 +342,15 @@ See `references/structure-module.md` for module conventions,
 
 System HIL projects that rely on an external vendor build can use
 `build.flow: "adi_make"` in `socks.json`; Stage 14 runs ADI Make and stages the
-resulting XSA/bitstream for the normal HIL stages. ZCU102 board metadata lives
-at `references/boards/zcu102/board.md`; the ADI flow does not use a SOCKS-native
+resulting XSA/bitstream for the normal HIL stages. If the project sets
+`adi.active_profile`, Stage 14 first applies the profile described in
+`references/adi-vendoring-profiles.md`. ZCU102 board metadata lives at
+`references/boards/zcu102/board.md` and environment defaults live at
+`references/boards/zcu102/env.json`; the ADI flow does not use a SOCKS-native
 PSU preset. For Zynq UltraScale+ firmware, Stage 16 defaults to
-`psu_cortexa53_0` unless `hil.json` sets `firmware.processor`.
+`psu_cortexa53_0` unless `hil.json` sets `firmware.processor`. For ADI no-OS
+firmware, use `build.no_os_make` or `firmware.flow: "no_os_make"` and gate
+Stage 17 with top-level regex `pass_markers`.
 
 ---
 

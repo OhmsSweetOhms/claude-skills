@@ -27,6 +27,26 @@ ILA verify:  Stage 18 (ILA capture, VCD required) -> Stage 19 (ILA vs VCD)
 The HIL flow is standalone (`--hil --top <entity>`), not auto-appended to
 `--design` or `--bughunt`. It requires hardware presence and explicit user intent.
 
+## Runtime Expectations
+
+HIL stages touch real FPGA tools and hardware. Do not treat a quiet terminal as
+a hang until checking the process tree and the active tool log.
+
+Typical ZCU102 + ADI system-flow timing:
+
+| Stage | Typical time | Notes |
+|-------|--------------|-------|
+| Stage 14 ADI/Vivado build | 10+ minutes | Often emits little or no orchestrator output because Vivado is buffered. Check `pgrep -af "vivado|make -C|hil_project.py|socks.py"` and tail the ADI project log. Progress through IP generation, implementation, `open_run`, timing update, and XSA export is normal. |
+| Stage 15 system flow | seconds | ADI Make already stages the bitstream/XSA, so system-scope Stage 15 is usually a staging/check step. |
+| Stage 16 ADI no-OS Make | 1-5 minutes | Can be longer after a clean materialized no-OS tree or Vitis cache changes. Requires the Vitis environment matching the Vivado settings path. |
+| Stage 17 program + UART gate | 1-3 minutes | Includes XSDB target discovery, FPGA programming, FSBL/A53 startup for no-OS, and UART marker collection. |
+| Full `socks.py --validate` on ADI ZCU102 | 15-25+ minutes | Longer if Vivado rebuilds all IP, host load is high, or license checkout is slow. Do not restart it just because 120 seconds passed. |
+
+If the user asks for status during a long run, report the current stage and the
+latest log milestone instead of restarting the gate. For Stage 14 ADI builds,
+the most useful status checks are the child process tree and the tail of
+`ADI/<project>/..._vivado.log`.
+
 **Hard requirements:**
 - `--top` is required for module/block scope; optional for system scope (uses `dut.entity` from socks.json)
 - VCD must exist at `build/sim/*.vcd` for module/block scope; optional for system scope (stages 18-19 conditional)
@@ -161,8 +181,13 @@ hand-written.
 | `firmware.timeout_s` | `30` | Seconds to wait for pass/fail marker |
 | `firmware.post_ready_cmd` | -- | Optional command string/list to run from the project directory after the pass marker is seen; non-zero exit fails Stage 17 |
 | `firmware.post_ready_timeout_s` | `30` | Timeout for `post_ready_cmd` |
+| `firmware.flow` | `vitis` | Firmware build/programming flow. `no_os_make` builds an ADI no-OS app with Make and programs the staged ELF on A53. |
 | `firmware.processor` | family default | Vitis processor name. Defaults to `ps7_cortexa9_0` for `zynq7000` and `psu_cortexa53_0` for `zynqmp`; override for R5 or custom processor targets. |
+| `firmware.uart_role` | inferred from processor | UART interface role for multi-port USB UART bridges. On ZCU102, `a53` selects CP2108 interface 0 and `r5` selects interface 1. |
+| `firmware.program_timeout_s` | `30` | Seconds allowed for XSDB programming/startup before Stage 17 declares the programming step failed. |
 | `firmware.debug_iterations` | -- | Number of test phases in debug firmware. **Must equal ILA capture count.** Required when `hil.json` exists and ILA captures are planned. |
+| `pass_markers` | -- | Top-level list of UART regex markers. When present, Stage 17 waits for all markers by default instead of one literal `firmware.pass_marker`. |
+| `match_mode` | `all` | Marker aggregation mode for `pass_markers`. `all` requires every regex marker; `any` passes on the first matching marker. |
 | `debug.watch_vars` | `[]` | C global variable names to read with XSDB `print` on failure |
 | `debug.watch_addrs` | `{}` | Labelled AXI register addresses to read with `mrd` on failure |
 | `debug.jtag_axi_dump` | `{}` | Named register regions for JTAG-to-AXI dump on CPU fault |
@@ -523,8 +548,14 @@ ERROR: sw/hil_test_main.c not found. Claude must write firmware before Stage 16 
 
 When `build.flow` is `adi_make`, Stage 14 bypasses the native PS7 block-design
 flow and runs `make -C <adi_root>/<project_dir>` after sourcing Vivado settings.
-It writes the make transcript to `build/hil/stage14_adi_make.log`, copies the
-ADI XSA to `build/hil/system_wrapper.xsa`, copies the ADI bitstream to
+If `socks.json` also has `adi.active_profile`, Stage 14 first applies the named
+profile with `scripts/hil/adi_profile_apply.py`. The profile materializes the
+matching no-OS upstream tree under the ignored path `ADI/no-OS/work/active`,
+copies HDL upstream files into the live ADI project, applies HDL/no-OS patches,
+and writes `build/state/adi-profile-apply.json`.
+
+Stage 14 writes the make transcript to `build/hil/stage14_adi_make.log`, copies
+the ADI XSA to `build/hil/system_wrapper.xsa`, copies the ADI bitstream to
 `build/hil/vivado_project/<project>.runs/impl_1/`, and extracts the family
 boot-init Tcl (`ps7_init.tcl` or `psu_init.tcl`) from the XSA when present.
 Stages 15-19 then consume the same staged HIL artifact interface as the native
@@ -534,6 +565,9 @@ Run ADI/Vivado builds outside the Codex sandbox when the board/device uses a
 node-locked host license. In Codex, request escalated execution and pass the
 Vivado 2023.2 settings path:
 `--settings /tools/Xilinx/Vivado/2023.2/.settings64-Vivado.sh`.
+
+See `references/adi-vendoring-profiles.md` for the expected profile manifest,
+patch layout, and verification gates.
 
 ### Stage 15: HIL Implementation (`scripts/hil/hil_impl.py`)
 
@@ -555,7 +589,7 @@ module HIL or staged the XSA/bitstream for system-scope HIL.
 first (see "Stage 16: Firmware Authoring Guide" above), then the build script
 runs.
 
-**What it does:**
+**What it does for the native Vitis flow:**
 1. Hard-fails if `sw/hil_test_main.c` is missing (Claude must author it first)
 2. Expands `build_app.template.tcl` from `hil.json` firmware config
 3. Runs XSCT from the Vitis settings environment to create the Vitis workspace,
@@ -577,25 +611,58 @@ has been verified with Vitis 2023.2 using `psu_cortexa53_0`.
 **Driver deduplication:** Multiple driver source files in the same directory
 are imported once (directories are deduplicated).
 
+**ADI no-OS Make flow:** system-scope projects may set either
+`firmware.flow: "no_os_make"` or `build.no_os_make` in `socks.json`. The latter
+keeps `build.flow: "adi_make"` available for Stage 14 while letting Stage 16
+build firmware from a materialized no-OS tree:
+
+```json
+{
+  "build": {
+    "flow": "adi_make",
+    "no_os_make": {
+      "no_os_root": "../../ADI/no-OS/work/active",
+      "project_dir": "projects/ad9081",
+      "platform": "xilinx",
+      "hardware": "build/hil/system_wrapper.xsa",
+      "target": "all"
+    }
+  }
+}
+```
+
+Stage 16 resolves the matching Vitis settings from the Vivado settings path,
+runs `make -C <no_os_root>/<project_dir> PLATFORM=xilinx HARDWARE=<xsa> all`,
+copies `ad9081.elf`, `BOOT.BIN`, and `fsbl.elf` to `build/hil/no_os/`, and writes
+`build/state/no-os-make.json`. On Zynq UltraScale+ no-OS A53 projects, Stage 17
+uses the staged ELF and FSBL instead of the native `hil_app.elf`.
+
 ### Stage 17: HIL Program + Test (`scripts/hil/hil_run.py`)
 
 **Purpose:** Functional test with non-debug firmware (full speed, no ILA pacing).
 
 **What it does:**
-1. Pre-flight: verify bitstream, ELF, ps7_init, serial port, XSDB all present
+1. Pre-flight: verify bitstream, ELF, boot-init Tcl, serial port, XSDB all present
 2. Start UART capture background thread
-3. Program board via XSDB (`flash.tcl`)
+3. Program board via XSDB (`flash.tcl` for native firmware or
+   `flash_psu_no_os.tcl` for Zynq UltraScale+ A53 no-OS firmware)
 4. Wait for pass/fail marker on UART
 
-**Outputs:** Console log with UART output, PASS/FAIL result
+**Outputs:** Console log with UART output, PASS/FAIL result, and a timestamped
+UART transcript at `build/hil/uart-<timestamp>.log`.
 
 **Flags:**
 - `--serial /dev/ttyUSBx` -- override serial port auto-detection
 - `--timeout N` -- override UART capture timeout (default: from hil.json or 30s)
 
-**Pass/fail markers:** The firmware prints `HIL_PASS` or `HIL_FAIL` to UART.
-These strings are configurable in `hil.json` (`firmware.pass_marker`,
-`firmware.fail_marker`).
+**Pass/fail markers:** The native firmware prints `HIL_PASS` or `HIL_FAIL` to
+UART. These strings are configurable in `hil.json` (`firmware.pass_marker`,
+`firmware.fail_marker`). For vendor firmware that does not print a single
+canonical marker, set top-level `pass_markers` to a list of Python regexes and
+leave `match_mode` at `all` unless one of several equivalent markers is enough.
+This is the preferred gate for ADI no-OS JESD bring-up, where the pass condition
+is a cluster of UART lines such as JESD links in DATA, expected lane-rate
+readback, no SYSREF alignment error, and `Running IIOD server`.
 
 ### Stage 18: HIL ILA Capture (`scripts/hil/hil_ila.py`)
 
