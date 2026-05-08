@@ -239,6 +239,17 @@ if [ -n "$RENDER_PROMPT_OUT" ]; then
     "${RENDER_CMD[@]}"
 fi
 
+if [ -n "$RENDER_PROMPT_OUT" ]; then
+    # Resolve to an absolute path so the human doesn't have to hunt or
+    # mentally combine cwd + relative path. Falls back to the literal
+    # value if `realpath -m` (or the file's parent) is unavailable.
+    if command -v realpath >/dev/null 2>&1; then
+        RENDERED_PROMPT_ABS="$(realpath -m "$RENDER_PROMPT_OUT" 2>/dev/null || echo "$RENDER_PROMPT_OUT")"
+    else
+        RENDERED_PROMPT_ABS="$RENDER_PROMPT_OUT"
+    fi
+fi
+
 cat <<EOF
 
 Done. Worktree ready.
@@ -248,6 +259,7 @@ Done. Worktree ready.
   base commit: ${BASE_COMMIT} ($(git -C "$WORKTREE" log -1 --format=%s 2>/dev/null || echo '?'))
   venv:        $VENV_LINK -> $VENV_TARGET
   handoff:     ${HANDOFF_INBOX:-"(not created; pass --thread-id and --plan-id)"}
+  prompt:      ${RENDERED_PROMPT_ABS:-"(not rendered; pass --render-prompt-out <path>)"}
 
 Hand the codex agent this env:
 

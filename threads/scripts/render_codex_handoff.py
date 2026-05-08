@@ -540,6 +540,13 @@ def main() -> None:
         out_path = Path(args.out).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(rendered)
+        # Print the absolute path prominently to stdout so the human does
+        # not have to hunt for the file (e.g. when the renderer is called
+        # from inside a longer bash workflow). The stderr message is kept
+        # for backward compatibility with callers that already grep for
+        # "rendered to".
+        print(f"Codex handoff prompt written to:")
+        print(f"  {out_path}")
         print(f"rendered to {out_path}", file=sys.stderr)
     else:
         sys.stdout.write(rendered)
