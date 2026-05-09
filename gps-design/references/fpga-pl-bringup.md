@@ -18,7 +18,7 @@ remain portable across all three.
 
 | Platform | OSC | PL sample rate | Decimation chain | PL.DECIMATOR? | PL fabric clock |
 |----------|-----|----------------|------------------|---------------|-----------------|
-| **ZCU102** + AD9986-FMC (Zynq UltraScale+ MPSoC, xczu9eg) | **122.88 MHz** | 4.096 MSPS (post-DDC, via JESD204C) | AD9986 internal CDDC/FDDC: **/30 = /2 × /3 × /5** | **Not instantiated** (AD9986 owns it) | 122.88 MHz (= OSC) |
+| **ZCU102** + AD9986-FMC (Zynq UltraScale+ MPSoC, xczu9eg) | **122.88 MHz** | 4.096 MSPS GPS app boundary; JESD rate is profile-dependent | AD9986 CDDC/FDDC plus PL-side rate conversion; clean L1 profiles use RX `/15` + TX `x30` at 61.44/122.88 MSPS, or `/60` + `x60` at 245.76 MSPS | **Instantiated as profile requires** around the GPS app boundary | Profile-dependent: 61.44/122.88/245.76 MHz boundaries |
 | **Zynq-7030** + FMCOMMS-5 (xc7z030, dual AD9361) | **61.44 MHz** | 61.44 MSPS (LVDS DDR via `axi_ad9361`) | PL.DECIMATOR: **/15 = /3 × /5** | **Instantiated** | MMCM-synth (typ. 100-122.88 MHz) |
 | **Zedboard** + FMCOMMS-5 (xc7z020, dual AD9361) | **61.44 MHz** | 61.44 MSPS (LVDS DDR via `axi_ad9361`) | PL.DECIMATOR: **/15 = /3 × /5** | **Instantiated** | MMCM-synth (typ. 100-122.88 MHz) |
 
@@ -28,10 +28,12 @@ prime factorization (2 × 3 × 5). 100 MHz, 120 MHz, and 125 MHz all
 produce non-integer ratios, which would require fractional decimation
 or fractional NCO error tolerance throughout the chain.
 
-The 3 × 5 = 15 core is shared between the AD9361 and AD9986 paths;
-AD9986 just adds the leading /2 stage. This enables a parametric-N
-PL.DECIMATOR design (one VHDL IP serving multiple platforms via a
-synthesis generic for the decimation factor).
+The 3 x 5 = 15 core is shared between the AD9361 and the verified
+61.44 MSPS AD9986 clean-L1 RX path. AD9986 TX and higher-rate profiles
+need different PL-side factors. Use
+`references/ad9986-gps-nco-frequency-planning.md` for the current
+AD9986 converter-clock, JESD, CDDC/FDDC, CDUC/FDUC, and PL rate-change
+rules before authoring or validating a ZCU102 profile.
 
 ## PL block list (post-2026-04-24)
 

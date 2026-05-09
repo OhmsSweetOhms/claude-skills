@@ -1,6 +1,6 @@
 ---
 name: gps-design
-description: "GPS L1 C/A receiver design, debug, and test for the gps_design project (Python block-level golden model -> bare-metal PS firmware -> Zynq PL VHDL). Use this skill whenever the user is working on the GPS receiver pipeline: acquisition (PCPS FFT), tracking loops (DLL/PLL/FLL with Kaplan coefficients), nav-bit extraction and subframe decode (LNAV), pseudorange anchoring and SV-transmit-time recovery, PVT solver (WLS + Cholesky), antenna geometry and link budget, or weak-signal cislunar extensions. Also triggers on debugging anchor drift, first-fix position error, sf_end_sample_idx attribution, preamble sync, dump_end_sample_idx timing, scenario_engine IQ generation, tx_time_offset_profiles, or the .research session directories for GPS receiver topology. The skill consolidates project-specific knowledge organized by receiver pipeline chapter -- each chapter is a reference file you load on demand. Apply this skill even when the user doesn't explicitly invoke 'GPS' by name, if they're touching any file under gps_receiver/, gps_iq_gen/, or scenario_engine/."
+description: "GPS L1 C/A receiver design, debug, and test for the gps_design project (Python block-level golden model -> bare-metal PS firmware -> Zynq PL VHDL). Use this skill whenever the user is working on the GPS receiver pipeline: acquisition (PCPS FFT), tracking loops (DLL/PLL/FLL with Kaplan coefficients), nav-bit extraction and subframe decode (LNAV), pseudorange anchoring and SV-transmit-time recovery, PVT solver (WLS + Cholesky), antenna geometry and link budget, AD9986/AD9081 front-end NCO/JESD profile planning, or weak-signal cislunar extensions. Also triggers on debugging anchor drift, first-fix position error, sf_end_sample_idx attribution, preamble sync, dump_end_sample_idx timing, scenario_engine IQ generation, tx_time_offset_profiles, ZCU102 AD9986 profile work, or the .research session directories for GPS receiver topology. The skill consolidates project-specific knowledge organized by receiver pipeline chapter -- each chapter is a reference file you load on demand. Apply this skill even when the user doesn't explicitly invoke 'GPS' by name, if they're touching any file under gps_receiver/, gps_iq_gen/, scenario_engine/, or the AD9986/ZCU102 GPS streaming profiles."
 ---
 
 # GPS Design -- L1 C/A Receiver for the gps_design Project
@@ -55,6 +55,7 @@ in the order the data flows through.
 | PVT solver | `references/gps-pvt.md` | Current | PS.B12 WLS + Cholesky, PVTFix contract, firmware-port notes |
 | Antenna geometry | `references/gps-antenna-geometry.md` | Stub | Link budget, off-boresight angle, occultation, cislunar dynamics |
 | FPGA PL bring-up | `references/fpga-pl-bringup.md` | Current | Hardware target matrix (ZCU102/AD9986 + Zynq-7030/Zedboard/AD9361), decimation chain (/30 vs /15 prime cascades), xsim verification convention, HIL-as-system substrate pattern, per-PL-block thread structure, SOCKS conventions |
+| AD9986 GPS NCO planning | `references/ad9986-gps-nco-frequency-planning.md` | Current | 3.93216 GHz clean converter-clock math, L1/L2/L5/Iridium NCO plans, RX CDDC/FDDC vs TX CDUC/FDUC placement, JESD/profile validation checklist |
 
 For project-wide thread sequencing across all active work (not just
 PL), see `gps_receiver/threads/tiered-execution-flow.md` — strategic
@@ -186,8 +187,11 @@ answers are in those directories, not elsewhere.
 These are the project-level constants. Changing them requires
 architectural review, not a block-level tweak.
 
-- **Sample rate:** 61.44 MSPS at AD9361 -> /15 decimation -> 4.096 MSPS
-  (4096 samples per 1 ms code period = 2^12, natural FFT size).
+- **Sample rate:** GPS app boundary is 4.096 MSPS (4096 samples per
+  1 ms code period = 2^12, natural FFT size). AD9361 paths use
+  61.44 MSPS -> /15. AD9986 paths are profile-dependent: clean 61.44
+  L1 uses RX /15 and TX x30 around the PL boundary; clean 245.76 L1
+  uses /60 and x60. See `references/ad9986-gps-nco-frequency-planning.md`.
 - **Data format:** 12-bit I/Q sign-extended to 16-bit (int16 containers).
 - **Quantization:** Dynamic bit-select 12 -> 4 bit (literal bit-slice,
   NOT Lloyd-Max).
