@@ -139,8 +139,7 @@ For a parent directory containing multiple repos:
 **Personal Identifiers (all blocked):**
 - Auto-detected: `$USER`, hostname, git config name/email, home dir
 - Additional patterns from `~/.claude/hooks/fingerprint-identity.txt`
-- Email addresses, street addresses
-- IP addresses (non-private), MAC addresses
+- Email addresses, street addresses, MAC addresses
 
 **Fingerprint Material (all blocked):**
 - Absolute paths containing usernames (`/home/user/`, `/Users/user/`, `/media/user/`)
@@ -150,6 +149,10 @@ For a parent directory containing multiple repos:
 **Disabled rules:**
 - Phone numbers -- removed because VHDL/HDL numeric constants (e.g. `4294967296`,
   `2147483648`) triggered massive false positives across every FPGA project
+- IP addresses -- disabled because vendor manuals, standards documents,
+  firmware versions, section numbers, and RF/network examples created too much
+  noise for the local publishing workflow. Use path allowlists for third-party
+  reference folders and rely on identity/secret checks for actual leaks.
 
 ## Output
 
@@ -189,6 +192,12 @@ For non-git directories, patterns are matched with fnmatch.
 One regex per line. Patterns are matched against **line content** (not
 filenames). Lines matching any pattern are skipped. Use for intentional
 test fixtures or example values only.
+
+**Path allowlist** (`.fingerprint-path-allowlist` in project root or
+`~/.claude/hooks/fingerprint-path-allowlist` globally):
+One fnmatch-style glob per line. Matching files skip generic content rules such
+as emails, street addresses, and MAC addresses, while identity-pattern checks
+still run. Use this for third-party reference material such as `.research/**`.
 
 **Known limitation:** The `.fingerprint-allowlist` file itself is not
 excluded from scanning. Avoid putting literal scannable values (long
