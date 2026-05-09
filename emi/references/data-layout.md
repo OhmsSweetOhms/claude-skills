@@ -113,8 +113,8 @@ shape the same, but make the non-UUT role explicit in `campaign.json`,
 Use the skill helper to scaffold a new test group without touching hardware:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py next 2026-05-08 \
-  --root /media/doogie/Work1/Claude/work/EMI/data \
+python ~/.claude/skills/emi/scripts/init_emi_test_group.py next 2026-05-08 \
+  --root <EMI_REPO>/data \
   --kind uut \
   --method ce102 \
   --method re102 \
@@ -138,8 +138,8 @@ The helper creates:
 For non-UUT data:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py bench_validation 2026-05-08 \
-  --root /media/doogie/Work1/Claude/work/EMI/data \
+python ~/.claude/skills/emi/scripts/init_emi_test_group.py bench_validation 2026-05-08 \
+  --root <EMI_REPO>/data \
   --kind characterization \
   --method rsa \
   --method ce102 \

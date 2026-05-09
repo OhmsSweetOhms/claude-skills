@@ -19,8 +19,8 @@ made portable.
 Example:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py next 2026-05-08 \
-  --root /media/doogie/Work1/Claude/work/EMI/data \
+python ~/.claude/skills/emi/scripts/init_emi_test_group.py next 2026-05-08 \
+  --root <EMI_REPO>/data \
   --kind uut \
   --method ce102 \
   --method re102 \
@@ -33,8 +33,8 @@ python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py next 2026-
 Known UUT example:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 2026-05-08 \
-  --root /media/doogie/Work1/Claude/work/EMI/data \
+python ~/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 2026-05-08 \
+  --root <EMI_REPO>/data \
   --kind uut \
   --method ce102 \
   --method re102
@@ -43,8 +43,8 @@ python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 202
 Non-UUT characterization example:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py bench_validation 2026-05-08 \
-  --root /media/doogie/Work1/Claude/work/EMI/data \
+python ~/.claude/skills/emi/scripts/init_emi_test_group.py bench_validation 2026-05-08 \
+  --root <EMI_REPO>/data \
   --kind characterization \
   --method rsa \
   --method ce102 \
@@ -55,8 +55,8 @@ python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py bench_vali
 Legacy RE102-only example:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_re102_measurement.py RM255 \
-  --root /media/doogie/Work1/Claude/work/EMI/data/re102/measurements \
+python ~/.claude/skills/emi/scripts/init_re102_measurement.py RM255 \
+  --root <EMI_REPO>/data/re102/measurements \
   --uut RM255 \
   --antenna-model TBMA1B \
   --distance-m 1 \

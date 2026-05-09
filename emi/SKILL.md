@@ -6,9 +6,9 @@ description: "EMI/EMC bench automation and MIL-STD-461 measurement workflows for
 # EMI Bench Workflows
 
 Use this skill for the local EMI bench project and related RF measurement work.
-The default project path in Doogie's environment is:
+The default project path is the active EMI repo. In examples, use:
 
-`/media/doogie/Work1/Claude/work/EMI`
+`<EMI_REPO>`
 
 If the task is not in that directory, infer the active repo from `cwd` and
 confirm the expected files exist before acting.
@@ -154,8 +154,8 @@ script is intentionally made portable.
 Current script:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_re102_measurement.py RM255 \
-  --root /media/doogie/Work1/Claude/work/EMI/data/re102/measurements \
+python ~/.claude/skills/emi/scripts/init_re102_measurement.py RM255 \
+  --root <EMI_REPO>/data/re102/measurements \
   --uut RM255 \
   --antenna-model TBMA1B \
   --distance-m 1 \
@@ -167,8 +167,8 @@ python /home/doogie/.claude/skills/emi/scripts/init_re102_measurement.py RM255 \
 Preferred new-work initializer:
 
 ```bash
-python /home/doogie/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 2026-05-08 \
-  --root /media/doogie/Work1/Claude/work/EMI/data \
+python ~/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 2026-05-08 \
+  --root <EMI_REPO>/data \
   --kind uut \
   --method ce102 \
   --method re102 \

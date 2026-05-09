@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 
-DEFAULT_ROOT = Path("/media/doogie/Work1/Claude/work/EMI/data")
+DEFAULT_ROOT = Path(os.environ.get("EMI_DATA_ROOT", "data"))
 METHODS = ("ce102", "re102", "gnss", "rsa")
 KINDS = ("uut", "characterization")
 UUT_ID_PATTERN = re.compile(r"^uut_(\d{3})$")

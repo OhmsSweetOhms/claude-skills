@@ -1,0 +1,18 @@
+# Repository-wide false positives for public examples and technical references.
+# Keep patterns indirect so this file does not trigger the scanner itself.
+
+# Generic example paths in the fingerprint skill.
+.*`/h[o]me/[a-z]+/`, `/Users/[a-z]+/`, `/m[e]dia/[a-z]+/`.*
+.*/h[o]me/username/project/path==>.*
+.*/m[e]dia/username/drive/path==>.*
+.*echo "/h[o]me/user/path==>[.]/" > /tmp/replacements.*
+
+# Existing project-root examples in the code-survey skill.
+.*/m[e]dia/[^/]+/Work1/Claude/work/gps_design/.*
+.*/m[e]dia/[^/]+/Work1/Claude/.*
+
+# Standards sections, firmware versions, and hardware-clock prose.
+.*MIL-STD-461F 5[.]5[.]3[.]4.*
+.*2[.]01[.]01[.]35R3B2.*
+.*61[.]44 M[H]z PL link clock.*
+.*PL\\[.]B\\d\\+\\(-B\\d\\+\\)\\? for PL blocks.*
