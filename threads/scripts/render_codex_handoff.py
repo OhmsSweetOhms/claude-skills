@@ -502,7 +502,21 @@ def main() -> None:
     parser.add_argument(
         "--out",
         default=None,
-        help="Output path for the rendered prompt. Default: stdout",
+        help=(
+            "Output path for the rendered prompt. Default: "
+            "<worktree>/codex-handoff/<plan-id>/prompt.md (the codex "
+            "handoff inbox, where the prompt lives alongside the inbox "
+            "README and Codex's future handback.{json,md} + scripts/ "
+            "+ temp/ + artifacts/). Pass --stdout to print instead."
+        ),
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help=(
+            "Print the rendered prompt to stdout instead of writing it "
+            "to a file. Useful for inspection or piping into a viewer."
+        ),
     )
     args = parser.parse_args()
 
@@ -536,8 +550,24 @@ def main() -> None:
         adjacent_threads=adjacent,
     )
 
-    if args.out:
-        out_path = Path(args.out).resolve()
+    if args.stdout:
+        sys.stdout.write(rendered)
+    else:
+        if args.out:
+            out_path = Path(args.out).resolve()
+        else:
+            # Default destination: the codex handoff inbox at
+            # <worktree>/codex-handoff/<plan-id>/prompt.md. Per the
+            # threads-skill convention documented in
+            # references/codex-handoff.md and references/codex-handback.md,
+            # the inbox is the single place where everything Codex
+            # reads or writes lives -- prompt + README + handback +
+            # session-created scripts/temp/artifacts. Defaulting here
+            # keeps the handoff infrastructure self-contained in the
+            # worktree branch, avoiding a split where the prompt sits
+            # in the thread directory while the handback lands in the
+            # worktree.
+            out_path = (worktree / "codex-handoff" / args.plan_id / "prompt.md").resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(rendered)
         # Print the absolute path prominently to stdout so the human does
@@ -548,8 +578,6 @@ def main() -> None:
         print(f"Codex handoff prompt written to:")
         print(f"  {out_path}")
         print(f"rendered to {out_path}", file=sys.stderr)
-    else:
-        sys.stdout.write(rendered)
 
 
 if __name__ == "__main__":

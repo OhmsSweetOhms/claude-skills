@@ -82,24 +82,37 @@ lives.
 
 ### Handoff inbox and handback visibility before merge-back
 
-Each Codex run writes session output under the worktree root:
+Each thread's worktree has a single inbox per plan hop. The inbox is
+the canonical location for everything Codex reads or writes — prompt,
+README, handback, and session-created scripts/temp/artifacts. Splitting
+the handoff infrastructure across two repos (e.g. prompt in
+`.threads/`, handback in the worktree) is an anti-pattern that creates
+drift; the inbox keeps it self-contained.
 
 ```text
 <worktree>/codex-handoff/<plan-id>/
-  README.md
-  handback.json
-  handback.md
-  scripts/
-  temp/
-  artifacts/
+  README.md          (main-session-written: inbox description, who writes what)
+  prompt.md          (main-session-written: curated launch prompt; Codex's input)
+  handback.json      (Codex-written: machine-readable closure record)
+  handback.md        (Codex-written: human-readable companion)
+  scripts/           (Codex-written: throwaway probes, debug tests, helpers)
+  temp/              (Codex-written: bulky or disposable generated working files)
+  artifacts/         (Codex-written: curated evidence cited by the handback)
 ```
 
-`scripts/` holds throwaway probes, debug tests, and helpers.
-`temp/` holds bulky or disposable generated working files.
-`artifacts/` holds curated evidence cited by the handback. The main
-session reads this inbox after Codex exits and promotes only durable
-material into `.threads/`, tracked `data/`, permanent tests, or
-follow-up plans.
+The main session populates `README.md` (from
+`assets/templates/codex-handoff-dir-README.md`) and `prompt.md`
+(rendered via `scripts/render_codex_handoff.py`) BEFORE launching
+Codex. The render script defaults its output path to this inbox at
+`<worktree>/codex-handoff/<plan-id>/prompt.md` — operators do not
+need to specify `--out` for the canonical placement; passing
+`--stdout` overrides for inspection only.
+
+Codex writes the handback and session-created material during the
+run. Main session reads after Codex exits, runs
+`scripts/triage_codex_handback.py` for first-pass classification, and
+promotes durable material into `.threads/`, tracked `data/`,
+permanent tests, or follow-up plans.
 
 Handback files are written on the Codex worktree branch. They do not
 appear in the main checkout until terminal merge-back unless the main

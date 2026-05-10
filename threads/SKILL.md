@@ -93,6 +93,18 @@ a stale snapshot. The bootstrap script invoked from the plan does
 everything the inline spec would have specified, but stays current
 when the skill updates.
 
+**Prompt and handback share the inbox.** The rendered Codex launch
+prompt belongs in the same `<worktree>/codex-handoff/<plan-id>/`
+directory as the handback Codex will write back. The render script
+(`scripts/render_codex_handoff.py`) defaults its `--out` to
+`<worktree>/codex-handoff/<plan-id>/prompt.md` — operators should
+not redirect it into the gps_design `.threads/` directory. Splitting
+prompt and handback across two repos creates a maintenance burden
+(two locations to sync, drift between them, references that go stale
+when one side moves). Keep the handoff infrastructure self-contained
+in the worktree branch; on terminal merge-back, the inbox lands on
+`socks/main` (or equivalent) as a single coherent unit.
+
 ## Operations — dispatch table
 
 When the user's request matches one of these, follow the named
