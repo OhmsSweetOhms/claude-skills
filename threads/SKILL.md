@@ -70,6 +70,28 @@ the root worktree handoff inbox (`codex-handoff/<plan-id>/` with
 `handback.json`, `handback.md`, `scripts/`, `temp/`, and
 `artifacts/`), the recording discipline, lifecycle visibility rules,
 and the consumer triage step before merge-back or next-hop activation.
+The full workflow (bootstrap, prompt rendering, merge-back) lives in
+`references/codex-handoff.md`, with templates under `assets/templates/`
+(`codex-handoff-dir-README.md` for the inbox README,
+`codex-handback-template.md` for handback.md,
+`codex-handoff-prompt.md` for the agent prompt scaffold,
+`codex-handback-retroactive-prompt.md` for recovery cases), the JSON
+schema at `assets/schemas/codex-handback.schema.json`, and supporting
+scripts at `scripts/` (`bootstrap_codex_worktree.sh`,
+`render_codex_handoff.py`, `triage_codex_handback.py`,
+`merge_codex_worktree_back.sh`).
+
+**Discipline:** when authoring a plan doc that includes Codex
+execution steps, *reference this workflow rather than restating its
+conventions inline*. Plans should point at the workflow ("per the
+Codex worktree handoff in `references/codex-handoff.md` and handback
+contract in `references/codex-handback.md`") and let the templates
++ schema + scripts handle scaffolding. Inlining the inbox layout,
+handback schema fields, or recording discipline in plan docs leads
+to drift — the skill evolves the contract while the plan doc holds
+a stale snapshot. The bootstrap script invoked from the plan does
+everything the inline spec would have specified, but stays current
+when the skill updates.
 
 ## Operations — dispatch table
 
