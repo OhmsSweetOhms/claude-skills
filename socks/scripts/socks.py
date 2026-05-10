@@ -262,6 +262,31 @@ def find_python_tb(project_dir):
     return None
 
 
+def find_hil_stage17_elf(project_dir):
+    """Return a Stage 17 firmware ELF from either native or no-OS HIL flows."""
+    hil_dir = os.path.join(project_dir, "build", "hil")
+    legacy = os.path.join(hil_dir, "vitis_ws", "hil_app", "Debug",
+                          "hil_app.elf")
+    if os.path.isfile(legacy):
+        return legacy
+
+    state_path = os.path.join(project_dir, "build", "state", "no-os-make.json")
+    if os.path.isfile(state_path):
+        try:
+            with open(state_path) as f:
+                state = json.load(f)
+            elf = state.get("artifacts", {}).get("elf")
+            if elf and os.path.isfile(elf):
+                return elf
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    for candidate in sorted(glob.glob(os.path.join(hil_dir, "no_os", "*.elf"))):
+        if os.path.basename(candidate) != "fsbl.elf":
+            return candidate
+    return None
+
+
 def _has_dynamic_required(project_dir, stage_num):
     """True if project.json has required_files for this stage."""
     state_file = os.path.join(project_dir, "build", "state", "project.json")
@@ -809,9 +834,8 @@ def main() -> int:
             if not bit_files:
                 bit_files = glob.glob(os.path.join(project_dir, "build",
                                                    "vivado_project", "*.runs", "impl_1", "*.bit"))
-            elf = os.path.join(project_dir, "build", "hil",
-                               "vitis_ws", "hil_app", "Debug", "hil_app.elf")
-            if not bit_files or not os.path.isfile(elf):
+            elf = find_hil_stage17_elf(project_dir)
+            if not bit_files or not elf:
                 return [], "Missing bitstream or ELF -- run Stages 15-16 first", 1
             extra_args = ["--project-dir", project_dir]
             reason = "Program board + run HIL test"
