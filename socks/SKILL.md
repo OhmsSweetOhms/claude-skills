@@ -250,6 +250,8 @@ plan authoring, and troubleshooting.
 
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
 
+**For DSP rate-conversion / FIR / multi-rate designs:** read `references/dsp/rate-conversion.md` before Stage 1.
+
 **VCD-based trigger plan generation:** If `ila_trigger_plan.json` doesn't exist
 or needs regeneration, run `scripts/hil/gen_trigger_plan.py` to auto-generate
 from VCD data (see `references/hil.md` § "Auto-Generating Trigger Plans from VCD").
