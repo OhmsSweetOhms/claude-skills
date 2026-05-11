@@ -8,8 +8,11 @@ and flags potential timing issues.
 Usage:
     python scripts/architecture.py src/*.vhd
     python scripts/architecture.py --top my_module src/my_module.vhd
+    python scripts/architecture.py --project-dir .         (greenfield)
 
-Exit code 0 always (advisory output only).
+Exit codes:
+    0 -- analysis complete (or greenfield with docs/ARCHITECTURE.md present)
+    2 -- WAITING: greenfield with no docs/ARCHITECTURE.md (re-run after authoring)
 """
 
 import argparse
@@ -262,12 +265,42 @@ def render_mermaid(project_dir):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 1: Architecture Analysis")
-    parser.add_argument("files", nargs="+", help="VHDL source files to analyze")
+    parser.add_argument("files", nargs="*",
+                        help="VHDL source files to analyze (zero ok for greenfield)")
     parser.add_argument("--top", type=str, default=None,
                         help="Top-level entity name (for summary)")
+    parser.add_argument("--project-dir", type=str, default=None,
+                        help="Project directory (for greenfield ARCHITECTURE.md check "
+                             "and Mermaid render); defaults to cwd")
     args = parser.parse_args()
 
     print_header("SOCKS Stage 1 -- Architecture Analysis")
+
+    project_dir = args.project_dir or (
+        os.path.dirname(os.path.dirname(os.path.abspath(args.files[0])))
+        if args.files else os.getcwd()
+    )
+
+    if not args.files:
+        # Greenfield: no VHDL to analyze. Stage-1 guidance shape is
+        # docs/ARCHITECTURE.md -- if Claude already authored it, pass cleanly
+        # so downstream stages can run; otherwise WAIT for authoring.
+        arch_md = os.path.join(project_dir, "docs", "ARCHITECTURE.md")
+        if os.path.isfile(arch_md):
+            print(f"\n  Greenfield: no VHDL files in src/.")
+            print(f"  {os.path.relpath(arch_md, project_dir)} present "
+                  f"-- will guide subsequent RTL authoring.")
+            render_mermaid(project_dir)
+            print()
+            print_separator()
+            print("  Stage 1 complete (greenfield) -- "
+                  "review docs/ARCHITECTURE.md before writing VHDL")
+            print_separator()
+            return 0
+        print(f"\n  {yellow('Greenfield: no VHDL files and no docs/ARCHITECTURE.md.')}")
+        print(f"  Author docs/ARCHITECTURE.md "
+              f"(read references/architecture-diagrams.md) and re-run.")
+        return 2
 
     for filepath in args.files:
         if not os.path.isfile(filepath):
@@ -275,12 +308,7 @@ def main() -> int:
             continue
         analyze_file(filepath)
 
-    # Render Mermaid PNGs if docs/ARCHITECTURE.md exists
-    # Derive project dir: files are in src/, go up one level
-    if args.files:
-        first_file = os.path.abspath(args.files[0])
-        project_dir = os.path.dirname(os.path.dirname(first_file))
-        render_mermaid(project_dir)
+    render_mermaid(project_dir)
 
     print()
     print_separator()

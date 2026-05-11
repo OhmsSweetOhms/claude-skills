@@ -633,10 +633,14 @@ def main() -> int:
                 extra_args = list(files)
                 if args.top:
                     extra_args = ["--top", args.top] + extra_args
+                # Always pass --project-dir so architecture.py can do the
+                # greenfield docs/ARCHITECTURE.md check and Mermaid render.
+                extra_args.extend(["--project-dir", project_dir])
                 if files:
                     reason = f"Parse {len(files)} VHDL file(s), estimate DSP/resource usage"
                 else:
-                    reason = "Greenfield -- no VHDL yet, guidance creates ARCHITECTURE.md"
+                    reason = ("Greenfield -- no VHDL yet; architecture.py checks "
+                              "for docs/ARCHITECTURE.md (PASS if present, WAITING if not)")
 
         elif stage == 3:
             files = args.files or find_vhdl_files(project_dir)
