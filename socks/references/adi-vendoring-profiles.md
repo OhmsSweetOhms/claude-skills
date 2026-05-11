@@ -48,6 +48,32 @@ include:
 - `AD9081_TX_JESD_MODE 9`
 - `AD9081_RX_JESD_MODE 10`
 
+For ADI MxFE profiles that change JESD lane rates or FPGA GT refclks, also
+check the generated `util_mxfe_xcvr` GT parameters against cached GT Wizard
+references before spending a hardware run:
+
+```bash
+python3 ~/.claude/skills/socks/scripts/hil/adxcvr_gt_param_check.py \
+  --project-dir systems/zcu102-gps-streaming
+```
+
+Use explicit rates when evaluating a candidate profile that is not yet
+materialized into the Vivado BD:
+
+```bash
+python3 ~/.claude/skills/socks/scripts/hil/adxcvr_gt_param_check.py \
+  --project-dir systems/zcu102-gps-streaming \
+  --rx-lane-rate 1.6384 \
+  --tx-lane-rate 3.2768 \
+  --refclk-mhz 204.8
+```
+
+Treat `needs per-channel/split util or lane-rate retarget` as a real HDL
+architecture warning: shared CPLL fields do not support one global
+`util_mxfe_xcvr` setting for the selected RX/TX rates. Treat
+`likely RX CDR-only issue` as a narrower receive-side transceiver/CDR debug
+item.
+
 The end-to-end gate is real hardware validation:
 
 ```bash
