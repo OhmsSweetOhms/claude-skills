@@ -14,6 +14,43 @@ Module and block scope discovery is in `references/discovery.md`.
 5. Claude creates `socks.json` with scope, board, and sub-design info
 6. Once approved, Claude runs Stage 0+ pipeline
 
+**Discovery is iterative, not a one-shot interview.** Treat the
+question list as a coverage check; initial answers to clock,
+interface, and IP-configuration questions may surface load-bearing
+wrong assumptions that only become visible when downstream questions
+are attempted. Revisit earlier answers when investigation reveals
+conflicts (e.g., "the clock comes from external pin X" can become
+"the clock is on-chip `tx_device_clk` from the existing JESD core"
+once the BD overlay is sketched against the real project).
+
+---
+
+## Greenfield vs Delta Discovery
+
+The core questions below assume a greenfield system. When the system
+already exists (adding a new BD overlay, integrating a new IP into an
+existing project, or extending a previously-discovered system), treat
+the questions as a **coverage check on the delta**, not a fresh
+interview:
+
+- **Q1, Q2** (system name + board) are answered by the existing
+  project. Read its `socks.json` + `docs/DESIGN-INTENT.md` to capture
+  the answers; do not re-ask.
+- **Q3-Q9** still apply, but only for what the new work adds, removes,
+  or reconfigures. Use the existing project's BD source (e.g.,
+  `post_bd_mods.tcl` for `adi_make` flow, `create_bd.tcl` for
+  Claude-authored flow) as the baseline; the new discovery captures
+  the diff.
+- **Q10** (success criteria) becomes per-hop close criteria. The hop's
+  plan doc may serve as the design-intent artifact instead of a fresh
+  `docs/DESIGN-INTENT.md`, or you may author a delta-named doc
+  (e.g., `docs/DESIGN-INTENT-<feature>.md`).
+
+Sub-designs from a prior hop that the new hop references read-only
+are tracked the same way as forward sub-designs (entry in
+`socks.json::sub_designs[]` or cross-thread reference in the plan
+doc).
+
 ---
 
 ## Core Questions
