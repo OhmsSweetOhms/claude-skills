@@ -35,9 +35,9 @@ Usage:
         --thread-id receiver/20260427-chi-square-raim-design \\
         --plan-id plan-03b
 
-Compare with `render_codex_handoff.py` (Path A): that script produces a
-hand-curate-required scaffold file. This script produces a copy-paste
-launch packet inline.
+The plan file is the launch prompt. This script produces a copy-paste
+launch packet inline that points Codex at the plan file and states the
+two generic operational rules (don't push, write structured handback).
 """
 
 from __future__ import annotations

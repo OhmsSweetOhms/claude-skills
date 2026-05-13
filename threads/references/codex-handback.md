@@ -16,14 +16,15 @@ treated as evidence after the session ends.
 The handoff prompt tells Codex what to do. The handback tells the
 main session what happened.
 
-Template relationship:
+Launch path → handback emission:
 
 ```text
-assets/templates/codex-handoff-prompt.md
-  includes assets/templates/recording-discipline.md
-  points Codex at:
-    assets/schemas/codex-handback.schema.json
-    assets/templates/codex-handback-template.md
+scripts/emit_codex_launch_packet.py
+  emits launch packet pointing Codex at:
+    <thread-dir>/<plan-NN>-*.md          (the plan file IS the launch prompt)
+    assets/templates/recording-discipline.md   (4-buckets recording rule)
+    assets/templates/codex-handback-template.md (handback Markdown skeleton)
+    assets/schemas/codex-handback.schema.json   (handback JSON schema)
 
 Codex emits:
   <worktree>/codex-handoff/<plan-id>/handback.json

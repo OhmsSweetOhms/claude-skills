@@ -139,10 +139,13 @@ the layout.
    - Bootstrap the worktree with
      `scripts/bootstrap_codex_worktree.sh <slug>`.
    - Paste the emitted `codex_worktrees[]` entry into `thread.json`.
-   - Render the first prompt scaffold with `--render-prompt-out` or
-     `scripts/render_codex_handoff.py`.
-   - Hand-curate every `HAND-CURATE` marker before showing the prompt
-     to the user or pasting it into Codex.
+   - Flesh out the plan file (`plan-01-<slug>.md`) per the tiered
+     template at `assets/templates/plan-01-template.md`. The plan
+     file IS the launch prompt; both base sections (always) and
+     Codex add-on sections below the divider (since this hop hands
+     off to Codex) must contain non-placeholder content.
+   - Emit the launch packet with `scripts/emit_codex_launch_packet.py`
+     when ready to launch Codex.
 
    If the user explicitly defers worktree creation, add a short note
    to the first `handoff.md` session-log entry so a future session
@@ -188,10 +191,11 @@ deserves its own plan rather than appending to the current one.
   instruct codex to branch off `main` for the new hop. The new
   hop's source work stacks on top of the existing worktree-branch
   HEAD as a fresh codex run against the same worktree (same
-  `cd <worktree> && source .envrc && codex` invocation, new handoff
-  scaffold rendered with `scripts/render_codex_handoff.py` and then
-  hand-curated before launch. `BASE_COMMIT_SHA` is the worktree
-  branch's current HEAD, not `origin/main`).
+  `cd <worktree> && source .envrc && codex` invocation, new launch
+  packet emitted with `scripts/emit_codex_launch_packet.py` after
+  the new plan file is fleshed out per the tiered template.
+  `BASE_COMMIT_SHA` is the worktree branch's current HEAD, not
+  `origin/main`).
 
 **Steps:**
 

@@ -10,9 +10,9 @@ stays self-contained in the worktree branch.
 Main session writes here BEFORE Codex launch:
 
 - `README.md` — this file (inbox description, who writes what)
-- `prompt.md` — curated launch prompt; pasted into Codex's first message
-  (rendered via `~/.claude/skills/threads/scripts/render_codex_handoff.py`,
-  which defaults its output to this inbox)
+- `prompt.md` — launch packet from `~/.claude/skills/threads/scripts/emit_codex_launch_packet.py`;
+  the plan file at `.threads/{{THREAD_ID}}/<plan-NN>-*.md` IS the launch prompt,
+  and this packet carries the six mechanical facts that point Codex at it
 
 Codex writes here DURING/AFTER the run:
 

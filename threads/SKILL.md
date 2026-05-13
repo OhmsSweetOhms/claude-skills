@@ -70,16 +70,26 @@ the root worktree handoff inbox (`codex-handoff/<plan-id>/` with
 `handback.json`, `handback.md`, `scripts/`, `temp/`, and
 `artifacts/`), the recording discipline, lifecycle visibility rules,
 and the consumer triage step before merge-back or next-hop activation.
-The full workflow (bootstrap, prompt rendering, merge-back) lives in
+The full workflow (bootstrap, launch, merge-back) lives in
 `references/codex-handoff.md`, with templates under `assets/templates/`
 (`codex-handoff-dir-README.md` for the inbox README,
 `codex-handback-template.md` for handback.md,
-`codex-handoff-prompt.md` for the agent prompt scaffold,
 `codex-handback-retroactive-prompt.md` for recovery cases), the JSON
 schema at `assets/schemas/codex-handback.schema.json`, and supporting
 scripts at `scripts/` (`bootstrap_codex_worktree.sh`,
-`render_codex_handoff.py`, `triage_codex_handback.py`,
+`emit_codex_launch_packet.py`, `triage_codex_handback.py`,
 `merge_codex_worktree_back.sh`).
+
+**The plan file IS the launch prompt.** When a plan hop launches Codex,
+the plan file at `.threads/<thread-id>/<plan-NN>-*.md` is the design
+artifact Codex consumes as turn 1. No separate prompt scaffold exists.
+`scripts/emit_codex_launch_packet.py` packages the six mechanical
+facts (plan-file absolute path, worktree, branch, base SHA, handback
+inbox, thread/plan IDs) plus two generic operational rules (don't push,
+write structured handback) that the user pastes into Codex's sidecar
+terminal at turn 1. The plan must be fleshed out per the tiered
+template before launch — base sections always filled, Codex add-ons
+below the divider filled when the hop is a Codex hop.
 
 **Discipline:** when authoring a plan doc that includes Codex
 execution steps, *reference this workflow rather than restating its
@@ -93,17 +103,16 @@ a stale snapshot. The bootstrap script invoked from the plan does
 everything the inline spec would have specified, but stays current
 when the skill updates.
 
-**Prompt and handback share the inbox.** The rendered Codex launch
-prompt belongs in the same `<worktree>/codex-handoff/<plan-id>/`
-directory as the handback Codex will write back. The render script
-(`scripts/render_codex_handoff.py`) defaults its `--out` to
-`<worktree>/codex-handoff/<plan-id>/prompt.md` — operators should
-not redirect it into the gps_design `.threads/` directory. Splitting
-prompt and handback across two repos creates a maintenance burden
-(two locations to sync, drift between them, references that go stale
-when one side moves). Keep the handoff infrastructure self-contained
-in the worktree branch; on terminal merge-back, the inbox lands on
-`socks/main` (or equivalent) as a single coherent unit.
+**Prompt and handback share the inbox.** The Codex launch packet
+belongs in the same `<worktree>/codex-handoff/<plan-id>/` directory
+as the handback Codex will write back. `scripts/emit_codex_launch_packet.py`
+writes its output to `<worktree>/codex-handoff/<plan-id>/prompt.md`
+when `--out` is supplied. Splitting prompt and handback across two
+repos creates a maintenance burden (two locations to sync, drift
+between them, references that go stale when one side moves). Keep the
+handoff infrastructure self-contained in the worktree branch; on
+terminal merge-back, the inbox lands on `socks/main` (or equivalent)
+as a single coherent unit.
 
 ## Operations — dispatch table
 
@@ -124,7 +133,6 @@ section in `references/workflows.md`:
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
 | "Link this research session to the thread" / "wire up the research back-pointer" | **Link research** |
 | "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |
-| "Give me the launch facts" / "minimal launch packet" / "skip the scaffold" / "just print the codex launch path" / "I don't want hand-curation" | **Codex worktree handoff — Path B (minimal launch packet)** (`references/codex-handoff.md`) |
 | "Recover a missing codex handback" / "retroactive handback" / "closed plan has no handback" | **Retroactive handback** (`references/codex-handoff.md`) |
 | "Triage codex handback findings" / "process codex handback" / "classify handback follow-ons" | **Process codex handback** (`references/codex-handoff.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
@@ -142,11 +150,11 @@ plan progresses, and merge back to `main` exactly once at thread
 close — and only when the user explicitly requests it. The
 merge-back script never auto-merges; it shows the incoming diff and
 prompts for confirmation. See `references/codex-handoff.md` for the
-full workflow, the pre-built bootstrap / scaffold-render / merge-back
-scripts under `scripts/`, and the agent-prompt scaffold template
-under `assets/templates/codex-handoff-prompt.md`. The renderer fills
-mechanical boilerplate only; the main agent must replace every
-`HAND-CURATE` marker before launch.
+full workflow and the pre-built bootstrap / launch-packet / merge-back
+scripts under `scripts/`. The plan file at
+`.threads/<thread-id>/<plan-NN>-*.md` is the launch prompt; the
+launch packet (`scripts/emit_codex_launch_packet.py`) emits the six
+mechanical facts pointing Codex at it.
 
 ## Integration with `/research`
 
@@ -290,10 +298,6 @@ Templates:
 - `findings-template.md` — snapshot skeleton.
 - `external-comment-template.md` — verbatim + triage scaffold.
 - `temp-README.md` — regeneration-commands scaffold.
-- `codex-handoff-prompt.md` — Codex worktree prompt scaffold.
-  `render_codex_handoff.py` substitutes mechanical worktree/thread
-  values and leaves `HAND-CURATE` markers for the main agent to
-  author.
 - `codex-handback-retroactive-prompt.md` — recovery prompt for a
   closed or already-executed plan hop that lacks structured
   handback artifacts.

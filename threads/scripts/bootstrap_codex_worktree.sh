@@ -11,7 +11,6 @@
 # Usage:
 #   bash bootstrap_codex_worktree.sh <thread-slug> [--repo <path>] [--branch <name>]
 #       [--thread-id <subsystem/YYYYMMDD-slug>] [--plan-id plan-NN]
-#       [--render-prompt-out <path>] [--adjacent-threads <path>]
 #
 # Defaults:
 #   --repo:   git rev-parse --show-toplevel (current main checkout)
@@ -21,7 +20,7 @@
 #   - worktree path, branch, base commit, venv link target
 #   - JSON snippet to paste into the thread's thread.json (first creation only)
 #   - root codex-handoff/<plan-id>/ inbox when the plan id is known
-#   - optional codex handoff scaffold path when --render-prompt-out is used
+#   - sidecar terminal invocation + emit_codex_launch_packet.py command
 
 set -euo pipefail
 
@@ -30,8 +29,6 @@ REPO=""
 BRANCH=""
 THREAD_ID=""
 PLAN_ID=""
-RENDER_PROMPT_OUT=""
-ADJACENT_THREADS=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HANDOFF_INBOX=""
 
@@ -41,8 +38,6 @@ while [ $# -gt 0 ]; do
         --branch)            BRANCH="$2"; shift 2 ;;
         --thread-id)         THREAD_ID="$2"; shift 2 ;;
         --plan-id)           PLAN_ID="$2"; shift 2 ;;
-        --render-prompt-out) RENDER_PROMPT_OUT="$2"; shift 2 ;;
-        --adjacent-threads)  ADJACENT_THREADS="$2"; shift 2 ;;
         --help|-h)           sed -n '2,23p' "$0"; exit 0 ;;
         -*)                  echo "unknown flag: $1" >&2; exit 2 ;;
         *)                   SLUG="$1"; shift ;;
@@ -215,41 +210,6 @@ else
     echo "handoff inbox not created: pass --thread-id and --plan-id to prepare codex-handoff/<plan-id>." >&2
 fi
 
-if [ -n "$RENDER_PROMPT_OUT" ]; then
-    if [ -z "$THREAD_ID" ]; then
-        echo "cannot render prompt scaffold: pass --thread-id <subsystem/YYYYMMDD-slug>" >&2
-        exit 2
-    fi
-    if [ -z "$PLAN_ID" ]; then
-        echo "cannot render prompt scaffold: pass --plan-id plan-NN" >&2
-        exit 2
-    fi
-
-    RENDER_CMD=(
-        python3 "$SCRIPT_DIR/render_codex_handoff.py"
-        --main-repo "$REPO"
-        --worktree-path "$WORKTREE"
-        --thread-id "$THREAD_ID"
-        --plan-id "$PLAN_ID"
-        --out "$RENDER_PROMPT_OUT"
-    )
-    if [ -n "$ADJACENT_THREADS" ]; then
-        RENDER_CMD+=(--adjacent-threads "$ADJACENT_THREADS")
-    fi
-    "${RENDER_CMD[@]}"
-fi
-
-if [ -n "$RENDER_PROMPT_OUT" ]; then
-    # Resolve to an absolute path so the human doesn't have to hunt or
-    # mentally combine cwd + relative path. Falls back to the literal
-    # value if `realpath -m` (or the file's parent) is unavailable.
-    if command -v realpath >/dev/null 2>&1; then
-        RENDERED_PROMPT_ABS="$(realpath -m "$RENDER_PROMPT_OUT" 2>/dev/null || echo "$RENDER_PROMPT_OUT")"
-    else
-        RENDERED_PROMPT_ABS="$RENDER_PROMPT_OUT"
-    fi
-fi
-
 cat <<EOF
 
 Done. Worktree ready.
@@ -259,29 +219,25 @@ Done. Worktree ready.
   base commit: ${BASE_COMMIT} ($(git -C "$WORKTREE" log -1 --format=%s 2>/dev/null || echo '?'))
   venv:        $VENV_LINK -> $VENV_TARGET
   handoff:     ${HANDOFF_INBOX:-"(not created; pass --thread-id and --plan-id)"}
-  prompt:      ${RENDERED_PROMPT_ABS:-"(not rendered; pass --render-prompt-out <path>)"}
 
-Hand the codex agent this env:
+To launch codex against this worktree (sidecar terminal):
 
   cd "$WORKTREE"
   source .envrc
+  codex
 
-Then paste the hand-curated codex-handoff prompt. Generate the
-scaffold with --render-prompt-out, or run:
+Generate the launch packet to paste at Codex turn 1:
 
-  python3 ~/.claude/skills/threads/scripts/render_codex_handoff.py \\
+  python3 ~/.claude/skills/threads/scripts/emit_codex_launch_packet.py \\
       --main-repo "$REPO" \\
-      --worktree-path "$WORKTREE" \\
       --thread-id "<subsystem/YYYYMMDD-slug>" \\
       --plan-id "<plan-NN>" \\
-      --out ".threads/<subsystem>/<YYYYMMDD-slug>/codex-handoff-<plan-NN>.md"
+      --out "$WORKTREE/codex-handoff/<plan-NN>/prompt.md"
 
-Before launch, make sure the worktree has:
-
-  "$WORKTREE/codex-handoff/<plan-NN>/"
-
-The bootstrap script creates it automatically when it knows --plan-id.
-Replace every HAND-CURATE marker before pasting the prompt to codex.
+The plan file at .threads/<thread-id>/<plan-NN>-*.md IS the launch
+prompt; the packet carries the six mechanical facts pointing Codex
+at it. The plan must be fleshed out per the tiered template
+(plan-01-template.md) before launch.
 
 EOF
 

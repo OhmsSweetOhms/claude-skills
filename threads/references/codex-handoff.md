@@ -7,9 +7,9 @@ bookkeeping on `main`.
 Two workflows, mirroring the dispatch table in `SKILL.md`:
 
 - **Codex worktree handoff** — set up an isolated worktree at thread
-  inception (idempotent; safe to re-run), render the agent-prompt
-  scaffold, hand-curate the substantive sections, then hand it off.
-  Re-invokeable across the thread's plan hops.
+  inception (idempotent; safe to re-run), emit the launch packet
+  pointing Codex at the plan file, then hand it off. Re-invokeable
+  across the thread's plan hops. The plan file IS the launch prompt.
 - **Codex worktree merge-back** — run **once**, only at thread close,
   and **only on explicit user request**. Merges the long-lived
   worktree branch into `main`.
@@ -102,11 +102,11 @@ drift; the inbox keeps it self-contained.
 
 The main session populates `README.md` (from
 `assets/templates/codex-handoff-dir-README.md`) and `prompt.md`
-(rendered via `scripts/render_codex_handoff.py`) BEFORE launching
-Codex. The render script defaults its output path to this inbox at
-`<worktree>/codex-handoff/<plan-id>/prompt.md` — operators do not
-need to specify `--out` for the canonical placement; passing
-`--stdout` overrides for inspection only.
+(emitted via `scripts/emit_codex_launch_packet.py`) BEFORE launching
+Codex. The emitter writes its output to
+`<worktree>/codex-handoff/<plan-id>/prompt.md` when `--out` is
+supplied; without `--out`, it prints the packet to stdout for
+inspection or direct paste.
 
 Codex writes the handback and session-created material during the
 run. Main session reads after Codex exits, runs
@@ -159,17 +159,17 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 
 - The thread exists at `.threads/<subsystem>/<YYYYMMDD>-<slug>/` and
   has an active plan with a clear next-step bullet list in
-  `handoff.md` "What the next session should do first". If those
-  bullets are vague, sharpen them before starting — the hand-curated
-  codex prompt uses them as source material.
+  `handoff.md` "What the next session should do first".
 - The main checkout has a usable `.venv` (else the symlink trick
   doesn't help — the agent will fall back to the system Python and
   hit the SciPy/NumPy ABI trap from issue #1).
 - `git fetch origin main` succeeds (else bootstrap can't cut a
   fresh-from-`origin/main` branch).
-- The current plan hop has enough raw material for the main agent to
-  author a launch prompt. The renderer creates a scaffold; it does
-  not infer task scope, deliverables, tests, or constraints.
+- The plan file at `.threads/<thread-id>/<plan-NN>-*.md` is fleshed
+  out per the tiered template (`assets/templates/plan-01-template.md`):
+  base sections always filled, Codex add-ons below the divider filled
+  when the hop is a Codex hop. The plan IS the launch prompt; the
+  launch packet only adds mechanical facts.
 
 **Steps:**
 
@@ -220,115 +220,57 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    python3 ~/.claude/skills/threads/scripts/index_threads_research.py
    ```
 
-4. **Render the scaffold, then hand-curate the codex prompt.** If
-   step 2 did not use `--render-prompt-out`, run:
+4. **Emit the launch packet.** Run:
    ```bash
-   python3 ~/.claude/skills/threads/scripts/render_codex_handoff.py \
+   python3 ~/.claude/skills/threads/scripts/emit_codex_launch_packet.py \
        --main-repo . \
-       --worktree-path ../gps_design-chi-square-raim-design \
-       --thread-id receiver/20260427-chi-square-raim-design \
-       --plan-id plan-03 \
-       --out .threads/receiver/20260427-chi-square-raim-design/codex-handoff-plan-03.md
+       --thread-id <subsystem/YYYYMMDD-slug> \
+       --plan-id <plan-NN> \
+       --out <worktree>/codex-handoff/<plan-NN>/prompt.md
    ```
-   The renderer fills only mechanical boilerplate: worktree path,
-   branch, current worktree commit, main checkout path, root handoff
-   inbox paths, recording discipline, and rule text. It intentionally
-   leaves `HAND-CURATE` markers for task scope, read-first context,
-   step sequence, deliverables, hard constraints, focused tests, and
-   regression baseline, plus any plan-specific runtime invariant.
-   Replace every marker with authored content before the prompt is
-   shown to the user or pasted into codex.
 
-   The launch prompt may live as either:
-   - a separate `codex-handoff-<plan-id>.md` scaffold in the main
-     thread directory; or
-   - a hand-curated launch block at the top of `handoff.md` when the
-     project uses handoff-as-launch-prompt.
+   The emitter reads `thread.json::codex_worktrees[]` for the worktree
+   path + branch, calls `git -C <worktree> rev-parse --short HEAD` for
+   the base SHA, locates the plan file by glob, and writes the launch
+   packet. Mechanical contents:
 
-   Both patterns keep ownership the same: the main session authors
-   the prompt and `.threads/` bookkeeping; Codex reads the prompt,
-   works in the isolated worktree, and writes session output under
-   `codex-handoff/<plan-id>/`.
+   - **Plan file** (absolute path) — Codex reads this as turn 1.
+   - **Worktree** (absolute path) — where Codex does source-code work.
+   - **Branch** — the long-lived worktree branch name.
+   - **Base SHA** — current worktree HEAD.
+   - **Handback inbox** — `<worktree>/codex-handoff/<plan-id>/` (the
+     contract `references/codex-handback.md` defines).
+   - **Thread + plan IDs.**
 
-### Step 4 alternative — Path B: minimal launch packet (skip the scaffold)
+   Plus two generic operational rules baked into the script's output:
 
-When the plan file is **already self-contained** — every step authored,
-deliverables enumerated, hard constraints listed, focused tests +
-regression baseline written — there is no need to render the scaffold
-and hand-curate a separate `codex-handoff-<plan-id>.md` wrapper. The
-plan file IS the prompt; Codex just needs an absolute path to it plus
-a handful of run-specific operational facts.
+   - **Don't push the branch.** Worktree merge-back is a single terminal
+     event at thread close, not at plan close.
+   - **Write structured handback** per `references/codex-handback.md` to
+     `<worktree>/codex-handoff/<plan-id>/handback.{json,md}` with the
+     required gates / discoveries / follow_ons / blockers / investigations
+     / handoff_artifacts shape.
 
-**Use Path B when:**
+   Any plan-specific operational rules live in the plan file's "Hard
+   constraints" section (the tiered template's Codex add-on sections).
+   **The plan file IS the launch prompt.** Codex reads it directly when
+   given the absolute path; the launch packet only carries mechanical
+   facts pointing at it.
 
-- The plan file at `.threads/<thread-id>/<plan-id>-*.md` is complete
-  and self-contained (the threads-skill "New plan hop" workflow's
-  full template was followed; nothing references content that hasn't
-  been authored yet).
-- The plan's "Hard constraints" section already covers run-specific
-  rules (cross-repo edits, regression-baseline specifics, no-push
-  worktree contracts, etc.).
-- Adjacent-threads briefing is empty or can be stated inline in one
-  sentence.
+   The plan must be fleshed out before launch per
+   `assets/templates/plan-01-template.md`'s tiered template: base
+   sections always filled, Codex add-ons below the divider filled when
+   the hop is a Codex hop. The launch packet does not infer task
+   scope, deliverables, tests, or constraints from anywhere — those
+   live in the plan.
 
-**Don't use Path B when:**
+   The launch packet at `<worktree>/codex-handoff/<plan-id>/prompt.md`
+   sits alongside the future handback artifacts. Both ride the
+   worktree branch until terminal merge-back at thread close.
 
-- The plan file is partial / WIP / references undecided sections.
-- You need to scope-cut what Codex executes (the full plan covers
-  more than this Codex run should attempt — the scaffold's Step
-  scaffold + Hard-constraints curation is where you write that
-  scope-cut).
-- Adjacent-threads briefing is non-trivial and needs its own
-  curated paragraph.
-
-**The launch packet is six mechanical facts plus two generic
-operational rules.** Generate it mechanically:
-
-```bash
-python3 ~/.claude/skills/threads/scripts/emit_codex_launch_packet.py \
-    --main-repo . \
-    --thread-id <subsystem/YYYYMMDD-slug> \
-    --plan-id <plan-NN>
-```
-
-The script reads `thread.json::codex_worktrees[]` for the worktree
-path + branch, calls `git -C <worktree> rev-parse --short HEAD` for
-the base SHA, locates the plan file by glob, and emits the launch
-packet to stdout in human-readable form ready to paste into Codex's
-turn 1. Mechanical contents:
-
-- **Plan file** (absolute path) — Codex reads this as turn 1.
-- **Worktree** (absolute path) — where Codex does source-code work.
-- **Branch** — the long-lived worktree branch name.
-- **Base SHA** — current worktree HEAD; the prior hop's terminal
-  commit if there was one.
-- **Handback inbox** — `<worktree>/codex-handoff/<plan-id>/` (the
-  contract `references/codex-handback.md` defines).
-
-Plus two generic operational rules baked into the script's output:
-
-- **Don't push the branch.** Worktree merge-back is a single terminal
-  event at thread close, not at plan close.
-- **Write structured handback** per `references/codex-handback.md` to
-  `<worktree>/codex-handoff/<plan-id>/handback.{json,md}` with the
-  required gates / discoveries / follow_ons / blockers / investigations
-  / handoff_artifacts shape.
-
-Plus any plan-specific operational rules from the plan file's "Hard
-constraints" section. The user reads those off the plan file and
-states them inline at Codex turn 1, or trusts Codex to read them when
-it opens the plan file.
-
-**No new file is created in the thread directory.** Path B leaves the
-plan file as the only design artifact; the launch packet is consumed
-once at turn 1 and not stored. If the same hop is launched a second
-time (e.g. after a Codex crash), regenerate the packet — the SHA
-will have moved forward if Codex committed anything, and the regen
-captures that.
-
-The handback artifact contract is identical to Path A: Codex still
-writes structured handback under `<worktree>/codex-handoff/<plan-id>/`
-and the merge-back / triage workflows on this side are unchanged.
+   If the same hop is launched a second time (e.g. after a Codex
+   crash), regenerate the packet — the SHA will have moved forward if
+   Codex committed anything, and the regen captures that.
 
 5. **You (the user) open a sidecar terminal** — a separate
    tab, window, or pane in your terminal app on this same machine —
@@ -338,10 +280,11 @@ and the merge-back / triage workflows on this side are unchanged.
    source .envrc
    codex
    ```
-   Then paste the hand-curated handoff prompt from step 4 as the first
-   turn. The codex TUI is the watch-and-interact surface: events
-   stream live, approval gates fire when codex wants to run a tool,
-   and you can interject mid-thought.
+   Then paste the launch packet from step 4 as the first turn (the
+   plan-file absolute path is the first line of the packet so it can
+   be copied without scrolling). The codex TUI is the watch-and-interact
+   surface: events stream live, approval gates fire when codex wants
+   to run a tool, and you can interject mid-thought.
 
    Claude (the main session) cannot launch this terminal for you —
    spawning an interactive TTY isn't possible from inside its own
