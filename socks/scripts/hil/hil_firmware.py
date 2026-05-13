@@ -54,6 +54,9 @@ def _load_state_json(project_dir, name):
 def _no_os_make_config(project_dir, socks_cfg, hil_config):
     build_cfg = socks_cfg.get("build", {}) if socks_cfg else {}
     fw_cfg = hil_config.get("firmware", {}) if hil_config else {}
+    fw_flow = fw_cfg.get("flow")
+    if fw_flow and fw_flow != "no_os_make":
+        return None
     nested = build_cfg.get("no_os_make", {})
     fw_nested = fw_cfg.get("no_os_make", {})
 

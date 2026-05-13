@@ -35,7 +35,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hil_lib import (
     load_hil_json, hil_build_dir, tcl_dir, find_xsdb, find_serial_port,
-    XSDBSession, board_family, boot_init_filename,
+    XSDBSession, board_family, boot_init_filename, resolve_hil_json_path,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -271,7 +271,7 @@ def main() -> int:
             return 1
 
     # Capture count coupling (hard-fail)
-    hil_json_path = os.path.join(project_dir, "hil.json")
+    hil_json_path = resolve_hil_json_path(project_dir)
     if os.path.isfile(hil_json_path):
         with open(hil_json_path) as f:
             hil_full = json.load(f)

@@ -184,8 +184,11 @@ def _active_profile_marker_config(project_dir):
 
 def _is_no_os_flow(hil_config, project_dir):
     fw = hil_config.get("firmware", {}) if hil_config else {}
-    if fw.get("flow") == "no_os_make":
-        return True
+    flow = fw.get("flow")
+    if flow:
+        return flow == "no_os_make"
+    if fw.get("test_src") or fw.get("source_roots") or fw.get("driver_sources"):
+        return False
     return _load_state_json(project_dir, "no-os-make.json") is not None
 
 
@@ -202,7 +205,9 @@ def _pass_marker_config(hil_config, project_dir=None):
     fw = hil_config.get("firmware", {}) if hil_config else {}
     markers = None
     match_mode = None
-    if project_dir:
+    use_profile_markers = fw.get(
+        "use_active_profile_markers", fw.get("flow") == "no_os_make")
+    if project_dir and use_profile_markers:
         markers, match_mode = _active_profile_marker_config(project_dir)
     if not markers:
         markers = hil_config.get("pass_markers") or fw.get("pass_markers")

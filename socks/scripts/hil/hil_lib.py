@@ -31,10 +31,27 @@ from socks_lib import print_result, pass_str, fail_str, yellow, bold
 # ---------------------------------------------------------------------------
 
 REQUIRED_HIL_KEYS = ["dut", "board", "axi"]
+HIL_CONFIG_ENV = "SOCKS_HIL_CONFIG"
 
-def load_hil_json(project_dir):
-    """Load and validate hil.json from project root. Returns dict or None."""
-    path = os.path.join(project_dir, "hil.json")
+
+def resolve_hil_json_path(project_dir, config_path=None):
+    """Return the selected HIL config path for a project.
+
+    Mechanism A firmware variants use alternate hil-*.json files selected
+    per run. Relative paths are resolved against the project root so CLI
+    calls can pass either ``hil-r5.json`` or an absolute path.
+    """
+    override = config_path or os.environ.get(HIL_CONFIG_ENV)
+    if override:
+        if os.path.isabs(override):
+            return os.path.abspath(override)
+        return os.path.abspath(os.path.join(project_dir, override))
+    return os.path.join(project_dir, "hil.json")
+
+
+def load_hil_json(project_dir, config_path=None):
+    """Load and validate the selected HIL config. Returns dict or None."""
+    path = resolve_hil_json_path(project_dir, config_path=config_path)
     if not os.path.isfile(path):
         return None
     with open(path, "r") as f:

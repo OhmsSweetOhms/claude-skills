@@ -20,11 +20,23 @@ SCRIPTS_DIR = os.path.join(SKILL_DIR, "scripts")
 class HilValidateRunner:
     """Orchestrate toolchain check, no-OS Make, XSDB program, and UART query."""
 
-    def __init__(self, project_dir, board="zcu102"):
+    def __init__(self, project_dir, board="zcu102", hil_config=None):
         self.project_dir = os.path.abspath(project_dir)
         self.board = board
+        self.hil_config = self._resolve_hil_config(hil_config)
         self.board_env = self._load_board_env(board)
         self.results = []
+
+    def _resolve_hil_config(self, hil_config):
+        if not hil_config:
+            return None
+        if os.path.isabs(hil_config):
+            path = os.path.abspath(hil_config)
+        else:
+            path = os.path.abspath(os.path.join(self.project_dir, hil_config))
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"HIL config file not found: {path}")
+        return path
 
     def _load_board_env(self, board):
         path = os.path.join(SKILL_DIR, "references", "boards", board, "env.json")
@@ -47,12 +59,16 @@ class HilValidateRunner:
 
     def _run_shell(self, cmd, name):
         started = time.time()
+        env = os.environ.copy()
+        if self.hil_config:
+            env["SOCKS_HIL_CONFIG"] = self.hil_config
         result = subprocess.run(
             ["bash", "-c", cmd],
             cwd=self.project_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=env,
         )
         status = "pass" if result.returncode == 0 else "fail"
         self._record(name, status, started, result.stdout)
@@ -141,9 +157,13 @@ def main():
     parser = argparse.ArgumentParser(description="Run ADI/no-OS HIL validation")
     parser.add_argument("--project-dir", required=True, help="SOCKS project root")
     parser.add_argument("--board", default="zcu102", help="Board env profile")
+    parser.add_argument("--hil-config", default=None,
+                        help="Alternate HIL config path, relative to project root unless absolute")
     args = parser.parse_args()
     try:
-        HilValidateRunner(args.project_dir, board=args.board).run()
+        HilValidateRunner(
+            args.project_dir, board=args.board,
+            hil_config=args.hil_config).run()
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

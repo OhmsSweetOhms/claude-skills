@@ -433,6 +433,8 @@ def main() -> int:
                         help="FPGA part override (default: from socks.json board.part)")
     parser.add_argument("--settings", type=str, default=None,
                         help="Path to Vivado settings64.sh")
+    parser.add_argument("--hil-config", type=str, default=None,
+                        help="Alternate HIL config path, relative to project root unless absolute")
     parser.add_argument("--clean", action="store_true",
                         help="Clean build artifacts before running pipeline")
     parser.add_argument("--new-session", action="store_true",
@@ -444,6 +446,15 @@ def main() -> int:
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
+    if args.hil_config:
+        hil_config_path = args.hil_config
+        if not os.path.isabs(hil_config_path):
+            hil_config_path = os.path.join(project_dir, hil_config_path)
+        hil_config_path = os.path.abspath(hil_config_path)
+        if not os.path.isfile(hil_config_path):
+            print(f"ERROR: --hil-config not found: {hil_config_path}")
+            return 1
+        os.environ["SOCKS_HIL_CONFIG"] = hil_config_path
 
     # Scope conflict check: --scope must agree with socks.json if both present
     json_scope = get_scope(project_dir)
@@ -525,6 +536,8 @@ def main() -> int:
 
     print_header("SOCKS Pipeline Orchestrator")
     print(f"\n  Project: {project_dir}")
+    if args.hil_config:
+        print(f"  HIL config: {os.path.relpath(os.environ['SOCKS_HIL_CONFIG'], project_dir)}")
     if active_workflow:
         scope_str = f" ({args.scope})" if args.scope else ""
         print(f"  Workflow: --{active_workflow}{scope_str}")
