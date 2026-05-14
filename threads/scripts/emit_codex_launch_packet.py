@@ -217,10 +217,34 @@ handback.json + handback.md + scripts/ + temp/ + artifacts/ per
    {handback_inbox}/handback.{{json,md}}
    ```
 
-   with the required gates / discoveries / follow_ons / blockers /
-   investigations / handoff_artifacts shape. See
-   `~/.claude/skills/threads/references/codex-handback.md` for the
-   schema and recording discipline.
+   The JSON must conform to the v2 schema:
+
+   ```
+   ~/.claude/skills/threads/assets/schemas/codex-handback.schema.json
+   ```
+
+   Required top-level fields: `schema_version` (const "2"), `plan_id`,
+   `thread_id`, `session_date`, `status`, `worktree` (with `branch`,
+   `base_at_hop_start`, `head_at_handback`, `diff_stat`), `commits[]`,
+   `gates[]` (each with `name` + `verdict` ∈ {{pass, fail, unmeasured,
+   retired, deferred-to-firmware}}; non-pass requires `evidence_path`),
+   `discoveries[]` (each with `id` matching `^discovery-`, `claim`,
+   `evidence`), `investigations[]` (each with `id` matching
+   `^investigation-`, `triggered_by`, `question`, `answer`, `evidence`),
+   `follow_ons[]` (each with `summary` + `proposed_routing` ∈ {{next-hop,
+   new-thread, backlog, out-of-scope}}), and `plan_hindsight` (string;
+   "Nothing notable" is valid).
+
+   Use this v2 example template as the structural starting point:
+
+   ```
+   ~/.claude/skills/threads/assets/templates/codex-handback-template.md
+   ```
+
+   `~/.claude/skills/threads/references/codex-handback.md` describes the
+   recording discipline (4-buckets rule, evidence anchoring, handoff
+   artifact promotion recommendations) — read it before writing, but
+   conform the JSON shape to the schema, not to the prose.
 
 ## Plan-specific operational rules
 
