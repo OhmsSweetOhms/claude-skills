@@ -96,6 +96,18 @@
       "prompt": "Initialize a new EMI test group for an unknown UUT. It should include CE102 now and RE102 later.",
       "expected_output": "Allocates the next provisional data/uuts/uut_NNN/<campaign_id> directory, starting with uut_001 and then uut_002 as existing numbered UUTs are present. Does not create unknown_uut, and keeps CE102/RE102 setup state such as indoor/outdoor in JSON metadata and run labels rather than directory layers.",
       "files": []
+    },
+    {
+      "id": 17,
+      "prompt": "Get ready for a RE102 ambient vault scan on UUT_001 with the RSA. Horizontal polarization. Do not start the scan yet.",
+      "expected_output": "Uses re102 init-engineering-run rather than one-off re102 scan or FPH/GNSS commands, creates only a ready UUT campaign run under data/uuts/uut_001/<date>/re102/runs with run.json/raw/derived/plots, records the vault mixed-RBW profile of 30-45 MHz at 300 Hz then 45-1730 MHz at 1 kHz in 50 MHz segments, uses RSA with TBMA1B at 1 m and current PE300-72 plus PE300-36 cable-loss metadata, performs or records the ping precheck, reports the generated run ID/planned command/settings, and explicitly avoids acquisition until a later go instruction.",
+      "files": []
+    },
+    {
+      "id": 18,
+      "prompt": "Go run the staged RE102 config, finalize it, and update the campaign plots.",
+      "expected_output": "Runs the staged run.json planned_command via re102 engineering-scan, preserves raw RSA CSV exports, relies on RSA sweep-completion and trailing floor-tail validation instead of brittle sleep-only timing or direct TRACe:DATA readback, then uses re102 finalize-run to update run.json summary/readiness flags and per-run SVGs. It regenerates requested campaign/report plots with individual, combined summary, and ambient-delta views, reports peak field strength, worst margin, max-over-ambient when an ambient baseline exists, generated paths, and states that the narrow-RBW vault method is engineering data rather than formal MIL-STD-461F Table II bandwidth scoring.",
+      "files": []
     }
   ]
 }

@@ -105,6 +105,24 @@ For CE102 iterative tuning, use the two-step bench loop:
   and rolling SVG plots, marks the manifest entry acquired, and updates the
   UUT CE102 emission profile from the measured peak.
 
+For RE102 UUT vault engineering scans with the RSA, use the matching staged
+campaign loop rather than one-off `re102 scan` commands:
+
+- `get ready` / `init`: use
+  `.venv/bin/python tools/emi_control.py re102 init-engineering-run --uut <uut_id> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> --ping`.
+  The current vault profile is 30-45 MHz at 300 Hz RBW/VBW, then 45-1730 MHz
+  at 1 kHz RBW/VBW in 50 MHz segments, one sweep per segment, RSA CSV export,
+  preamp on, 0 dB attenuation, and -30 dBm reference level unless the bench
+  setup changes. For the PE300-72 plus PE300-36 path, use the repo's current
+  cable-loss metadata and keep the cable stack documented in JSON.
+- `go`: run the staged
+  `.venv/bin/python tools/emi_control.py re102 engineering-scan <run.json>`.
+  The RSA path waits on reported sweep completion and rejects partial floor-tail
+  exports. After acquisition, run
+  `.venv/bin/python tools/emi_control.py re102 finalize-run <run.json>` and
+  regenerate the campaign/report SVGs requested by the user. Keep ambient,
+  config, combined-summary, and ambient-delta views distinct.
+
 For calibration or measurement-system checks, stage artifacts under
 `data/<test>/calibration/<run_id>/` and record injection plane, losses, source
 limits, tone plan, raw traces, derived JSON, plots, optional formal reports,
