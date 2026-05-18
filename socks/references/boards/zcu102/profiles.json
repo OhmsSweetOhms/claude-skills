@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "board": "zcu102",
-  "description": "Xilinx ZCU102 (Zynq UltraScale+ MPSoC, XCZU9EG) with ADI MxFE FMC daughter cards. Profiles in this catalog cover validated MxFE operating points; profile data (manifests + patches + upstream pristine subtrees) lives in each consuming project under its own `socks.json::adi.no_os_subtree` and `socks.json::adi.hdl_subtree`. The catalog is name-only — it lists which profiles are known + their high-level operating points + their hardware-validation status, NOT the patch bytes.",
+  "description": "Xilinx ZCU102 (Zynq UltraScale+ MPSoC, XCZU9EG) with ADI MxFE FMC daughter cards. Profiles in this catalog cover validated MxFE operating points; profile data (manifests + patches + upstream pristine subtrees) lives in each consuming project under its own `socks.json::adi.no_os_subtree` and `socks.json::adi.hdl_subtree`. The catalog is name-only \u2014 it lists which profiles are known + their high-level operating points + their hardware-validation status, NOT the patch bytes.",
   "fmc_daughter_cards_supported": [
     "ad9986-fmca",
     "ad9081-fmca-ebz (reference design; some profiles work on AD9986-FMCA via chip-ID acceptance patch)"
@@ -9,7 +9,10 @@
   "profiles": {
     "6144-jesd204b-m8l4": {
       "description": "61.44-MHz PL link clock; lane rate 2.4576 Gbps; JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; SYSREF at 1.92 MHz LMFC.",
-      "device_compat": ["ad9081", "ad9986"],
+      "device_compat": [
+        "ad9081",
+        "ad9986"
+      ],
       "ad9986_via_chip_id_accept": true,
       "jesd_encoding": "8b10b",
       "operating_point_summary": {
@@ -26,7 +29,9 @@
         "sysref_mhz": 1.92,
         "hmc7044_pll2_ghz": 2.94912
       },
-      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_on": [
+        "zcu102+ad9986-fmca"
+      ],
       "validated_date": "2026-05-07",
       "validation_summary": "Manual hardware re-validation PASS on real ZCU102 + AD9986-FMCA hardware. The consuming project reached all five UART pass markers for the 6144-jesd204b-m8l4 profile.",
       "uart_pass_markers": [
@@ -46,7 +51,10 @@
     },
     "24576-jesd204b-m8l4": {
       "description": "PL link clock at 245.76 MHz with lane rate 9.8304 Gbps, JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; device refclk 491.52 MHz; FPGA GT refclk 491.52 MHz; ADXCVR exports refclk/2 as the 245.76 MHz link/device clock; SYSREF at 1.92 MHz.",
-      "device_compat": ["ad9081", "ad9986"],
+      "device_compat": [
+        "ad9081",
+        "ad9986"
+      ],
       "ad9986_via_chip_id_accept": true,
       "jesd_encoding": "8b10b",
       "operating_point_summary": {
@@ -63,7 +71,9 @@
         "sysref_mhz": 1.92,
         "hmc7044_pll2_ghz": 2.94912
       },
-      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_on": [
+        "zcu102+ad9986-fmca"
+      ],
       "validated_date": "2026-05-08",
       "validation_summary": "Hardware validation PASS on real ZCU102 + AD9986-FMCA hardware for the 24576-jesd204b-m8l4 profile. The consuming project reached all five UART pass markers at lane rate / 40 = 245.760 MHz.",
       "uart_pass_markers": [
@@ -83,7 +93,10 @@
     },
     "6144-l1-clean-jesd204b-rxm8l4-txm8l8": {
       "description": "GPS-L1 clean-NCO profile: 61.44 MHz RX PL link clock + 122.88 MSPS TX JESD sample rate, 2.4576 Gbps lanes both directions. Asymmetric M/L: RX M=8/L=4 (mode 10) at 61.44 MSPS, TX M=8/L=8 (mode 15) at 122.88 MSPS. AD9986 converter clocks at 3.93216 GHz make GPS L1 (1575.42 MHz) an exact rational fraction of converter rate (26257/65536), giving the 48-bit main-NCO FTW 32 trailing binary zeros and 0 Hz residual carrier-frequency error. The asymmetric TX (mode 15) was forced by pyadi-jif: the AD9986 cannot sustain TX at M=8/L=4 / 61.44 MSPS while the DAC clock is 3.93216 GHz at 2.4576 Gbps lanes; mode 15 M=8/L=8 / 122.88 MSPS is the only valid TX choice.",
-      "device_compat": ["ad9081", "ad9986"],
+      "device_compat": [
+        "ad9081",
+        "ad9986"
+      ],
       "ad9986_via_chip_id_accept": true,
       "jesd_encoding": "8b10b",
       "asymmetric_rx_tx": true,
@@ -115,7 +128,9 @@
         "gps_l1_nco_trailing_binary_zeros": 32,
         "gps_l1_nco_residual_hz": 0
       },
-      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_on": [
+        "zcu102+ad9986-fmca"
+      ],
       "validated_date": "2026-05-08",
       "validation_summary": "Hardware validation PASS on real ZCU102 + AD9986-FMCA hardware. Reached all five UART pass markers; both RX and TX JESD links train to DATA at lane rate / 40 = 61.440 MHz with SYSREF aligned. UART evidence captured tx_dac=122 875 976 Hz, rx_adc=61 437 988 Hz.",
       "uart_pass_markers": [
@@ -135,7 +150,10 @@
     },
     "24576-clean-l1-jesd204b-rxm8l4-txm8l4": {
       "description": "GPS-L1 clean-NCO 245.76-MHz PL link profile; lanes 9.8304 Gbps, symmetric RX/TX M=8/L=4 (RX mode 10, TX mode 9), 3.93216 GHz converter clocks (same clean GPS-L1 NCO ratio as 6144-l1-clean). Symmetric variant of the same clean-L1 NCO architecture at 4x the link clock; not bitstream-compatible with 6144-l1-clean (different fabric clocking). Use this when the application needs the wider PL substrate bandwidth (~120 MHz at Nyquist) and can absorb the higher SerDes lane rate.",
-      "device_compat": ["ad9081", "ad9986"],
+      "device_compat": [
+        "ad9081",
+        "ad9986"
+      ],
       "ad9986_via_chip_id_accept": true,
       "jesd_encoding": "8b10b",
       "asymmetric_rx_tx": false,
@@ -162,7 +180,9 @@
         "gps_l1_nco_trailing_binary_zeros": 32,
         "gps_l1_nco_residual_hz": 0
       },
-      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_on": [
+        "zcu102+ad9986-fmca"
+      ],
       "validated_date": "2026-05-08",
       "validation_summary": "Hardware validation PASS on real ZCU102 + AD9986-FMCA hardware. Reached all five UART pass markers; both RX and TX JESD links train to DATA at lane rate / 40 = 245.760 MHz with SYSREF aligned. UART evidence captured tx_dac=245 755 004 Hz, rx_adc=245 753 479 Hz.",
       "uart_pass_markers": [
@@ -182,17 +202,40 @@
     },
     "6144-quad-band-jesd204b-rxm8l4-txm8l8": {
       "description": "Quad-band GPS L5 / L2 / L1 + Iridium ALT-NAV simultaneous-reception profile. Reuses the 6144-l1-clean HDL/JESD shape (61.44 MHz RX PL link, 122.88 MSPS TX, 2.4576 Gbps lanes, asymmetric RX M=8/L=4 mode 10 / TX M=8/L=8 mode 15) but overrides the no-OS RX DDC crossbar + per-FDDC NCO retargeting to emit four GPS-band virtual converters simultaneously. All four band NCOs land at exact rational fractions of the 3.93216 GHz converter clock (33-43 trailing binary zeros, 0 Hz residual). TX path is identical to 6144-l1-clean's TX (single-band L1 transmit). This is the dual-frequency-and-beyond foundation for L1+L2 ionosphere removal and L5/Iridium augmentation.",
-      "device_compat": ["ad9081", "ad9986"],
+      "device_compat": [
+        "ad9081",
+        "ad9986"
+      ],
       "ad9986_via_chip_id_accept": true,
       "jesd_encoding": "8b10b",
       "asymmetric_rx_tx": true,
       "asymmetric_rx_tx_note": "Same asymmetric M/L shape as 6144-l1-clean: RX M=8/L=4 mode 10 at 61.44 MSPS; TX M=8/L=8 mode 15 at 122.88 MSPS. Same 2.4576-Gbps lane-rate budget.",
       "multi_band_rx": true,
       "rx_band_map": [
-        {"fddc": 0, "band": "GPS_L5",   "carrier_mhz": 1176.45, "rational_ratio_of_converter_clock": true},
-        {"fddc": 1, "band": "GPS_L2",   "carrier_mhz": 1227.60, "rational_ratio_of_converter_clock": true},
-        {"fddc": 2, "band": "GPS_L1",   "carrier_mhz": 1575.42, "rational_ratio_of_converter_clock": true},
-        {"fddc": 3, "band": "IRID_ALT", "carrier_mhz": 1619.28, "rational_ratio_of_converter_clock": true}
+        {
+          "fddc": 0,
+          "band": "GPS_L5",
+          "carrier_mhz": 1176.45,
+          "rational_ratio_of_converter_clock": true
+        },
+        {
+          "fddc": 1,
+          "band": "GPS_L2",
+          "carrier_mhz": 1227.6,
+          "rational_ratio_of_converter_clock": true
+        },
+        {
+          "fddc": 2,
+          "band": "GPS_L1",
+          "carrier_mhz": 1575.42,
+          "rational_ratio_of_converter_clock": true
+        },
+        {
+          "fddc": 3,
+          "band": "IRID_ALT",
+          "carrier_mhz": 1619.28,
+          "rational_ratio_of_converter_clock": true
+        }
       ],
       "operating_point_summary": {
         "rx_link_clock_mhz": 61.44,
@@ -217,7 +260,9 @@
         "hmc7044_pll2_ghz": 2.94912,
         "converter_clock_ghz": 3.93216
       },
-      "validated_on": ["zcu102+ad9986-fmca"],
+      "validated_on": [
+        "zcu102+ad9986-fmca"
+      ],
       "validated_date": "2026-05-08",
       "validation_summary": "Hardware validation PASS on real ZCU102 + AD9986-FMCA hardware per the consuming project's commit verification trailer (make PASS, hil_run.py PASS, adi_profile_apply.py PASS, pyadi-jif PASS). Structured handback's gates[] array did not enumerate all five UART markers individually, but the adi_profile_apply + hil_run round-trip exercised the full hardware-validation path. Treat as validated; per-band physical-mapping verification is a follow-on RX-data-path step (cross-band correlation + spectrum capture) before claiming the FDDC-to-physical-ADC routing in vivo.",
       "uart_pass_markers": [
@@ -233,6 +278,91 @@
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-quad-band-jesd204b-rxm8l4-txm8l8/manifest.json",
         "expected_no_os_patch_count": 7,
         "expected_hdl_patch_count_per_project": 2
+      }
+    },
+    "2048-quad-band-jesd204b-rxm8l2-txm8l4": {
+      "description": "Experimental quad-band GPS L5 / L2 / L1 + Iridium ALT-NAV simultaneous-reception profile at the low-rate end of the supported envelope. 20.48 MSPS native RX (L=2, lane rate 1.6384 Gbps), 81.92 MSPS TX (L=4, lane rate 3.2768 Gbps) -- asymmetric M/L _and_ asymmetric lane rate (unlike 6144-l1-clean / 6144-quad-band, which share one 2.4576 Gbps lane budget). Built for the cislunar / weak-signal envelope where wider PL substrate bandwidth is unnecessary and lower RX sample rate eases downstream DSP. All four band NCOs land at exact rational fractions of the 3.93216 GHz converter clock with 0 Hz residual. Differs from 6144-quad-band in rx_no_os_mode (4 vs 10), tx_no_os_mode (9 vs 15), HMC7044 PLL2 (2.4576 vs 2.94912 GHz), SYSREF (1.28 vs 1.92 MHz), and FPGA refclk (204.8 vs 122.88 MHz).",
+      "device_compat": [
+        "ad9081",
+        "ad9986"
+      ],
+      "ad9986_via_chip_id_accept": true,
+      "jesd_encoding": "8b10b",
+      "asymmetric_rx_tx": true,
+      "asymmetric_rx_tx_note": "Asymmetric M/L _and_ asymmetric lane rate. RX runs M=8/L=2 mode 4 at 20.48 MSPS, 1.6384 Gbps lanes; TX runs M=8/L=4 mode 9 at 81.92 MSPS, 3.2768 Gbps lanes. Both rates share one CPLL static family in the GTH4 wizard.",
+      "multi_band_rx": true,
+      "rx_band_map": [
+        {
+          "fddc": 0,
+          "band": "GPS_L5",
+          "carrier_mhz": 1176.45,
+          "rational_ratio_of_converter_clock": true
+        },
+        {
+          "fddc": 1,
+          "band": "GPS_L2",
+          "carrier_mhz": 1227.6,
+          "rational_ratio_of_converter_clock": true
+        },
+        {
+          "fddc": 2,
+          "band": "GPS_L1",
+          "carrier_mhz": 1575.42,
+          "rational_ratio_of_converter_clock": true
+        },
+        {
+          "fddc": 3,
+          "band": "IRID_ALT",
+          "carrier_mhz": 1619.28,
+          "rational_ratio_of_converter_clock": true
+        }
+      ],
+      "operating_point_summary": {
+        "rx_link_clock_mhz": 40.96,
+        "rx_jesd_sample_rate_msps": 20.48,
+        "rx_lane_rate_gbps": 1.6384,
+        "rx_M": 8,
+        "rx_L": 2,
+        "rx_S": 1,
+        "rx_NP": 16,
+        "rx_no_os_mode": 4,
+        "rx_adc_main_decimation": 4,
+        "rx_adc_channel_decimation": 24,
+        "tx_link_clock_mhz": 81.92,
+        "tx_jesd_sample_rate_msps": 81.92,
+        "tx_lane_rate_gbps": 3.2768,
+        "tx_M": 8,
+        "tx_L": 4,
+        "tx_S": 1,
+        "tx_NP": 16,
+        "tx_no_os_mode": 9,
+        "tx_dac_main_interpolation": 6,
+        "tx_dac_channel_interpolation": 8,
+        "fpga_refclk_mhz": 204.8,
+        "device_refclk_mhz": 245.76,
+        "sysref_mhz": 1.28,
+        "hmc7044_pll2_ghz": 2.4576,
+        "converter_clock_ghz": 3.93216
+      },
+      "validated_on": [
+        "zcu102+ad9986-fmca"
+      ],
+      "validated_date": "2026-05-11",
+      "validation_summary": "Hardware validation PASS on real ZCU102 + powered AD9986-FMCA. RX/JTX trains to DATA at lane rate / 40 = 40.960 MHz, TX/JRX trains to DATA at lane rate / 40 = 81.920 MHz, SYSREF captured with no alignment error, IIOD starts. Earlier SPI / register-access failures during bring-up were attributed to the AD9986 being unpowered; once power was applied, the profile reached all six UART pass markers.",
+      "uart_pass_markers": [
+        "JESD RX \\(JTX\\) Link2.* in DATA",
+        "JESD TX \\(JRX\\) Link0 .* in DATA",
+        "(?s)rx_jesd status:.*Lane rate / 40:\\s*40\\.960 MHz.*Link status:\\s*DATA",
+        "(?s)tx_jesd status:.*Lane rate / 40:\\s*81\\.920 MHz.*Link status:\\s*DATA",
+        "SYSREF alignment error: No",
+        "Running IIOD server"
+      ],
+      "patch_layout_contract": {
+        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/2048-quad-band-jesd204b-rxm8l2-txm8l4/",
+        "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/2048-quad-band-jesd204b-rxm8l2-txm8l4/manifest.json",
+        "expected_no_os_patch_count": 13,
+        "expected_hdl_patch_count_per_project": 3
       }
     }
   },
@@ -263,7 +393,7 @@
       "kind": "ad9081-api-rx-crossbar-default-datapath",
       "file_pattern": "drivers/adc/ad9081/api/adi_ad9081_adc.c",
       "where": "ADI no-OS upstream",
-      "purpose": "Default routing of ADC pairs to FDDC virtual converters (ADC0 → FDDC0/2, ADC1 → FDDC1/3, ADC2 → FDDC4/6, ADC3 → FDDC5/7)."
+      "purpose": "Default routing of ADC pairs to FDDC virtual converters (ADC0 \u2192 FDDC0/2, ADC1 \u2192 FDDC1/3, ADC2 \u2192 FDDC4/6, ADC3 \u2192 FDDC5/7)."
     },
     {
       "kind": "no-OS-app-rx-link-converter-select",
@@ -286,13 +416,13 @@
   ],
   "methodology_for_new_profile_authoring": {
     "summary": "Three-layer derivation: (1) read the no-OS app's per-profile *_LINK_CONVERTER_SELECT array; (2) cross-reference with the AD9081 API enum (adi_ad9081_adc_fine_ddc_converter_e for RX, equivalent DAC enum for TX); (3) cross-reference with the API's default crossbar datapath. (4) Cross-check the result against ADI Linux DTS overlay for the same M/L/S/NP combo.",
-    "rx_status": "Working RX methodology validated for the 6144-jesd204b-m8l4 profile (FDDC0/1/4/5 → ADC0/1/2/3).",
+    "rx_status": "Working RX methodology validated for the 6144-jesd204b-m8l4 profile (FDDC0/1/4/5 \u2192 ADC0/1/2/3).",
     "tx_status": "TX methodology only partially proven from no-OS source. The pinned no-OS app has no TX LINK_CONVERTER_SELECT analog to RX; TX VC-to-DAC physical mapping requires a TX-data-path validation step (e.g., DAC output spectrum capture + per-channel correlation) before claiming a definitive mapping.",
     "deferred_field_shape": "When the methodology is run-able but the result is unproven, populate the manifest's operating_point.<rx|tx>.physical_mapping with status='methodology-only' + source_files[] + crossbar_note + observed values, and explicitly disclaim VC-to-physical mapping. Do NOT leave the field empty / null / fabricated."
   },
   "catalog_authoring_rules": {
     "genericization": "This catalog file is in the SOCKS skill repo (~/.claude/skills/socks/references/boards/zcu102/) and is shared by every consuming project on this board. Do NOT include project-specific paths, workspace-rooted paths, validated_evidence fields, first_validated_thread fields, or any other consuming-project provenance. Provenance lives in each consuming project's findings docs and links upward to a catalog entry by name only.",
-    "validated_date_lifecycle": "Set validated_date to a real ISO date only after a real hardware run on real ZCU102 + AD9986-FMCA hardware reaches all five UART pass markers. Software-only checks (patches apply, JSON parses, fingerprint scan clean) are NOT sufficient to set validated_date — they prove the patch system is structurally correct, not that the resulting configuration trains a JESD link in vivo.",
-    "profile_addition": "New profiles authored in any consuming project are added here by name + operating_point summary + uart_pass_markers + patch_layout_contract. The catalog does NOT carry the patch bytes themselves — those live in each consuming project's own ADI subtree per its socks.json::adi configuration."
+    "validated_date_lifecycle": "Set validated_date to a real ISO date only after a real hardware run on real ZCU102 + AD9986-FMCA hardware reaches all five UART pass markers. Software-only checks (patches apply, JSON parses, fingerprint scan clean) are NOT sufficient to set validated_date \u2014 they prove the patch system is structurally correct, not that the resulting configuration trains a JESD link in vivo.",
+    "profile_addition": "New profiles authored in any consuming project are added here by name + operating_point summary + uart_pass_markers + patch_layout_contract. The catalog does NOT carry the patch bytes themselves \u2014 those live in each consuming project's own ADI subtree per its socks.json::adi configuration."
   }
 }

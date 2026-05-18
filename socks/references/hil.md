@@ -223,6 +223,36 @@ no-OS profile state file cannot make Stage 17 wait for ADI JESD UART text from
 unrelated firmware. Set `firmware.use_active_profile_markers` explicitly if a
 non-no-OS flow really needs manifest-owned markers.
 
+### RX-clock-domain debug requires JESD link in DATA state
+
+ADI-profile-based flows on Zynq UltraScale+ + AD9081/AD9986 expose a PL-side
+RX clock domain (`rx_device_clk`) sourced from the JESD204B RX link. That
+clock has no defined period until the no-OS firmware completes
+AD9986/HMC7044/JESD initialization and the link reaches DATA state. Any
+PL source clocked by `rx_device_clk` -- sawtooth generators, AXIS
+producers, ILAs probing RX-domain signals -- is meaningless before the
+profile's JESD pass markers fire.
+
+Stage 18 captures on RX-clock-domain ILAs are only interpretable after:
+
+- the active profile's `JESD .* in DATA` / `Link status: DATA` markers fire,
+- `SYSREF alignment error: No` is observed in the current Stage 17 run, and
+- the lane-rate-/40 marker matches the profile's expected value (e.g.
+  `40.960 MHz` for `2048-quad-band-jesd204b-rxm8l2-txm8l4` RX, `81.920 MHz`
+  for the same profile's asymmetric TX, `61.440 MHz` for the 6144 family,
+  `245.760 MHz` for the 24576 family).
+
+The exact marker set per profile lives alongside the operating-point
+summary in `references/boards/<board>/profiles.json` (the consuming
+project's `socks.json::adi.active_profile` selects which entry applies).
+
+If the firmware lifecycle is "boot bitstream -> no-OS bring-up -> ILA
+capture" (typical for a combined A53 + R5 streaming flow), the Vivado
+Hardware Manager / `hil_ila.py` capture must attach **after** the no-OS
+pass markers fire, not concurrently with no-OS bring-up. Attaching
+earlier leaves RX-domain ILAs unarmed and produces empty / nonsensical
+captures.
+
 ---
 
 ## Modules Without AXI-Lite
