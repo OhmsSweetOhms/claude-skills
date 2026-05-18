@@ -841,6 +841,85 @@ state transitions occur in the same order.
 
 ---
 
+## XSDB and Vivado Hardware Manager ownership
+
+When a HIL session combines firmware boot with ILA debug, two different
+tools want to drive the JTAG / `hw_server` pipeline:
+
+* **XSDB / XSCT** owns PSU/PS7 bring-up (PMUFW, FSBL), PL programming
+  after reset, and per-core firmware download/start. This is what
+  Stages 14 and 17 invoke.
+* **Vivado Hardware Manager** owns ILA capture once the design is
+  booted, and needs the matching `hil_top.ltx` to interpret probes.
+  This is what Stage 18 invokes.
+
+Both tools can run against the same `hw_server`, but the order of
+operations matters. The pattern below is the one this skill assumes
+across Stages 14, 17, and 18; deviating from it leaves either the PL
+state wrong (no-OS SPI / JESD bring-up partially fails downstream) or
+ILA cores unarmed (Stage 18 captures empty).
+
+### Boot-then-capture ordering
+
+For a combined boot + ILA debug run:
+
+1. **System reset via XSDB.** The first XSDB session resets the SoC.
+   On Zynq UltraScale+, system reset clears any prior PL load -- the
+   PL has to be reprogrammed before any A53/R5 no-OS firmware that
+   touches AXI-mapped peripherals (SPI to AD9986/HMC7044, JESD link
+   bring-up) is downloaded. Skipping the reprogram is a common
+   failure mode that surfaces as no-OS SPI register-access errors
+   partway through bring-up.
+2. **PMUFW + FSBL + bitstream via XSDB.** Stage 14's bitstream is
+   programmed through XSDB on Zynq UltraScale+ ADI flows because
+   ADI's PSU init sequence requires FSBL to land DDR / serdes setup
+   that PMUFW alone does not perform. The XSDB session ends with
+   the PL freshly loaded and the PSU initialized.
+3. **Firmware download + start via XSDB.** Stage 17 downloads the
+   firmware ELF(s) over XSDB and starts the core(s). For ADI flows,
+   the no-OS app runs AD9986/HMC7044/JESD bring-up and reaches its
+   pass markers (`JESD .* in DATA`, `Link status: DATA`, lane-rate
+   match, `SYSREF alignment error: No`, `Running IIOD server`).
+4. **Vivado Hardware Manager attaches AFTER pass markers fire.**
+   Stage 18 (paced or capture-only) opens its own connection to the
+   same `hw_server`, loads `hil_top.ltx`, and discovers ILAs. This
+   step is safe to do concurrently with the firmware running --
+   `hw_server` multiplexes multiple clients -- but the firmware must
+   have **already** reached its pass markers, otherwise the
+   `rx_device_clk` domain is undefined and any RX-domain ILA is
+   unarmed (see "RX-clock-domain debug requires JESD link in DATA
+   state" above).
+
+### Common failure modes
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| No-OS SPI / JESD bring-up fails after system reset | PL not reprogrammed after reset; the AD9986/HMC7044 AXI peripherals vanished when the PL cleared | Re-issue Stage 14's bitstream program via XSDB before Stage 17 |
+| ILA cores show as IDLE but capture is all-zero | Vivado HW Manager attached before the JESD link reached DATA; `rx_device_clk` was undefined when ARMED fired | Re-run Stage 18 after Stage 17's pass markers fire |
+| `ERROR: could not connect to hw_server` from Vivado batch | Stale Vivado HW Manager process holding the JTAG cable | Close the stray Vivado HW Manager window, retry |
+| `ILA_TIMEOUT` on every core in capture-only mode | LTX present but the loaded bitstream is a different build (probe names mismatch) | Reprogram with the bitstream that matches the LTX, or reload the matching LTX |
+
+### Concurrent XSDB + Vivado HW Manager
+
+`hw_server` itself handles multiple clients. The constraints are:
+
+* Only one client should be doing destructive operations (`rst`,
+  `program_hw_devices`, `init_ps7`) at a time. Stage 18 never
+  programs the PL in capture-only mode; Stage 17 should be done
+  with its XSDB session before Stage 18 launches Vivado.
+* Vivado HW Manager batch mode opens, captures, and disconnects in
+  a single subprocess invocation. Leaving a Vivado HW Manager open
+  across multiple Stage 18 runs is supported (via `--interactive`),
+  but mixing it with a still-running Stage 17 XSDB session that
+  re-resets the PSU will leave the HW Manager out of sync; refresh
+  the device after any system reset.
+* The matching `hil_top.ltx` must be loaded before
+  `get_hw_ilas` returns valid cores. Stage 18 enforces this; if
+  `hil_top.ltx` is absent, `hil_ila.py` returns 0 (no ILAs present)
+  in the paced path and prints a warning in the capture-only path.
+
+---
+
 ## Streaming HIL Mode (post-ready streaming validation)
 
 Streaming HIL mode is an opt-in extension to Stage 17 for designs that need bulk-data
