@@ -287,6 +287,104 @@ def filter_xsct_output(text):
     return "".join(filtered), suppressed
 
 
+# --- Linker placement (Stage 16 declarative MEMORY region override) ---------
+#
+# Vitis regenerates lscript.ld every time `app create` runs, with the default
+# MEMORY map for the platform's processor (e.g. R5 firmware lands at the
+# start of DDR, A53 no-OS lands at the start of DDR, etc). Multi-firmware
+# co-resident boots (item #2) need an explicit non-default placement so the
+# two ELFs don't overlap. The schema below declares the override at hil.json
+# authoring time; rewrite_lscript_ld applies it after Vitis regenerates the
+# linker and before `app build` runs.
+#
+# Schema (hil.json):
+#   firmware.linker_placement: {
+#     "memory_region": "psu_r5_ddr_0_MEM_0",   # required: name of the
+#                                              # MEMORY region to rewrite
+#     "origin": "0x50000000",                  # required: hex str or int
+#     "length": "0x18000000"                   # required: hex str or int
+#   }
+#
+# Both origin and length accept hex strings (`"0x..."`) or plain integers.
+
+_LSCRIPT_REGION_RE_TEMPLATE = (
+    r"({region})\s*:\s*ORIGIN\s*=\s*0x[0-9A-Fa-f]+,\s*"
+    r"LENGTH\s*=\s*0x[0-9A-Fa-f]+"
+)
+
+
+def _normalize_addr(value):
+    """Accept int or hex str (`'0x...'` / `'0X...'`); reject anything else."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value, 0)
+    raise ValueError(f"address must be int or hex string, got {type(value).__name__}")
+
+
+def linker_placement_from_hil(hil_config):
+    """Read firmware.linker_placement from hil.json. Returns the
+    normalized dict (with int origin/length) or None when the field is
+    absent. Raises ValueError on a malformed entry."""
+    fw = hil_config.get("firmware", {}) if hil_config else {}
+    placement = fw.get("linker_placement")
+    if not placement:
+        return None
+    if not isinstance(placement, dict):
+        raise ValueError(
+            "firmware.linker_placement must be an object with "
+            "memory_region, origin, length")
+    region = placement.get("memory_region")
+    origin = placement.get("origin")
+    length = placement.get("length")
+    if not region or origin is None or length is None:
+        raise ValueError(
+            "firmware.linker_placement missing one of memory_region, "
+            "origin, length")
+    return {
+        "memory_region": region,
+        "origin": _normalize_addr(origin),
+        "length": _normalize_addr(length),
+    }
+
+
+def rewrite_lscript_ld(lscript_path, placement):
+    """Rewrite the named MEMORY region's ORIGIN and LENGTH inside a
+    Vitis-generated lscript.ld in place.
+
+    Args:
+        lscript_path: path to the linker script file.
+        placement: dict with `memory_region` (str), `origin` (int),
+            `length` (int). Use linker_placement_from_hil() to normalize
+            this from hil.json shape.
+
+    Returns: 1 (the number of regions rewritten).
+
+    Raises: RuntimeError if the region is not found in the file (which
+    typically means the platform/processor pair does not own that
+    region name -- a hil.json typo or wrong processor).
+    """
+    import re
+    region = placement["memory_region"]
+    origin = placement["origin"]
+    length = placement["length"]
+    text = open(lscript_path).read()
+    pattern = _LSCRIPT_REGION_RE_TEMPLATE.format(region=re.escape(region))
+    repl = f"{region} : ORIGIN = 0x{origin:08x}, LENGTH = 0x{length:08x}"
+    new_text, count = re.subn(pattern, repl, text, count=1)
+    if count != 1:
+        raise RuntimeError(
+            f"linker rewrite failed: MEMORY region '{region}' not found in "
+            f"{lscript_path}. Check firmware.linker_placement.memory_region "
+            f"against the Vitis-generated linker for this platform/processor "
+            f"(common names: psu_r5_ddr_0_MEM_0, psu_ddr_0_MEM_0, "
+            f"ps7_ddr_0_S_AXI_BASEADDR)."
+        )
+    with open(lscript_path, "w") as f:
+        f.write(new_text)
+    return count
+
+
 # --- ELF overlap preflight (Stage 17 dependency) ----------------------------
 #
 # Stage 17's XSDB-download path has no overlap detection: if two firmware
@@ -510,26 +608,94 @@ def main() -> int:
     settings = find_vitis_settings(args.settings)
     debug_arg = " --debug" if enable_debug else ""
 
-    if settings:
-        cmd = f'source "{settings}" && "{xsct}" "{build_tcl}"{debug_arg}'
-    else:
-        cmd = f'"{xsct}" "{build_tcl}"{debug_arg}'
+    # Stage 16 has two execution shapes:
+    #   - linker_placement absent (the historical default): one XSCT
+    #     invocation with --phase all (or equivalently no --phase flag).
+    #   - linker_placement present: two XSCT invocations sandwiching the
+    #     Python linker rewrite. The first call (--phase create) lays
+    #     down the workspace + platform + app + Vitis-generated
+    #     lscript.ld but does not link. Python rewrites lscript.ld's
+    #     MEMORY region. The second call (--phase build) runs `app
+    #     build` against the now-corrected linker.
+    try:
+        placement = linker_placement_from_hil(hil_config)
+    except ValueError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
 
-    print(f"\n  Building firmware...")
-    result = subprocess.run(
-        ["bash", "-c", cmd],
-        cwd=build_dir,
-        capture_output=True,
-        text=True,
-    )
-
-    # Log full output to build/logs/
     logs_dir = os.path.join(project_dir, "build", "logs")
     os.makedirs(logs_dir, exist_ok=True)
     log_path = os.path.join(logs_dir, "hil_firmware_build.log")
-    with open(log_path, "w") as lf:
-        lf.write(result.stdout)
-        lf.write(result.stderr)
+
+    def _run_xsct(phase_label):
+        phase_arg = f" --phase {phase_label}"
+        if settings:
+            inner = (
+                f'source "{settings}" && "{xsct}" "{build_tcl}"'
+                f'{debug_arg}{phase_arg}'
+            )
+        else:
+            inner = f'"{xsct}" "{build_tcl}"{debug_arg}{phase_arg}'
+        return subprocess.run(
+            ["bash", "-c", inner],
+            cwd=build_dir,
+            capture_output=True,
+            text=True,
+        )
+
+    if placement is None:
+        # Historical single-shot path -- no linker placement override.
+        print(f"\n  Building firmware...")
+        result = _run_xsct("all")
+        with open(log_path, "w") as lf:
+            lf.write(result.stdout)
+            lf.write(result.stderr)
+    else:
+        # Two-phase path: create -> rewrite -> build.
+        print(f"\n  Building firmware (two-phase, linker_placement active)...")
+        print(f"    Phase 1: workspace + platform + app (no link)")
+        result = _run_xsct("create")
+        with open(log_path, "w") as lf:
+            lf.write("=== Phase 1: create ===\n")
+            lf.write(result.stdout)
+            lf.write(result.stderr)
+        if result.returncode != 0:
+            combined = result.stdout + result.stderr
+            filtered, _ = filter_xsct_output(combined)
+            if filtered.strip():
+                for line in filtered.strip().splitlines()[-20:]:
+                    print(f"    {line}")
+            print(f"\n  {fail_str()}: Firmware phase=create failed "
+                  f"(rc={result.returncode}); full log: {log_path}")
+            return 1
+
+        lscript_path = os.path.join(
+            build_dir, "vitis_ws", "hil_app", "src", "lscript.ld")
+        if not os.path.isfile(lscript_path):
+            print(f"\n  {fail_str()}: lscript.ld not generated by Vitis at "
+                  f"{lscript_path}")
+            return 1
+        print(f"    Phase 1.5: rewrite lscript.ld "
+              f"-> region={placement['memory_region']} "
+              f"origin=0x{placement['origin']:08x} "
+              f"length=0x{placement['length']:08x}")
+        try:
+            rewrite_lscript_ld(lscript_path, placement)
+        except RuntimeError as e:
+            print(f"\n  {fail_str()}: {e}")
+            return 1
+
+        print(f"    Phase 2: app build (links against rewritten lscript.ld)")
+        result = _run_xsct("build")
+        with open(log_path, "a") as lf:
+            lf.write("\n=== Phase 1.5: lscript.ld rewrite ===\n")
+            lf.write(
+                f"region={placement['memory_region']} "
+                f"origin=0x{placement['origin']:08x} "
+                f"length=0x{placement['length']:08x}\n")
+            lf.write("\n=== Phase 2: build ===\n")
+            lf.write(result.stdout)
+            lf.write(result.stderr)
 
     # Filter suppressed warnings from stdout display
     combined = result.stdout + result.stderr

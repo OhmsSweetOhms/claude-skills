@@ -212,7 +212,56 @@ need the same override.
 | `debug.watch_vars` | `[]` | C global variable names to read with XSDB `print` on failure |
 | `debug.watch_addrs` | `{}` | Labelled AXI register addresses to read with `mrd` on failure |
 | `debug.jtag_axi_dump` | `{}` | Named register regions for JTAG-to-AXI dump on CPU fault |
-| `firmware.reserved_arenas` | `[]` | List of memory regions that must not be touched by any firmware ELF. Each entry: `{"label": "...", "base": "0x...", "length": "0x..."}`. Consumed by Stage 17's ELF overlap preflight. Typical use: PL-owned DMA arenas (e.g. R5 DMA at `0x70000000..0x73FFFFFF`), OCM reservations, the FSBL stack region on Zynq UltraScale+. When set, Stage 17 reads each firmware ELF's `PT_LOAD` segments via pyelftools and bails before any XSDB download if any segment intersects a reserved arena. Pairs with `firmware.linker_placement` (item #1) to keep multi-firmware boots overlap-free. |
+| `firmware.reserved_arenas` | `[]` | List of memory regions that must not be touched by any firmware ELF. Each entry: `{"label": "...", "base": "0x...", "length": "0x..."}`. Consumed by Stage 17's ELF overlap preflight. Typical use: PL-owned DMA arenas (e.g. R5 DMA at `0x70000000..0x73FFFFFF`), OCM reservations, the FSBL stack region on Zynq UltraScale+. When set, Stage 17 reads each firmware ELF's `PT_LOAD` segments via pyelftools and bails before any XSDB download if any segment intersects a reserved arena. Pairs with `firmware.linker_placement` to keep multi-firmware boots overlap-free. |
+| `firmware.linker_placement` | -- | Declarative override for the Vitis-generated `lscript.ld` MEMORY region. Object with three required fields: `memory_region` (string, e.g. `psu_r5_ddr_0_MEM_0`), `origin` (hex string or int), `length` (hex string or int). When present, Stage 16 runs XSCT in two phases (workspace+platform+app -> rewrite linker -> link) so the regenerated linker always lands the firmware where the project requires. When absent, Stage 16 runs XSCT in one shot (historical behavior). See "Stage 16 declarative linker placement" below. |
+
+### Stage 16 declarative linker placement
+
+By default, Stage 16 lets Vitis generate `lscript.ld` for the active
+processor and links the firmware against it. For single-firmware HIL
+flows on a board with one DDR region this is correct -- the firmware
+lands somewhere in DDR, the DDR is large, no one else is using it.
+
+Multi-firmware co-resident boots (the combined A53 no-OS + R5 image
+case under tracker item #2) need explicit placement: the R5's default
+linker lands at the beginning of DDR, exactly where the A53 no-OS
+image was just loaded. Without an override, the second download
+silently overwrites the first. Item #6's runtime preflight catches
+the overlap **if** the project supplies `firmware.reserved_arenas`,
+but it is better to prevent the overlap at Stage 16 than to detect
+it at Stage 17.
+
+`firmware.linker_placement` is the declarative override. When set:
+
+1. Stage 16 invokes XSCT with `--phase create`: setws, platform
+   create, BSP config, app create, importsources, configapp. This
+   leaves `<workspace>/hil_app/src/lscript.ld` on disk in its
+   Vitis-default form.
+2. Python (`rewrite_lscript_ld` in `hil_firmware.py`) opens the
+   generated linker, regex-rewrites the `MEMORY` row matching the
+   configured `memory_region`, replaces its `ORIGIN` and `LENGTH`,
+   and writes the file back. If the named region is absent from
+   the Vitis-generated linker, Stage 16 fails with an explicit
+   error suggesting common region names
+   (`psu_r5_ddr_0_MEM_0`, `psu_ddr_0_MEM_0`,
+   `ps7_ddr_0_S_AXI_BASEADDR`).
+3. Stage 16 invokes XSCT with `--phase build`: setws + `app build
+   -name hil_app`. The link step consumes the rewritten linker,
+   not the Vitis-default one.
+
+Both phases share one Vitis workspace; phase 2 sees the linker
+phase 1 generated as rewritten by Python. The workspace is wiped
+at the start of phase 1 only -- phase 2 explicitly preserves it.
+
+The XSCT log at `build/logs/hil_firmware_build.log` is split into
+`=== Phase 1: create ===`, `=== Phase 1.5: lscript.ld rewrite ===`,
+and `=== Phase 2: build ===` so a failure can be traced to the
+right phase.
+
+Pairs with `firmware.reserved_arenas` (item #6): #1 prevents the
+overlap by placing the R5 firmware out of the A53's way at Stage 16,
+#6 catches an overlap at Stage 17 if anything regresses or a
+project configures `reserved_arenas` without `linker_placement`.
 
 ### Stage 17 ELF overlap preflight
 
@@ -699,8 +748,14 @@ runs.
    hardware platform, BSP, and app. If the orchestrator forwards a Vivado
    settings path, the script prefers the matching Vitis settings path.
 4. Imports driver and test sources from `hil.json`
-5. Builds firmware ELF
-6. If `--debug` flag is set: defines `HIL_DEBUG_MODE`, writes `.debug_build` marker
+5. When `firmware.linker_placement` is configured, runs XSCT in two
+   phases (workspace+platform+app -> Python rewrites the Vitis-generated
+   `lscript.ld` MEMORY region -> `app build` links against the
+   rewritten linker). When absent, runs XSCT in one shot. See "Stage
+   16 declarative linker placement" in the hil.json Schema section
+   above.
+6. Builds firmware ELF
+7. If `--debug` flag is set: defines `HIL_DEBUG_MODE`, writes `.debug_build` marker
 
 **Outputs:** `build/hil/vitis_ws/hil_app/Debug/hil_app.elf`
 
