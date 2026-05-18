@@ -91,14 +91,38 @@ drift; the inbox keeps it self-contained.
 
 ```text
 <worktree>/codex-handoff/<plan-id>/
-  README.md          (main-session-written: inbox description, who writes what)
-  prompt.md          (main-session-written: curated launch prompt; Codex's input)
-  handback.json      (Codex-written: machine-readable closure record)
-  handback.md        (Codex-written: human-readable companion)
-  scripts/           (Codex-written: throwaway probes, debug tests, helpers)
-  temp/              (Codex-written: bulky or disposable generated working files)
-  artifacts/         (Codex-written: curated evidence cited by the handback)
+  README.md            (main-session-written: inbox description, who writes what)
+  prompt.md            (main-session-written: curated launch prompt; Codex's input)
+  handback.json        (Codex-written: machine-readable closure record)
+  handback.md          (Codex-written: human-readable companion)
+  scripts/             (Codex-written: throwaway probes, debug tests, helpers)
+  temp/                (Codex-written: bulky or disposable generated working files)
+  artifacts/           (Codex-written: curated evidence cited by the handback)
+  socks_tracker.json   (Codex-written, optional: session-scoped SOCKS-skill
+                        gap log; NOT created in project docs/ during a hop)
 ```
+
+**Session-scoped trackers belong in the inbox, not in project `docs/`.**
+When a Codex hop is instructed to create or update a SOCKS tracker
+(or any similar session-scoped log), the artifact lives in
+`codex-handoff/<plan-id>/socks_tracker.json`. The SOCKS-tracker
+skill's default (`docs/socks_tracker.json` relative to the current
+project directory) is appropriate for long-lived project trackers
+that the main session maintains across hops, but inappropriate as a
+Codex-hop default: a monorepo Codex worktree has multiple "project
+directories" (`modules/<name>/`, `systems/<name>/`, the worktree
+root), and per-hop tracker creation in each scatters tracker JSONs
+across `docs/`, `modules/*/docs/`, `systems/*/docs/` with no single
+canonical location. The inbox is the single canonical session-scoped
+home. The main session promotes a tracker into a long-lived
+`<project>/docs/socks_tracker.json` at triage if it has cross-hop
+value; otherwise the tracker rides the worktree branch until
+merge-back like any other inbox artifact. Plan files that ask Codex
+to create or update a tracker must specify the inbox path
+explicitly and instruct Codex to write the JSON directly (using the
+schema at `~/.claude/skills/socks-tracker/SKILL.md`) rather than
+invoking `/socks-tracker --log`, since the skill's cwd-relative
+default would otherwise land the file in the wrong place.
 
 The main session populates `README.md` (from
 `assets/templates/codex-handoff-dir-README.md`) and `prompt.md`

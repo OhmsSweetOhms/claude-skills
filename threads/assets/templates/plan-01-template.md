@@ -70,6 +70,23 @@ at thread close on user request, not at plan close. Handback artifacts
 (handback.json + handback.md + scripts/ + temp/ + artifacts/) per
 `~/.claude/skills/threads/references/codex-handback.md`.
 
+## Session-scoped artifacts (omit if not applicable)
+
+If this hop instructs Codex to create or update a SOCKS tracker or
+similar session-scoped log (scratch findings, debug discoveries
+journal, etc.), the artifact lives in the inbox at
+`codex-handoff/<plan-id>/socks_tracker.json` — NOT in any project
+`docs/` directory. Main session decides at triage whether to promote
+the artifact into a long-lived `<project>/docs/socks_tracker.json`
+location or keep it session-scoped. The plan body should instruct
+Codex to write the tracker JSON directly at the inbox path using the
+SOCKS-tracker schema (`~/.claude/skills/socks-tracker/SKILL.md`); do
+NOT have Codex invoke `/socks-tracker --log` from inside a project
+subdir, since that resolves to the project's `docs/` and scatters
+trackers across monorepo subprojects. See
+`~/.claude/skills/threads/references/codex-handoff.md` ("Handoff
+inbox" section) for rationale.
+
 ## Cross-references
 
 - Predecessor: {{path or "none"}}
