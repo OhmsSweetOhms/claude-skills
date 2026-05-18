@@ -214,6 +214,136 @@ need the same override.
 | `debug.jtag_axi_dump` | `{}` | Named register regions for JTAG-to-AXI dump on CPU fault |
 | `firmware.reserved_arenas` | `[]` | List of memory regions that must not be touched by any firmware ELF. Each entry: `{"label": "...", "base": "0x...", "length": "0x..."}`. Consumed by Stage 17's ELF overlap preflight. Typical use: PL-owned DMA arenas (e.g. R5 DMA at `0x70000000..0x73FFFFFF`), OCM reservations, the FSBL stack region on Zynq UltraScale+. When set, Stage 17 reads each firmware ELF's `PT_LOAD` segments via pyelftools and bails before any XSDB download if any segment intersects a reserved arena. Pairs with `firmware.linker_placement` to keep multi-firmware boots overlap-free. |
 | `firmware.linker_placement` | -- | Declarative override for the Vitis-generated `lscript.ld` MEMORY region. Object with three required fields: `memory_region` (string, e.g. `psu_r5_ddr_0_MEM_0`), `origin` (hex string or int), `length` (hex string or int). When present, Stage 16 runs XSCT in two phases (workspace+platform+app -> rewrite linker -> link) so the regenerated linker always lands the firmware where the project requires. When absent, Stage 16 runs XSCT in one shot (historical behavior). See "Stage 16 declarative linker placement" below. |
+| `firmware.firmwares` | -- | List of per-role firmware entries for multi-firmware Stage 17 boots (e.g. A53 no-OS holding JESD up + R5 streaming app). When set, Stage 17 sequentially flashes each entry and waits for its declared markers before moving on. Mutually exclusive with the single-firmware keys (`test_src`, `flow`, `pass_marker`, `pass_markers`, etc.) -- Stage 17 hard-fails if both shapes are present. See "Multi-firmware Stage 17" below for the entry schema and worked example. |
+
+### Multi-firmware Stage 17
+
+Single-firmware HIL is the historical default and still works unchanged.
+Some flows -- A53 no-OS bringing up AD9986/HMC7044/JESD while an R5
+image runs streaming egress against the same PL, for example -- need
+two firmware ELFs running on two cores at the same time. The
+`firmware.firmwares` schema describes the per-role list; Stage 17
+boots them sequentially.
+
+**Entry schema (each list element):**
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `role` | yes | Free-form label (`A53`, `R5_0`, `R5_1`, ...). Used in console output, UART log filenames, and the ELF overlap preflight conflict messages. |
+| `elf` | yes | Path to the firmware ELF. Project-relative or absolute. |
+| `flash_tcl` | no | Override the flash TCL. Defaults: `flash_psu_no_os.tcl` for entry 0 when `role` contains `a53` or `processor` matches `cortexa53` or the entry sets `flow: no_os_make`; `flash_psu.tcl` for entry 0 otherwise; `flash_psu_load_only.tcl` for entries 1..N. |
+| `target` | conditional | XSDB `targets -filter` expression naming the core to load. Required for entries 1..N when no default matches the role (e.g. for an exotic role label). Examples: `{name =~ "*Cortex-A53 #0*"}`, `{name =~ "*Cortex-R5 #0*"}`. |
+| `uart_role` | yes (multi-UART boards) | Which serial port to attach the per-entry UART logger to. On ZCU102's CP2108, `a53` selects interface 0 and `r5` selects interface 1. Each entry gets its own UART logger thread; they run concurrently so an earlier firmware's output keeps streaming while a later firmware boots. Falls back to `find_serial_port(hil_config)` when unset. |
+| `pass_markers` | yes | List of regex strings; this entry passes when all (or any -- see `match_mode`) markers are seen on its UART. |
+| `match_mode` | no | `all` (default) or `any`. |
+| `fail_marker` | no | UART string that fails the entry immediately. Defaults to `HIL_FAIL`. |
+| `timeout_s` | no | Seconds to wait for this entry's markers. Defaults to the top-level Stage 17 timeout. |
+| `program_timeout_s` | no | Seconds to allow the flash TCL to complete. Defaults to 300. |
+
+**Lifecycle:** Stage 17 iterates `firmwares` in order. For each entry:
+
+1. Resolve the UART port for `uart_role` and start a per-entry
+   UART logger (background thread, writing to
+   `build/hil/uart-multi-<timestamp>/<index>-<role>.log`).
+2. Build the flash command:
+   * Entry 0 uses `flash_psu_no_os.tcl` or `flash_psu.tcl` (or the
+     entry's `flash_tcl` override) and does the full board boot
+     (system reset, PSU init, PL program, firmware download,
+     resume).
+   * Entries 1..N use `flash_psu_load_only.tcl`, which attaches to
+     the running board, targets just the entry's core, downloads
+     the ELF, and resumes. The PL, PSU init, and peer cores are
+     left undisturbed.
+3. Run the flash command via XSDB (subprocess, captured + indented
+   into the multi-fw log stream).
+4. Wait for the entry's `pass_markers` on the per-entry UART logger.
+   On `PASS`: advance to the next entry. On `FAIL` or `TIMEOUT`:
+   stop all UART loggers, return non-zero -- but earlier firmwares
+   that already passed stay running on the board.
+
+**Why per-entry UART loggers:** the streaming flow that motivated
+this feature has A53 holding JESD up across the entire R5 lifetime.
+If a single shared UART logger waited for A53 markers first and
+then R5 markers afterwards, R5 boot text could arrive on the same
+shared port and confuse the A53 marker scanner. Per-entry loggers
+on per-role UART ports keep marker scans tight to one firmware's
+output.
+
+**Schema mix is a hard-fail.** Single-firmware keys (`test_src`,
+`flow`, `pass_marker`, `pass_markers`, `match_mode`,
+`driver_sources`, `source_roots`, `fail_marker`,
+`use_active_profile_markers`) MUST NOT appear in the same
+`firmware` block as `firmwares`. Stage 17 hard-fails with the
+list of conflicting keys before any board side-effect.
+
+**Worked example (A53 no-OS + R5 streaming, ZCU102 + AD9986):**
+
+```json
+{
+  "firmware": {
+    "firmwares": [
+      {
+        "role": "A53",
+        "elf": "build/hil/no_os/ad9081.elf",
+        "flash_tcl": "flash_psu_no_os.tcl",
+        "uart_role": "a53",
+        "pass_markers": [
+          "JESD .* in DATA",
+          "Link status:\\s*DATA",
+          "Lane rate / 40:\\s*40\\.960 MHz",
+          "SYSREF alignment error: No",
+          "Running IIOD server"
+        ],
+        "match_mode": "all",
+        "timeout_s": 120,
+        "program_timeout_s": 600
+      },
+      {
+        "role": "R5_0",
+        "elf": "build/hil/vitis_ws/hil_r5/Debug/hil_r5.elf",
+        "target": "{name =~ \"*Cortex-R5 #0*\"}",
+        "uart_role": "r5",
+        "pass_markers": ["R5_READY", "STREAM_ACTIVE"],
+        "match_mode": "all",
+        "timeout_s": 60,
+        "linker_placement": {
+          "memory_region": "psu_r5_ddr_0_MEM_0",
+          "origin": "0x50000000",
+          "length": "0x18000000"
+        }
+      }
+    ],
+    "reserved_arenas": [
+      {"label": "r5_dma", "base": "0x70000000", "length": "0x04000000"}
+    ]
+  }
+}
+```
+
+In this configuration:
+* Stage 16 builds each firmware in turn. The A53 build uses no-OS
+  Make. The R5 build uses two-phase XSCT and `rewrite_lscript_ld`
+  to place R5 code/data at `0x50000000..0x68000000`, well clear
+  of the A53 image at low DDR and clear of the R5 DMA arena at
+  `0x70000000..0x74000000`.
+* Stage 17 ELF overlap preflight reads both ELFs and the
+  `r5_dma` reserved arena, verifies no overlap, then proceeds.
+* Stage 17 boot phase 1: `flash_psu_no_os.tcl` resets the SoC,
+  programs PMUFW/FSBL/PL, downloads A53 ELF, resumes. The A53
+  UART logger waits for the five JESD markers. PASS.
+* Stage 17 boot phase 2: `flash_psu_load_only.tcl` targets the
+  R5, downloads the rewritten-linker R5 ELF, resumes. A53
+  stays running. The R5 UART logger waits for the R5 markers.
+  PASS.
+* Both firmwares running, both UART logs preserved.
+
+**TCL files:**
+* `scripts/hil/tcl/flash_psu.tcl` -- entry 0, R5 first boot.
+* `scripts/hil/tcl/flash_psu_no_os.tcl` -- entry 0, A53 no-OS first
+  boot.
+* `scripts/hil/tcl/flash_psu_load_only.tcl` -- entries 1..N. Connects,
+  selects one core via `targets -filter`, resets only that
+  processor, downloads, resumes, disconnects. Peer cores untouched.
 
 ### Stage 16 declarative linker placement
 
@@ -799,7 +929,19 @@ uses the staged ELF and FSBL instead of the native `hil_app.elf`.
 
 **Purpose:** Functional test with non-debug firmware (full speed, no ILA pacing).
 
-**What it does:**
+**Two execution shapes share this entry point:**
+
+* **Single-firmware (historical default):** one firmware ELF runs on
+  one core. Schema lives in `hil.json::firmware.{test_src, flow,
+  pass_marker, pass_markers, ...}`. The flow below describes this
+  path.
+* **Multi-firmware:** the `hil.json::firmware.firmwares` list is set
+  (e.g. A53 no-OS + R5 streaming). Schema documented under
+  "Multi-firmware Stage 17" in the hil.json Schema section above.
+  Stage 17 hard-fails on schema mix (single-firmware keys mixed
+  with `firmwares` list) before any board side-effect.
+
+**What it does (single-firmware path):**
 1. Pre-flight: verify bitstream, ELF, boot-init Tcl, serial port, XSDB all present
 2. ELF overlap preflight when `firmware.reserved_arenas` is configured
    or when more than one firmware is scheduled -- bails before any
@@ -810,8 +952,28 @@ uses the staged ELF and FSBL instead of the native `hil_app.elf`.
    `flash_psu_no_os.tcl` for Zynq UltraScale+ A53 no-OS firmware)
 5. Wait for pass/fail marker on UART
 
-**Outputs:** Console log with UART output, PASS/FAIL result, and a timestamped
-UART transcript at `build/hil/uart-<timestamp>.log`.
+**What it does (multi-firmware path):**
+1. Pre-flight: verify bitstream + boot-init Tcl + XSDB. Per-firmware
+   ELFs are checked inside the loop (each entry brings its own).
+2. ELF overlap preflight against all entries + `firmware.reserved_arenas`.
+3. For each entry in `firmwares` (sequentially):
+   - Resolve `uart_role` -> serial port; start a per-entry UART
+     logger thread (concurrent, stays running across entries).
+   - Build the flash command: entry 0 uses `flash_psu_no_os.tcl` /
+     `flash_psu.tcl` (full boot); entries 1..N use
+     `flash_psu_load_only.tcl` (attach + per-core download + run,
+     peer cores untouched).
+   - Run the flash command via XSDB.
+   - Wait for entry's `pass_markers` on its UART logger.
+   - PASS -> advance. FAIL or TIMEOUT -> stop loggers, return 1.
+
+**Outputs (single-firmware):** Console log with UART output,
+PASS/FAIL result, and a timestamped UART transcript at
+`build/hil/uart-<timestamp>.log`.
+
+**Outputs (multi-firmware):** Console log with per-entry indented
+UART output, per-entry PASS/FAIL summary, and a per-entry UART
+log directory at `build/hil/uart-multi-<timestamp>/<index>-<role>.log`.
 
 **Flags:**
 - `--serial /dev/ttyUSBx` -- override serial port auto-detection

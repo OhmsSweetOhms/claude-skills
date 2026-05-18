@@ -241,16 +241,15 @@ def _firmware_specs_for_preflight(hil_config, elf_path, processor, no_os_flow):
     """Return the (role_label, elf_path) firmware list the ELF overlap
     preflight should check.
 
-    Today this is always a single-element list (single-role HIL). The
-    multi-role Stage 17 extension (tracker item #2) will widen this to
-    a list-of-firmware entries from hil_config; this helper is the seam
-    where that future schema is read.
+    Single-role HIL returns a single-element list; multi-role HIL
+    (firmware.firmwares set) returns one entry per declared firmware.
     """
     fw = hil_config.get("firmware", {}) if hil_config else {}
     if isinstance(fw.get("firmwares"), list) and fw["firmwares"]:
         specs = []
         for f in fw["firmwares"]:
             role = f.get("role") or f.get("label") or "fw"
+            # Resolve elf path relative to project_dir when relative.
             ep = f.get("elf")
             if not ep:
                 raise ValueError(
@@ -264,6 +263,238 @@ def _firmware_specs_for_preflight(hil_config, elf_path, processor, no_os_flow):
     else:
         role = "ps"
     return [(role, elf_path)]
+
+
+# --- Multi-firmware Stage 17 (firmware.firmwares list) ---------------------
+
+# Keys that belong to the single-firmware schema. If any of these appear
+# alongside firmware.firmwares in the same hil.json, the config is
+# ambiguous and Stage 17 hard-fails before any board side-effect.
+_SINGLE_FW_EXCLUSIVE_KEYS = (
+    "test_src", "driver_sources", "source_roots", "flow",
+    "pass_marker", "pass_markers", "fail_marker",
+    "match_mode", "use_active_profile_markers",
+)
+
+
+def _validate_firmwares_schema(fw_block):
+    """If firmware.firmwares is set, no single-firmware key may also be
+    set inside the same firmware block. Returns a list of conflicting
+    keys; empty when clean."""
+    if not (isinstance(fw_block.get("firmwares"), list) and fw_block["firmwares"]):
+        return []
+    return [k for k in _SINGLE_FW_EXCLUSIVE_KEYS if k in fw_block]
+
+
+def _default_target_filter(role, processor=None):
+    """Pick the XSDB targets -filter expression for a firmware role
+    when the entry does not declare its own `target` field. Best-effort:
+    if the role hints don't match, the caller MUST set `target`
+    explicitly."""
+    role_l = (role or "").lower()
+    proc_l = (processor or "").lower()
+    if "a53" in role_l or "cortexa53" in proc_l:
+        return '{name =~ "*Cortex-A53 #0*"}'
+    if "r5_1" in role_l or "r5#1" in role_l or "r5 #1" in role_l:
+        return '{name =~ "*Cortex-R5 #1*"}'
+    if "r5" in role_l or "cortexr5" in proc_l:
+        return '{name =~ "*Cortex-R5 #0*"}'
+    if "a9" in role_l or "cortexa9" in proc_l:
+        return '{name =~ "*Cortex-A9 #0*"}'
+    return None
+
+
+def _resolve_entry_elf(project_dir, build_dir, elf_value):
+    """Resolve a firmwares[i].elf value to an absolute path. Accepts
+    project-relative or absolute paths."""
+    if os.path.isabs(elf_value):
+        return elf_value
+    return os.path.abspath(os.path.join(project_dir, elf_value))
+
+
+def _select_uart_for_role(hil_config, role):
+    """Resolve a serial port for a per-firmware UART role. Falls back
+    to find_serial_port() when role is unset or no match is found."""
+    if role:
+        candidates = list_serial_candidates(hil_config)
+        sel = select_uart_by_role(role, candidates, hil_config)
+        if sel:
+            return sel
+    return find_serial_port(hil_config)
+
+
+def _build_first_firmware_cmd(xsdb, entry, bitstream, boot_init,
+                              zynqmp_boot_elfs, build_dir, project_dir,
+                              processor, no_os_flow):
+    """Build the XSDB command for the FIRST entry in firmware.firmwares.
+
+    The first entry does the full board boot (system reset, PSU init,
+    PL program, firmware download, run). It uses either flash_psu.tcl
+    or flash_psu_no_os.tcl, picked by the entry's `flash_tcl` override
+    or by processor/no-OS heuristic (the same rule single-firmware
+    Stage 17 uses)."""
+    elf = _resolve_entry_elf(project_dir, build_dir, entry["elf"])
+    flash_name = entry.get("flash_tcl")
+    if not flash_name:
+        if "cortexa53" in (processor or "").lower() or no_os_flow or \
+                "a53" in entry.get("role", "").lower():
+            flash_name = "flash_psu_no_os.tcl"
+        else:
+            flash_name = "flash_psu.tcl"
+    flash_tcl = os.path.join(tcl_dir(), flash_name)
+    cmd = [xsdb, flash_tcl, bitstream, elf, boot_init]
+    if flash_name == "flash_psu_no_os.tcl":
+        no_os_state = _load_state_json(project_dir, "no-os-make.json") or {}
+        fsbl_path = no_os_state.get("artifacts", {}).get("fsbl_elf")
+        if not fsbl_path:
+            fsbl_candidates = glob.glob(os.path.join(build_dir, "no_os", "fsbl.elf"))
+            fsbl_path = fsbl_candidates[0] if fsbl_candidates else ""
+        cmd.append(fsbl_path)
+    elif flash_name == "flash_psu.tcl":
+        cmd += zynqmp_boot_elfs
+    return cmd, flash_name
+
+
+def _build_secondary_firmware_cmd(xsdb, entry, build_dir, project_dir, processor):
+    """Build the XSDB command for a SECONDARY firmware entry. Uses
+    flash_psu_load_only.tcl which connects to an already-booted board
+    and loads/starts the firmware on the specified core, leaving peer
+    cores untouched."""
+    elf = _resolve_entry_elf(project_dir, build_dir, entry["elf"])
+    target_filter = entry.get("target")
+    if not target_filter:
+        target_filter = _default_target_filter(
+            entry.get("role"), entry.get("processor") or processor)
+    if not target_filter:
+        raise ValueError(
+            f"firmware.firmwares[{entry.get('role','?')!r}] is a "
+            f"secondary entry but no `target` filter could be inferred. "
+            f"Declare an explicit `target` (e.g. "
+            f"'{{name =~ \"*Cortex-R5 #0*\"}}').")
+    flash_tcl = os.path.join(tcl_dir(), "flash_psu_load_only.tcl")
+    return [xsdb, flash_tcl, elf, target_filter], "flash_psu_load_only.tcl"
+
+
+def _run_multi_firmware(hil_config, project_dir, build_dir, bitstream, boot_init,
+                        family, zynqmp_boot_elfs, xsdb, args, processor,
+                        no_os_flow, timestamp):
+    """Stage 17 multi-firmware orchestration. Sequentially flashes each
+    firmware entry, waits for its declared markers, and proceeds to the
+    next entry only after the current one passes. Per-firmware UART
+    loggers run concurrently so an earlier firmware's output keeps
+    streaming while a later firmware boots."""
+    fw = hil_config.get("firmware", {})
+    firmwares = fw["firmwares"]
+    uart_log_dir = os.path.join(build_dir, f"uart-multi-{timestamp}")
+    os.makedirs(uart_log_dir, exist_ok=True)
+    print(f"\n  Multi-firmware Stage 17: {len(firmwares)} firmware role(s)")
+    print(f"  UART log dir: {uart_log_dir}")
+
+    all_uarts = []
+    try:
+        for i, entry in enumerate(firmwares):
+            role = entry.get("role") or f"fw{i}"
+            elf = _resolve_entry_elf(project_dir, build_dir, entry["elf"])
+            if not os.path.isfile(elf):
+                print(f"\n  ERROR: firmware ELF missing for role {role!r}: {elf}")
+                return 1
+
+            # Resolve per-firmware UART role -> port (concurrent loggers)
+            uart_role = entry.get("uart_role")
+            port = _select_uart_for_role(hil_config, uart_role)
+            if port is None:
+                print(f"\n  ERROR: no UART port resolved for role {role!r} "
+                      f"(uart_role={uart_role!r}). Set firmware.firmwares[{i}]."
+                      f"uart_role or hil.json::board.serial_fallback.")
+                return 1
+
+            # Per-entry marker set
+            markers = entry.get("pass_markers") or [entry.get("pass_marker", "HIL_PASS")]
+            match_mode = entry.get("match_mode", "all")
+            if match_mode not in ("any", "all"):
+                print(f"\n  ERROR: firmware.firmwares[{i}].match_mode must be 'any' or 'all'")
+                return 1
+            fail_marker = entry.get("fail_marker", "HIL_FAIL")
+            entry_timeout = int(entry.get("timeout_s", args.timeout))
+            uart_log = os.path.join(uart_log_dir, f"{i:02d}-{role}.log")
+
+            print(f"\n  --- [{i+1}/{len(firmwares)}] {role} ---")
+            print(f"      ELF:     {os.path.relpath(elf, project_dir)}")
+            print(f"      UART:    {port} (role={uart_role!r})")
+            print(f"      Markers: {markers} ({match_mode})")
+            print(f"      Log:     {uart_log}")
+
+            uart = UartCapture(
+                port,
+                pass_marker=markers[0] if isinstance(markers[0], str) else "HIL_PASS",
+                fail_marker=fail_marker,
+                pass_markers=markers,
+                match_mode=match_mode,
+                log_path=uart_log,
+            )
+            uart.start()
+            all_uarts.append((role, uart, uart_log))
+
+            # Pick + run flash command
+            if i == 0:
+                cmd, tcl_name = _build_first_firmware_cmd(
+                    xsdb, entry, bitstream, boot_init, zynqmp_boot_elfs,
+                    build_dir, project_dir, processor, no_os_flow)
+            else:
+                try:
+                    cmd, tcl_name = _build_secondary_firmware_cmd(
+                        xsdb, entry, build_dir, project_dir, processor)
+                except ValueError as e:
+                    print(f"\n  ERROR: {e}")
+                    return 1
+            print(f"      Flash:   {tcl_name}")
+
+            program_timeout = int(entry.get("program_timeout_s",
+                                  fw.get("program_timeout_s", 300)))
+            try:
+                prog_result = subprocess.run(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    timeout=program_timeout, text=True, cwd=build_dir,
+                )
+            except subprocess.TimeoutExpired as e:
+                print(f"      Programming timed out after {program_timeout}s")
+                return 1
+            if prog_result.stdout:
+                # Indent flash TCL output for readability inside the multi-fw loop
+                for line in prog_result.stdout.splitlines():
+                    print(f"      | {line}")
+            if prog_result.returncode != 0:
+                print(f"\n  {fail_str()}: {role} programming failed "
+                      f"(rc={prog_result.returncode})")
+                return 1
+
+            print(f"      Waiting for pass markers (timeout={entry_timeout}s)...")
+            result = uart.wait_result(entry_timeout)
+            if result == "PASS":
+                print(f"      {pass_str()}: {role} reached markers")
+            elif result == "FAIL":
+                print(f"\n  {fail_str()}: {role} hit fail marker {fail_marker!r}")
+                return 1
+            else:
+                missing = [m for m, ok in uart.matched.items() if not ok]
+                print(f"\n  {fail_str()}: {role} TIMEOUT")
+                print(f"  Missing markers: {missing}")
+                return 1
+
+        print()
+        print_separator()
+        print(f"  RESULT: {pass_str()} -- all {len(firmwares)} firmware role(s) reached markers")
+        for role, uart, log in all_uarts:
+            print(f"  UART log ({role}): {log}")
+        print_separator()
+        return 0
+    finally:
+        # Stop all UART loggers cleanly regardless of outcome.
+        for role, uart, log in all_uarts:
+            try:
+                uart.stop()
+            except Exception:
+                pass
 
 
 def _pass_marker_config(hil_config, project_dir=None):
@@ -310,6 +541,19 @@ def main() -> int:
     fw = hil_config.get("firmware", {})
     no_os_flow = _is_no_os_flow(hil_config, project_dir)
 
+    # Schema validation: firmware.firmwares (multi-role) and single-firmware
+    # keys are mutually exclusive. Detect mix early so the user sees a clear
+    # config error instead of a confusing runtime failure.
+    schema_conflict = _validate_firmwares_schema(fw)
+    if schema_conflict:
+        print(f"\n  ERROR: hil.json has both firmware.firmwares list AND "
+              f"single-firmware keys: {schema_conflict}.")
+        print(f"  These shapes are mutually exclusive. Either remove the "
+              f"single-firmware keys from firmware.* and move them into "
+              f"the relevant firmwares[] entry, or remove the firmwares "
+              f"list to use the single-firmware schema.")
+        return 1
+
     family = board_family(hil_config)
     init_name = boot_init_filename(family)
 
@@ -319,7 +563,12 @@ def main() -> int:
     if not bit_files:
         bit_files = glob.glob(os.path.join(
             build_dir, "vivado_project", "*.runs", "impl_1", "*.bit"))
-    if no_os_flow:
+    is_multi_firmware = (
+        isinstance(fw.get("firmwares"), list) and fw["firmwares"]
+    )
+    if is_multi_firmware:
+        elf_path = None  # each firmwares[] entry brings its own ELF path
+    elif no_os_flow:
         no_os_state = _load_state_json(project_dir, "no-os-make.json") or {}
         elf_path = no_os_state.get("artifacts", {}).get("elf")
         if not elf_path:
@@ -332,7 +581,7 @@ def main() -> int:
     missing = []
     if not bit_files:
         missing.append("bitstream (.bit)")
-    if not elf_path or not os.path.isfile(elf_path):
+    if not is_multi_firmware and (not elf_path or not os.path.isfile(elf_path)):
         missing.append("firmware (hil_app.elf)")
     if not os.path.isfile(boot_init):
         missing.append(init_name)
@@ -388,13 +637,26 @@ def main() -> int:
         print(f"\n  ERROR: XSDB not found")
         return 1
 
+    processor = firmware_processor(hil_config)
+
+    # Multi-firmware dispatch. When firmware.firmwares is set, hand off to
+    # the multi-role orchestrator -- it does per-entry UART logging and
+    # sequential boot. Single-firmware flows (the existing path) continue
+    # below unchanged.
+    if is_multi_firmware:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return _run_multi_firmware(
+            hil_config=hil_config, project_dir=project_dir, build_dir=build_dir,
+            bitstream=bit_files[0], boot_init=boot_init, family=family,
+            zynqmp_boot_elfs=zynqmp_boot_elfs, xsdb=xsdb, args=args,
+            processor=processor, no_os_flow=no_os_flow, timestamp=timestamp,
+        )
+
     # Find serial port
     port = _select_serial_port(hil_config, args.serial)
     if port is None:
         print(f"\n  ERROR: No serial port found (use --serial)")
         return 1
-
-    processor = firmware_processor(hil_config)
     print(f"\n  Project:   {project_dir}")
     print(f"  Bitstream: {os.path.relpath(bitstream, project_dir)}")
     print(f"  Firmware:  {os.path.relpath(elf_path, project_dir)}")
