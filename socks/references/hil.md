@@ -1174,6 +1174,62 @@ For a combined boot + ILA debug run:
   `hil_top.ltx` is absent, `hil_ila.py` returns 0 (no ILAs present)
   in the paced path and prints a warning in the capture-only path.
 
+### XSDB transcript log hygiene
+
+XSDB prints a startup banner on every session that names the build
+machine, e.g.:
+
+```
+Connect to this XSDB server use host <hostname> and port <port>
+```
+
+Any committed XSDB transcript leaks `<hostname>` -- the build machine
+identity -- via that one line. Vivado's batch output has the same
+problem: its banner names the host and tool tree (`Tool Version :
+Vivado v.2023.2 (lin64) Build ...` plus a hostname elsewhere in the
+header) and the routed-timing report (`.rpt`) embeds the host into
+the file header.
+
+If a project commits XSDB / Vivado transcripts as evidence (typical
+for HIL handoff artifacts), strip the host banner before commit.
+Three options, from least invasive to most aggressive:
+
+1. **Drop the banner during capture.** Append to the capture
+   pipeline:
+   ```bash
+   xsdb script.tcl ... 2>&1 | grep -v "^Connect to this XSDB server"
+   ```
+   Removes the offending line at the source; everything downstream
+   sees clean output. Works for Vivado batch too with the
+   appropriate `grep -v` patterns for `Build`, `Hostname`, etc.
+
+2. **Scrub the file after capture.** When the log already exists,
+   `sed` out the hostname and any home-directory paths to neutral
+   placeholders -- one substitution for the XSDB connect banner
+   (replace the hostname token after `use host` with
+   `BUILD_HOST`) and a second sweep over `/home/<user>/` or
+   `/Users/<user>/` paths (replace the `<user>` segment with
+   `BUILDUSER`). Works on `.rpt` files too. Prefer this for
+   after-the-fact cleanups when capture-time filtering wasn't
+   set up.
+
+3. **Don't commit transcripts at all.** Many handoff workflows
+   only need the **summary**, not the raw transcript. Capture the
+   transcript to `build/logs/` (which `.gitignore` should cover)
+   and write a human-readable summary file from it that quotes
+   only the relevant lines (without the banner).
+
+The fingerprint guard (`commit-msg` git hook in
+`~/.claude/hooks/git-hooks/`) catches uncleaned transcripts as
+identity / personal-identifier hits at commit time, but only when
+the hook is installed and not bypassed. The hygiene above is the
+first line of defense.
+
+**Symptom that you missed a banner:** `fingerprint_scan.py
+--scan-dir .` reports a `Personal identifier '<hostname>' found`
+finding pointing at an XSDB log or Vivado report file. Apply
+option 2 to the offending file, re-stage, retry.
+
 ---
 
 ## Streaming HIL Mode (post-ready streaming validation)
