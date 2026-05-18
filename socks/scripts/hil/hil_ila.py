@@ -2,24 +2,28 @@
 """
 Stage 18: HIL ILA Capture -- Breakpoint-paced ILA waveforms with ARM debug.
 
-VCD required: hard-fails if VCD missing. Requires ila_trigger_plan.json and
-hil_top.ltx in build/hil/.
+Two paths share this entry point:
 
-Flow:
-  1. Launch Vivado in interactive mode (programs FPGA, discovers ILA)
-  2. Boot CPU via XSDBSession (persistent debug session)
-  3. Open serial port + UART logger thread
-  4. For each capture: stop CPU -> set breakpoint -> arm ILA -> resume -> wait
-  5. On failure: dump backtrace, watch vars/addrs, AXI status
-  6. On CPU fault: JTAG-to-AXI register dump fallback
-  7. Print summary
+* Paced capture (the historical Stage 18 flow): VCD required, requires
+  ila_trigger_plan.json with one entry per debug iteration, requires
+  hil_top.ltx, and requires the debug-firmware build marker
+  (`vitis_ws/.debug_build`). The flow programs the FPGA, downloads the
+  firmware ELF over XSDB with the CPU stopped, sets a breakpoint per
+  capture, arms the ILA, and resumes the CPU per capture.
+
+* Capture-only path (`scope == system` and no ila_trigger_plan.json):
+  the firmware is assumed already running on the board. No XSDB
+  session, no UART logger, no breakpoints; Vivado attaches via
+  hw_server, loads hil_top.ltx, sets every probe to don't-care, arms
+  each ILA, and exports one CSV per core. Per-ILA failures do not
+  abort the run.
 
 Usage:
     python scripts/hil/hil_ila.py --project-dir .
 
 Exit codes:
     0  All captures succeeded
-    1  One or more captures failed (or VCD missing)
+    1  One or more captures failed (or VCD missing in paced mode)
 """
 
 import argparse
@@ -164,6 +168,126 @@ def uart_logger(ser, log_path, stop_event):
                 sys.stdout.flush()
 
 
+def _is_capture_only(scope, plan_path):
+    """Capture-only path applies when scope == system and there is no
+    trigger plan to pace against. Returns True if the plan file is missing
+    OR exists but has an empty captures list."""
+    if scope != "system":
+        return False
+    if not os.path.isfile(plan_path):
+        return True
+    try:
+        with open(plan_path) as f:
+            plan = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return not plan.get("captures")
+
+
+def _summarize_axis_activity(out_dir):
+    """Scan capture CSVs for AXIS-flavoured probes (TVALID/TREADY/TLAST/
+    TKEEP) and print an active-cycles summary per probe. Skips silently
+    if no AXIS-like probes are present. Tolerant to malformed CSVs --
+    summary failures do not affect the capture result."""
+    import csv, re
+    axis_pat = re.compile(r"(tvalid|tready|tlast|tkeep)", re.IGNORECASE)
+    csvs = sorted(glob.glob(os.path.join(out_dir, "ila_*.csv")))
+    if not csvs:
+        return
+    any_axis = False
+    print()
+    print_separator()
+    print(f"  AXIS activity summary (active cycles / total)")
+    for csv_path in csvs:
+        try:
+            with open(csv_path, newline="") as f:
+                rdr = csv.reader(f)
+                header = next(rdr, None)
+                if not header:
+                    continue
+                axis_cols = [(i, h) for i, h in enumerate(header)
+                             if axis_pat.search(h)]
+                if not axis_cols:
+                    continue
+                any_axis = True
+                active = {h: 0 for _, h in axis_cols}
+                total = 0
+                for row in rdr:
+                    total += 1
+                    for i, h in axis_cols:
+                        if i < len(row) and row[i].strip() not in ("", "0", "0x0"):
+                            active[h] += 1
+        except (OSError, csv.Error) as e:
+            print(f"    {os.path.basename(csv_path)}: summary skipped ({e})")
+            continue
+        print(f"    {os.path.basename(csv_path)} ({total} samples)")
+        for h in [h for _, h in axis_cols]:
+            print(f"      {h:40s}  {active[h]:6d} / {total}")
+    if not any_axis:
+        print(f"    (no AXIS-flavoured probes found in {len(csvs)} CSV(s))")
+    print_separator()
+
+
+def _run_capture_only(project_dir, build_dir, ltx_path, settings_path, timeout_s):
+    """Capture-only Stage 18 path. Runs Vivado in batch mode with
+    `ila_capture.tcl --capture-only`, which attaches to the running
+    board, sets every probe to don't-care, arms each ILA, and exports
+    one CSV per core. Per-ILA failures are reported but do not abort
+    the run."""
+    print(f"\n  Capture-only mode (scope=system, no ila_trigger_plan.json)")
+    print(f"    -- skipping XSDB, UART, breakpoint pacing, debug firmware checks")
+
+    settings = settings_path or find_vivado_settings()
+    if settings is None:
+        print(f"\n  ERROR: Vivado settings64.sh not found")
+        return 1
+    try:
+        vivado_path = subprocess.check_output(
+            ["bash", "-c", f'source "{settings}" && which vivado'],
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        print(f"\n  ERROR: vivado not found after sourcing settings")
+        return 1
+
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    out_dir = os.path.join(build_dir, f"ila-capture-only-{ts}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    ila_tcl = os.path.join(tcl_dir(), "ila_capture.tcl")
+    cmd = [
+        vivado_path, "-mode", "batch", "-notrace",
+        "-nojournal", "-nolog",
+        "-source", ila_tcl,
+        "-tclargs", build_dir, "--capture-only", "--out", out_dir,
+    ]
+    print(f"  Output dir: {out_dir}")
+    print(f"  Running Vivado batch capture (timeout {timeout_s}s)...")
+
+    try:
+        rc = subprocess.run(
+            cmd, cwd=build_dir, timeout=timeout_s,
+        ).returncode
+    except subprocess.TimeoutExpired:
+        print(f"\n  ERROR: Vivado batch capture exceeded {timeout_s}s timeout")
+        return 1
+
+    csvs = sorted(glob.glob(os.path.join(out_dir, "ila_*.csv")))
+    print()
+    print_separator()
+    print(f"  Captured {len(csvs)} ILA CSV(s) in {out_dir}:")
+    for c in csvs:
+        size = os.path.getsize(c)
+        print(f"    {os.path.basename(c):60s}  {size:8d} bytes")
+    print_separator()
+
+    _summarize_axis_activity(out_dir)
+
+    if rc != 0 and not csvs:
+        return 1
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 18: HIL ILA Capture")
     parser.add_argument("--project-dir", required=True, help="Project root")
@@ -218,6 +342,19 @@ def main() -> int:
         print(f"\n  No hil_top.ltx -- ILA not present in build")
         print(f"  Rebuild with --debug or ensure VCD exists before Stage 14")
         return 0
+
+    # Capture-only branch: scope == system and no ila_trigger_plan.json (or
+    # an empty captures list). Skip the strict paced-capture preconditions
+    # (trigger plan / debug firmware / breakpoints) -- the firmware is
+    # already running on the board, so there is nothing to pace.
+    if _is_capture_only(project_scope, plan_path):
+        return _run_capture_only(
+            project_dir=project_dir,
+            build_dir=build_dir,
+            ltx_path=ltx_path,
+            settings_path=args.settings,
+            timeout_s=args.timeout,
+        )
 
     if not os.path.isfile(plan_path):
         print(f"\n  No ila_trigger_plan.json in {build_dir}")

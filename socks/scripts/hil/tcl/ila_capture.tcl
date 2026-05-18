@@ -1,21 +1,35 @@
 # ila_capture.tcl - ILA readback for HIL debug
 #
 # Modes:
-#   Single:       vivado -mode batch -source ila_capture.tcl -tclargs <build_dir>
-#   Multi:        vivado -mode batch -source ila_capture.tcl -tclargs <build_dir> --plan <plan.json>
-#   Interactive:  vivado -mode tcl   -source ila_capture.tcl -tclargs <build_dir> --interactive
+#   Single:        vivado -mode batch -source ila_capture.tcl -tclargs <build_dir>
+#   Multi:         vivado -mode batch -source ila_capture.tcl -tclargs <build_dir> --plan <plan.json>
+#   Interactive:   vivado -mode tcl   -source ila_capture.tcl -tclargs <build_dir> --interactive
+#   Capture-only:  vivado -mode batch -source ila_capture.tcl -tclargs <build_dir> --capture-only [--out <dir>] [--program <bit>]
+#
+# Capture-only mode attaches to an already-booted device (no programming
+# unless --program is passed), loads the LTX, sets every probe on every
+# ILA to don't-care, arms each ILA, and exports one CSV per ILA. Per-ILA
+# failures are reported but do not abort the run -- subsequent ILAs are
+# still captured. This is the path used when scope == system and no
+# ila_trigger_plan.json is configured (firmware is already running, no
+# breakpoint pacing is possible).
 #
 # Interactive mode reads commands from stdin after programming FPGA and
 # discovering ILA. Commands:
 #   ARM <probe> <value> <output_csv>   — set trigger, arm, wait, readback
 #   QUIT                               — cleanup and exit
 #
-# Requires: board connected, DEBUG=true bitstream available
+# Requires: board connected, DEBUG=true bitstream available (single/multi/
+# interactive); board connected with a compatible bitstream already loaded
+# (capture-only).
 
 # Parse args: first positional arg is build_dir
 set build_dir ""
 set plan_file ""
 set interactive 0
+set capture_only 0
+set capture_only_out ""
+set capture_only_bit ""
 for {set i 0} {$i < [llength $argv]} {incr i} {
     set arg [lindex $argv $i]
     if {$arg eq "--plan"} {
@@ -23,12 +37,20 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
         set plan_file [lindex $argv $i]
     } elseif {$arg eq "--interactive"} {
         set interactive 1
+    } elseif {$arg eq "--capture-only"} {
+        set capture_only 1
+    } elseif {$arg eq "--out"} {
+        incr i
+        set capture_only_out [lindex $argv $i]
+    } elseif {$arg eq "--program"} {
+        incr i
+        set capture_only_bit [lindex $argv $i]
     } elseif {$build_dir eq ""} {
         set build_dir $arg
     }
 }
 if {$build_dir eq ""} {
-    error "Usage: ila_capture.tcl <build_dir> [--plan <plan.json>] [--interactive]"
+    error "Usage: ila_capture.tcl <build_dir> \[--plan <plan.json>\] \[--interactive\] \[--capture-only \[--out <dir>\] \[--program <bit>\]\]"
 }
 
 # --- JSON parser (minimal, handles our trigger plan format) ---
@@ -83,13 +105,136 @@ open_hw_manager
 connect_hw_server -allow_non_jtag
 open_hw_target
 
-# Select FPGA device
+# Select FPGA device (Zynq-7000 by default; fall back to any device for
+# Zynq UltraScale+ where xczu* names vary).
 set device [get_hw_devices xc7z*]
 if {$device eq ""} {
     set device [lindex [get_hw_devices] end]
 }
 current_hw_device $device
 puts "=== Selected device: $device ==="
+
+set ltx_path [file join $build_dir hil_top.ltx]
+
+if {$capture_only} {
+    # --- Capture-only mode: attach without programming (unless --program) ---
+    # The firmware is assumed to already be running on the board. We only
+    # load the LTX so the existing ILA cores can be discovered, set every
+    # probe to don't-care, arm each ILA, and export one CSV per core.
+    # Per-ILA failures do not abort the run.
+    if {$capture_only_out eq ""} {
+        set capture_only_out [file join $build_dir "ila-capture-only"]
+    }
+    file mkdir $capture_only_out
+
+    if {[file exists $ltx_path]} {
+        set_property PROBES.FILE $ltx_path $device
+    } else {
+        puts "WARN: hil_top.ltx not found at $ltx_path -- ILA probe names will be raw"
+    }
+
+    if {$capture_only_bit ne ""} {
+        if {![file exists $capture_only_bit]} {
+            error "Bitstream not found: $capture_only_bit"
+        }
+        set_property PROGRAM.FILE $capture_only_bit $device
+        program_hw_devices $device
+        puts "=== Device programmed: $capture_only_bit ==="
+    } else {
+        puts "=== Attaching without programming (capture-only) ==="
+    }
+    refresh_hw_device $device
+
+    set ilas [get_hw_ilas]
+    if {[llength $ilas] == 0} {
+        puts "ERROR: No ILA cores discovered. Check that the loaded bitstream matches $ltx_path"
+        close_hw_target
+        disconnect_hw_server
+        close_hw_manager
+        exit 1
+    }
+
+    puts "=== ILAs discovered: [llength $ilas] ==="
+    set capture_ok 0
+    set capture_fail 0
+    set idx 0
+    foreach ila $ilas {
+        set ila_name [get_property NAME $ila]
+        set safe_name [string map {"/" "_" "\\" "_" ":" "_"} $ila_name]
+        set csv_path [file join $capture_only_out "ila_${idx}_${safe_name}.csv"]
+        puts "--- ILA $idx: $ila_name ---"
+
+        # Set every probe to don't-care so arm triggers immediately
+        if {[catch {
+            foreach p [get_hw_probes -of_objects $ila] {
+                set w [get_property WIDTH $p]
+                if {$w == 1} {
+                    set_property TRIGGER_COMPARE_VALUE "eq1'bX" $p
+                } else {
+                    set nibbles [expr {($w + 3) / 4}]
+                    set_property TRIGGER_COMPARE_VALUE "eq${w}'h[string repeat X $nibbles]" $p
+                }
+            }
+            set_property CONTROL.DATA_DEPTH 4096 $ila
+            set_property CONTROL.TRIGGER_POSITION 512 $ila
+        } setup_msg]} {
+            puts "ILA_ERROR $ila setup: $setup_msg"
+            incr capture_fail
+            incr idx
+            continue
+        }
+
+        if {[catch {run_hw_ila $ila} arm_msg]} {
+            puts "ILA_ERROR $ila run_hw_ila: $arm_msg"
+            incr capture_fail
+            incr idx
+            continue
+        }
+
+        set t0 [clock seconds]
+        set done 0
+        while {[expr {[clock seconds] - $t0}] < 15} {
+            if {[catch {set status [get_property STATUS.CORE_STATUS $ila]} stat_msg]} {
+                puts "ILA_ERROR $ila status: $stat_msg"
+                break
+            }
+            if {$status eq "IDLE" || $status eq "FULL"} {
+                set done 1
+                break
+            }
+            after 100
+        }
+
+        if {!$done} {
+            puts "ILA_TIMEOUT $ila"
+            incr capture_fail
+            incr idx
+            continue
+        }
+
+        if {[catch {
+            write_hw_ila_data -csv_file -force $csv_path [upload_hw_ila_data $ila]
+        } write_msg]} {
+            puts "ILA_ERROR $ila upload/write: $write_msg"
+            incr capture_fail
+            incr idx
+            continue
+        }
+        puts "ILA_DONE $ila $csv_path"
+        incr capture_ok
+        incr idx
+    }
+
+    close_hw_target
+    disconnect_hw_server
+    close_hw_manager
+
+    puts "=== Capture-only complete: $capture_ok captured, $capture_fail failed, out_dir=$capture_only_out ==="
+    if {$capture_ok == 0} {
+        exit 1
+    }
+    exit 0
+}
 
 # Find bitstream dynamically (project name varies per DUT)
 set bit_path ""
@@ -101,7 +246,6 @@ if {$bit_path eq ""} {
     puts "ERROR: No bitstream found in $build_dir/vivado_project/*/impl_1/"
     exit 1
 }
-set ltx_path [file join $build_dir hil_top.ltx]
 
 set_property PROGRAM.FILE $bit_path $device
 if {[file exists $ltx_path]} {

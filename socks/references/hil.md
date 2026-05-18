@@ -55,7 +55,14 @@ the most useful status checks are the child process tree and the tail of
 
 **System scope behavior:**
 - Stage 14: uses existing Vivado project, skips VCD check, skips `--top` entity matching
-- Stage 18: capture-only mode (no VCD comparison)
+- Stage 18: capture-only mode when `ila_trigger_plan.json` is absent (or
+  has an empty captures list). Capture-only skips three preconditions
+  the paced-capture path requires: the trigger plan itself, the debug
+  firmware build marker (`vitis_ws/.debug_build`), and the per-capture
+  `break_before` / `break_before_addr` breakpoint requirement. Firmware
+  is assumed already running on the board -- no XSDB, no UART logger.
+  When a trigger plan _is_ present and scope is system, the strict
+  paced-capture path still applies.
 - Stage 19: skipped entirely (no VCD baseline)
 
 ---
@@ -727,26 +734,54 @@ readback, no SYSREF alignment error, and `Running IIOD server`.
 
 ### Stage 18: HIL ILA Capture (`scripts/hil/hil_ila.py`)
 
-**Purpose:** Observability test with debug firmware (ILA-paced captures).
+**Purpose:** Observability test with debug firmware (ILA-paced captures)
+_or_ post-boot capture-only readback (system scope, no plan).
 
-**VCD required:** Hard-fails if `build/sim/*.vcd` missing.
+**Two paths share this entry point:**
 
-**Debug firmware required:** Stage 18 checks for the debug build marker
-(`build/hil/vitis_ws/.debug_build`). If missing, it invokes a debug rebuild
-through `socks.py --stages 16 --debug` (not a direct script call) so
-`project.json` stays authoritative. Hard-fails if the debug rebuild fails.
-After debug rebuild, the board is reprogrammed (re-runs `flash.tcl`).
+* **Paced capture** (the historical Stage 18 flow): VCD required,
+  `ila_trigger_plan.json` required, debug firmware required,
+  `break_before` / `break_before_addr` required on every capture
+  entry. Firmware download + breakpoint pacing over XSDB; UART logger
+  attached.
+* **Capture-only** (selected automatically when `scope == system` and
+  `ila_trigger_plan.json` is absent or has an empty captures list):
+  attaches to a board that is already running. Skips the trigger
+  plan, debug firmware marker (`vitis_ws/.debug_build`), and
+  per-capture breakpoint preconditions. No XSDB session, no UART
+  logger. Vivado batch mode loads `hil_top.ltx`, sets every probe on
+  every discovered ILA to don't-care, arms each ILA, and exports one
+  CSV per core into `build/hil/ila-capture-only-<timestamp>/`.
+  Per-ILA failures (arm error, status timeout, upload error) are
+  reported but do not abort the run -- the remaining ILAs are still
+  captured. After capture, an AXIS activity summary scans the CSVs
+  for `TVALID` / `TREADY` / `TLAST` / `TKEEP` probes and prints
+  active-cycles-per-probe counts (skipped silently if no AXIS probes
+  are present).
 
-**Capture count coupling (hard-fail):** Before running captures, `hil_ila.py`
-counts captures in `ila_trigger_plan.json` and compares to
-`firmware.debug_iterations` in `hil.json`. If they don't match:
+**VCD required (paced path only):** Hard-fails if `build/sim/*.vcd` missing
+for module/block scope. Capture-only path does not check VCD.
+
+**Debug firmware required (paced path only):** The paced path checks for
+the debug build marker (`build/hil/vitis_ws/.debug_build`). If missing,
+it invokes a debug rebuild through `socks.py --stages 16 --debug` (not
+a direct script call) so `project.json` stays authoritative. Hard-fails
+if the debug rebuild fails. After debug rebuild, the board is
+reprogrammed (re-runs `flash.tcl`). Capture-only skips this entire
+check -- the firmware is already running.
+
+**Capture count coupling (hard-fail, paced path only):** Before running
+captures, `hil_ila.py` counts captures in `ila_trigger_plan.json` and
+compares to `firmware.debug_iterations` in `hil.json`. If they don't
+match:
 ```
 ERROR: ila_trigger_plan.json has N captures but firmware.debug_iterations is M. These must match.
 ```
 This is a **hard-fail**, not a warning. The firmware test phase count
-must equal the ILA capture count or the last capture will timeout.
+must equal the ILA capture count or the last capture will timeout. The
+capture-only path does not run this check (no plan, no iterations).
 
-**What it does:**
+**What it does (paced path):**
 1. Pre-flight: debug firmware check, capture count validation
 2. Launch Vivado in interactive mode (programs FPGA, discovers ILA)
 3. Boot CPU via `XSDBSession` (connect, target_arm, init_ps7, download, resume -- no FPGA reprogram)
@@ -759,12 +794,32 @@ must equal the ILA capture count or the last capture will timeout.
    - On failure: dump backtrace, watch vars, AXI status
 6. Export ILA data to CSV
 
-**Outputs:** `build/hil/ila_*.csv` (one per capture)
+**What it does (capture-only path):**
+1. Launch Vivado in batch mode with `ila_capture.tcl --capture-only`
+2. Attach to the running device via `hw_server` (no programming
+   unless explicitly requested through the TCL's `--program` flag)
+3. Load `hil_top.ltx` so probe names resolve
+4. Discover all ILA cores
+5. For each ILA: set every probe to don't-care, arm, wait for
+   IDLE/FULL status (per-core timeout), export CSV. Per-ILA failures
+   are reported but do not abort.
+6. Run `_summarize_axis_activity` over the produced CSVs to print
+   active-cycles-per-probe counts for any AXIS-flavoured probes.
 
-**Prerequisites:**
+**Outputs (paced):** `build/hil/ila_*.csv` (one per capture in the plan).
+**Outputs (capture-only):** `build/hil/ila-capture-only-<timestamp>/ila_<idx>_<name>.csv` (one per discovered ILA).
+
+**Prerequisites (paced):**
 - `hil_top.ltx` (debug probes file from implementation)
 - `ila_trigger_plan.json` (auto-generated or hand-written)
 - Debug firmware ELF (with `HIL_DEBUG_MODE` defined) + ps7_init
+
+**Prerequisites (capture-only):**
+- `hil_top.ltx` (probe names; without it probes show as raw and the
+  AXIS summary cannot match by name)
+- Board already running compatible firmware (typically Stage 17 has
+  just completed and pass markers fired -- see "RX-clock-domain
+  debug requires JESD link in DATA state" above for ADI flows)
 
 ### Stage 19: HIL ILA Verify (`scripts/hil/hil_verify.py`)
 
