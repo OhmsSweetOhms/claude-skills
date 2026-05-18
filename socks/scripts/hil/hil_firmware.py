@@ -287,6 +287,143 @@ def filter_xsct_output(text):
     return "".join(filtered), suppressed
 
 
+# --- ELF overlap preflight (Stage 17 dependency) ----------------------------
+#
+# Stage 17's XSDB-download path has no overlap detection: if two firmware
+# ELFs are downloaded in the same boot and their PT_LOAD segments overlap,
+# the second download silently overwrites parts of the first in DDR. The
+# observable failure mode (firmware crashes seconds into runtime) is many
+# layers downstream from the cause. verify_elf_layout() reads each ELF's
+# PT_LOAD segments and the configured reserved memory arenas, and returns a
+# structured conflict list so Stage 17 can bail before any board side-effect.
+#
+# pyelftools is imported lazily so projects that do not use this preflight
+# pay no import-time cost. See scripts/hil/requirements-hil.txt for the
+# install line.
+
+class ElfLoadSegment(tuple):
+    """A PT_LOAD segment named (label, start, end) where end is exclusive."""
+    __slots__ = ()
+
+    def __new__(cls, label, start, end):
+        if end <= start:
+            raise ValueError(
+                f"PT_LOAD with non-positive length: label={label} "
+                f"start=0x{start:08x} end=0x{end:08x}")
+        return tuple.__new__(cls, (label, start, end))
+
+    @property
+    def label(self): return self[0]
+    @property
+    def start(self): return self[1]
+    @property
+    def end(self):   return self[2]
+    @property
+    def length(self): return self[2] - self[1]
+
+
+class LayoutConflict(tuple):
+    """A pair of overlapping memory ranges, named (left, right) where each
+    side is an ElfLoadSegment-style 3-tuple."""
+    __slots__ = ()
+
+    def __new__(cls, left, right):
+        return tuple.__new__(cls, (left, right))
+
+    @property
+    def left(self):  return self[0]
+    @property
+    def right(self): return self[1]
+
+    def describe(self):
+        l_label, l_start, l_end = self[0]
+        r_label, r_start, r_end = self[1]
+        return (
+            f"{l_label} [0x{l_start:08x}..0x{l_end:08x}) overlaps "
+            f"{r_label} [0x{r_start:08x}..0x{r_end:08x})"
+        )
+
+
+def _read_elf_load_segments(elf_path, role_label):
+    """Return a list of ElfLoadSegment instances (one per PT_LOAD with
+    non-zero memory size) for the given ELF file."""
+    try:
+        from elftools.elf.elffile import ELFFile
+    except ImportError as exc:
+        raise RuntimeError(
+            "verify_elf_layout requires pyelftools. Install with "
+            "`pip install pyelftools` (or "
+            "`pip install -r scripts/hil/requirements-hil.txt`)."
+        ) from exc
+
+    segments = []
+    with open(elf_path, "rb") as f:
+        elf = ELFFile(f)
+        for seg in elf.iter_segments():
+            if seg["p_type"] != "PT_LOAD":
+                continue
+            memsz = int(seg["p_memsz"])
+            if memsz == 0:
+                continue
+            start = int(seg["p_paddr"]) or int(seg["p_vaddr"])
+            label = f"{role_label}:{os.path.basename(elf_path)}@0x{start:08x}"
+            segments.append(ElfLoadSegment(label, start, start + memsz))
+    return segments
+
+
+def _ranges_overlap(a, b):
+    """True iff half-open intervals [a.start, a.end) and [b.start, b.end)
+    share at least one byte."""
+    return a.start < b.end and b.start < a.end
+
+
+def verify_elf_layout(firmware_elfs, reserved_arenas):
+    """Verify that no firmware ELF's PT_LOAD segments overlap any other
+    firmware ELF's segments or any reserved memory arena.
+
+    Args:
+        firmware_elfs: iterable of (role_label, elf_path). role_label is
+            free-form text used to identify the firmware in conflict
+            messages (typical values: "A53", "R5_0", "R5_1"). Single-role
+            HIL flows pass a single-element iterable.
+        reserved_arenas: iterable of (label, base, length) tuples for
+            memory regions that must not be touched by any firmware ELF.
+            Typical examples: PL-owned DMA arenas, OCM reservations, the
+            FSBL stack on Zynq UltraScale+. Pass an empty iterable when
+            no arenas are reserved.
+
+    Returns:
+        list of LayoutConflict instances; empty list means no overlap.
+        Raises RuntimeError when pyelftools is missing or an ELF cannot
+        be parsed.
+    """
+    all_segments = []
+    for role_label, elf_path in firmware_elfs:
+        if not os.path.isfile(elf_path):
+            raise RuntimeError(f"firmware ELF not found: {elf_path}")
+        all_segments.extend(_read_elf_load_segments(elf_path, role_label))
+
+    arena_segments = []
+    for label, base, length in reserved_arenas:
+        if length <= 0:
+            continue
+        arena_segments.append(ElfLoadSegment(
+            f"reserved:{label}", int(base), int(base) + int(length)))
+
+    conflicts = []
+    # Firmware-vs-firmware overlap (all pairs).
+    for i in range(len(all_segments)):
+        for j in range(i + 1, len(all_segments)):
+            if _ranges_overlap(all_segments[i], all_segments[j]):
+                conflicts.append(LayoutConflict(all_segments[i], all_segments[j]))
+    # Firmware-vs-reserved-arena overlap.
+    for seg in all_segments:
+        for arena in arena_segments:
+            if _ranges_overlap(seg, arena):
+                conflicts.append(LayoutConflict(seg, arena))
+    return conflicts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 16: HIL Firmware Build")
     parser.add_argument("--project-dir", required=True, help="Project root")

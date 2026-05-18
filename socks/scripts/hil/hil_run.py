@@ -31,6 +31,7 @@ from hil_lib import (
     board_family, boot_init_filename, firmware_processor, firmware_uart_role,
     list_serial_candidates, select_uart_by_role,
 )
+from hil_firmware import verify_elf_layout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from socks_lib import (
@@ -201,6 +202,70 @@ def _select_serial_port(hil_config, override=None):
     return selected or find_serial_port(hil_config)
 
 
+def _reserved_arenas(hil_config):
+    """Read the optional firmware.reserved_arenas list from hil.json.
+
+    Schema (all entries optional in hil.json):
+        firmware.reserved_arenas: [
+            {"label": "r5_dma", "base": "0x70000000", "length": "0x04000000"},
+            ...
+        ]
+
+    base / length accept hex strings (`"0x..."`) or plain integers.
+    Returns a list of (label, base_int, length_int) tuples; empty list
+    when reserved_arenas is absent or empty. Bad entries raise ValueError.
+    """
+    fw = hil_config.get("firmware", {}) if hil_config else {}
+    raw = fw.get("reserved_arenas", []) or []
+    out = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError(
+                "firmware.reserved_arenas entries must be objects with "
+                "label/base/length")
+        label = entry.get("label") or "unnamed"
+        base = entry.get("base")
+        length = entry.get("length")
+        if base is None or length is None:
+            raise ValueError(
+                f"firmware.reserved_arenas[{label!r}] missing base or length")
+        if isinstance(base, str):
+            base = int(base, 0)
+        if isinstance(length, str):
+            length = int(length, 0)
+        out.append((label, int(base), int(length)))
+    return out
+
+
+def _firmware_specs_for_preflight(hil_config, elf_path, processor, no_os_flow):
+    """Return the (role_label, elf_path) firmware list the ELF overlap
+    preflight should check.
+
+    Today this is always a single-element list (single-role HIL). The
+    multi-role Stage 17 extension (tracker item #2) will widen this to
+    a list-of-firmware entries from hil_config; this helper is the seam
+    where that future schema is read.
+    """
+    fw = hil_config.get("firmware", {}) if hil_config else {}
+    if isinstance(fw.get("firmwares"), list) and fw["firmwares"]:
+        specs = []
+        for f in fw["firmwares"]:
+            role = f.get("role") or f.get("label") or "fw"
+            ep = f.get("elf")
+            if not ep:
+                raise ValueError(
+                    f"firmware.firmwares[{role!r}] missing elf path")
+            specs.append((role, ep))
+        return specs
+    if "cortexa53" in (processor or "").lower() or no_os_flow:
+        role = "A53"
+    elif "cortexr5" in (processor or "").lower():
+        role = "R5"
+    else:
+        role = "ps"
+    return [(role, elf_path)]
+
+
 def _pass_marker_config(hil_config, project_dir=None):
     fw = hil_config.get("firmware", {}) if hil_config else {}
     markers = None
@@ -276,6 +341,30 @@ def main() -> int:
         print(f"\n  ERROR: Missing: {', '.join(missing)}")
         print(f"  Run Stages 15-16 first.")
         return 1
+
+    # ELF overlap preflight: bail before any XSDB side-effect if the
+    # firmware ELF(s) intersect each other or a reserved memory arena.
+    # Single-role flows (current default) pass a one-element firmware
+    # list; multi-role flows will pass several when item #2 lands.
+    reserved_arenas = _reserved_arenas(hil_config)
+    firmware_specs = _firmware_specs_for_preflight(
+        hil_config, elf_path, processor=firmware_processor(hil_config),
+        no_os_flow=no_os_flow,
+    )
+    if reserved_arenas or len(firmware_specs) > 1:
+        try:
+            conflicts = verify_elf_layout(firmware_specs, reserved_arenas)
+        except RuntimeError as e:
+            print(f"\n  ERROR: ELF overlap preflight failed: {e}")
+            return 1
+        if conflicts:
+            print(f"\n  {fail_str()}: ELF layout overlap before XSDB download:")
+            for c in conflicts:
+                print(f"    {c.describe()}")
+            print(f"  Aborting before any board side-effect. Adjust the "
+                  f"firmware linker placement or reserved_arenas in "
+                  f"hil.json before retrying.")
+            return 1
 
     bitstream = bit_files[0]
     zynqmp_boot_elfs = []

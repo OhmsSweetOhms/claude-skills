@@ -212,6 +212,41 @@ need the same override.
 | `debug.watch_vars` | `[]` | C global variable names to read with XSDB `print` on failure |
 | `debug.watch_addrs` | `{}` | Labelled AXI register addresses to read with `mrd` on failure |
 | `debug.jtag_axi_dump` | `{}` | Named register regions for JTAG-to-AXI dump on CPU fault |
+| `firmware.reserved_arenas` | `[]` | List of memory regions that must not be touched by any firmware ELF. Each entry: `{"label": "...", "base": "0x...", "length": "0x..."}`. Consumed by Stage 17's ELF overlap preflight. Typical use: PL-owned DMA arenas (e.g. R5 DMA at `0x70000000..0x73FFFFFF`), OCM reservations, the FSBL stack region on Zynq UltraScale+. When set, Stage 17 reads each firmware ELF's `PT_LOAD` segments via pyelftools and bails before any XSDB download if any segment intersects a reserved arena. Pairs with `firmware.linker_placement` (item #1) to keep multi-firmware boots overlap-free. |
+
+### Stage 17 ELF overlap preflight
+
+Stage 17's XSDB-download path is destructive: once `xsdb dow <elf>` runs,
+the ELF's `PT_LOAD` sections land in DDR regardless of what was already
+there. If a second firmware download in the same boot has a segment
+that intersects the first firmware's segments -- or intersects a memory
+region the PL has been told to own -- the second download silently
+overwrites the first in DDR, and the observable failure (firmware
+crashes seconds into runtime, garbled UART, JESD bring-up half-broken)
+is many layers downstream of the cause.
+
+`scripts/hil/hil_run.py` runs an overlap preflight before any XSDB
+side-effect when **either** of these is true:
+
+- the project sets `firmware.reserved_arenas` in `hil.json` (single- or
+  multi-firmware), **or**
+- the firmware list has more than one entry (the multi-role Stage 17
+  extension; see item #2 in the SOCKS tracker history).
+
+The preflight reads each configured ELF via pyelftools, extracts the
+`PT_LOAD` segments with non-zero `p_memsz` (using `p_paddr` when set,
+otherwise `p_vaddr`), and checks all firmware-vs-firmware and
+firmware-vs-arena pairs as half-open ranges (`[start, end)`). On any
+conflict, Stage 17 prints the conflicting ranges and exits 1 before
+opening XSDB, the UART logger, or the flash TCL.
+
+**Install requirement:** the preflight imports `pyelftools` lazily.
+Projects that do not use `firmware.reserved_arenas` and run a
+single-firmware HIL pay no install cost. Projects that do trigger the
+preflight need `pip install pyelftools` (or
+`pip install -r scripts/hil/requirements-hil.txt`). Missing the
+package surfaces as an explicit `ERROR: ELF overlap preflight failed:
+verify_elf_layout requires pyelftools.` rather than a silent bypass.
 
 ### ADI profile UART markers
 
@@ -711,10 +746,14 @@ uses the staged ELF and FSBL instead of the native `hil_app.elf`.
 
 **What it does:**
 1. Pre-flight: verify bitstream, ELF, boot-init Tcl, serial port, XSDB all present
-2. Start UART capture background thread
-3. Program board via XSDB (`flash.tcl` for native firmware or
+2. ELF overlap preflight when `firmware.reserved_arenas` is configured
+   or when more than one firmware is scheduled -- bails before any
+   XSDB side-effect on conflict. See "Stage 17 ELF overlap preflight"
+   in the hil.json Schema section above.
+3. Start UART capture background thread
+4. Program board via XSDB (`flash.tcl` for native firmware or
    `flash_psu_no_os.tcl` for Zynq UltraScale+ A53 no-OS firmware)
-4. Wait for pass/fail marker on UART
+5. Wait for pass/fail marker on UART
 
 **Outputs:** Console log with UART output, PASS/FAIL result, and a timestamped
 UART transcript at `build/hil/uart-<timestamp>.log`.

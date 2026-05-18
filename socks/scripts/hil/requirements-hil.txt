@@ -1,0 +1,13 @@
+# Python dependencies for the HIL stages (Stages 14-19).
+#
+# Most stages need only the stdlib + pyserial. The Stage 17 ELF overlap
+# preflight (verify_elf_layout in hil_firmware.py) needs pyelftools to
+# parse PT_LOAD segments from firmware ELFs before XSDB download. It is
+# imported lazily; a project that does not configure
+# firmware.reserved_arenas in hil.json never triggers the import.
+#
+# Install:
+#   pip install -r scripts/hil/requirements-hil.txt
+
+pyserial>=3.5
+pyelftools>=0.30
