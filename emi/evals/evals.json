@@ -34,13 +34,13 @@
     {
       "id": 6,
       "prompt": "Get ready for CE102 hot config 16 using yesterday's ambient baseline. Do not run it yet.",
-      "expected_output": "Stages only the next CE102 run folder and run.json, verifies prior ambient/config artifacts and analyzer settings, reports the intended command/settings, and explicitly avoids live acquisition until a later go/apply instruction.",
+      "expected_output": "Uses ce102 init-run when the campaign is in the UUT layout, stages only the next CE102 run folder/run.json/rolling-manifest ready entry, verifies prior ambient/config artifacts and analyzer settings, reports the generated run ID and planned scan command/settings, and explicitly avoids live acquisition until a later go/apply instruction.",
       "files": []
     },
     {
       "id": 7,
       "prompt": "Go run the CE102 config we staged, then tell me whether it is the current best.",
-      "expected_output": "Runs the reviewed CE102 scan, preserves raw CSV, writes corrected JSON, generates per-run and ambient/config overlay/summary plot SVGs, runs limit-summary, updates run.json plot paths, compares key harmonic markers against the previous config, reports peak, worst margin, pass/fail, generated paths, and current-best status.",
+      "expected_output": "Runs the reviewed CE102 scan from the staged run.json planned_command, preserves raw CSV, writes corrected JSON, then uses ce102 finalize-run to update run.json, compute summary/margins, generate per-run and rolling summary SVGs, mark the manifest acquired, update the CE102 emission profile, compare key harmonic markers against the previous config, and report peak, worst margin, pass/fail, generated paths, and current-best status.",
       "files": []
     },
     {

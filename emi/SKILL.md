@@ -93,11 +93,17 @@ live hardware.
 
 For CE102 iterative tuning, use the two-step bench loop:
 
-- `get ready`: stage the next numbered run folder and `run.json`, verify prior
-  artifacts and analyzer reachability, report settings, and do not acquire.
-- `go`: run the scan, generate per-run and overlay/summary plot SVGs, run
-  `limit-summary`, compare against the previous configuration and ambient
-  baseline, update `run.json` paths, and report pass/fail plus current best.
+- `get ready` / `init`: use the repo CLI instead of hand-curating campaign
+  JSON whenever possible:
+  `.venv/bin/python tools/emi_control.py ce102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
+  This creates the next run folder, `run.json`, planned scan command, scan
+  plan, optional ping precheck, and rolling-manifest ready entry. Report the
+  generated run ID/settings and do not acquire.
+- `go`: run the reviewed `ce102 scan` command from `run.json`, then use
+  `.venv/bin/python tools/emi_control.py ce102 finalize-run <run.json> --uut <uut_id>`.
+  Finalization updates `run.json`, computes summary/margins, generates per-run
+  and rolling SVG plots, marks the manifest entry acquired, and updates the
+  UUT CE102 emission profile from the measured peak.
 
 For calibration or measurement-system checks, stage artifacts under
 `data/<test>/calibration/<run_id>/` and record injection plane, losses, source
