@@ -27,6 +27,7 @@ import importlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -112,6 +113,144 @@ PROJECT_FILES_OPTIONAL = ["CLAUDE.md", ".gitignore"]
 FINGERPRINT_ENGINE = os.path.join(
     str(os.path.expanduser("~")), ".claude", "hooks", "fingerprint_engine.py"
 )
+
+
+def resolve_selected_hil_json(project_dir, config_path=None):
+    """Resolve the active HIL config for Stage 0 checks."""
+    override = config_path or os.environ.get("SOCKS_HIL_CONFIG")
+    if override:
+        if os.path.isabs(override):
+            return os.path.abspath(override)
+        return os.path.abspath(os.path.join(project_dir, override))
+    return os.path.join(project_dir, "hil.json")
+
+
+def _cli_arg_value(argv, flag):
+    """Return a CLI option value from list args, supporting --flag value/--flag=value."""
+    prefix = f"{flag}="
+    for idx, arg in enumerate(argv):
+        if arg == flag and idx + 1 < len(argv):
+            return argv[idx + 1]
+        if isinstance(arg, str) and arg.startswith(prefix):
+            return arg[len(prefix):]
+    return None
+
+
+def _post_ready_cmd_args(cmd):
+    if isinstance(cmd, str):
+        try:
+            return shlex.split(cmd)
+        except ValueError:
+            return []
+    if isinstance(cmd, list):
+        return [str(part) for part in cmd]
+    return []
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hil_host_mtu_requirements(hil_cfg):
+    """Extract host-interface / MTU preconditions from streaming HIL config.
+
+    Recognized hil.json keys (both required when `streaming.enabled` is true):
+        streaming.host_interface   -- host NIC name, e.g. "eth0"
+        streaming.require_host_mtu -- minimum MTU the NIC must already have
+
+    The same preconditions may also be passed through `firmware.post_ready_cmd`
+    as CLI flags `--host-interface NAME --require-host-mtu N`, for streaming
+    flows whose host-side command embeds the values directly.
+    """
+    requirements = {}
+
+    streaming = hil_cfg.get("streaming", {})
+    if isinstance(streaming, dict) and streaming.get("enabled", False):
+        iface = streaming.get("host_interface")
+        required_mtu = _int_or_none(streaming.get("require_host_mtu"))
+        if iface and required_mtu:
+            requirements[str(iface)] = required_mtu
+
+    fw = hil_cfg.get("firmware", {})
+    args = _post_ready_cmd_args(fw.get("post_ready_cmd"))
+    required_mtu = _int_or_none(_cli_arg_value(args, "--require-host-mtu"))
+    if required_mtu:
+        iface = _cli_arg_value(args, "--host-interface")
+        requirements[str(iface) if iface else ""] = required_mtu
+
+    return requirements
+
+
+def _read_interface_mtu(iface):
+    result = subprocess.run(
+        ["ip", "-j", "link", "show", "dev", iface],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "ip link failed").strip()
+        return None, detail
+    try:
+        links = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return None, f"could not parse ip output: {exc}"
+    if not links:
+        return None, "interface not found"
+    return links[0].get("mtu"), None
+
+
+def check_hil_host_network(hil_cfg):
+    """Check host network preconditions declared by HIL streaming configs.
+
+    Returns (passed, info_lines). info_lines is a list of
+    (label, ok, detail) tuples where ok is True/False (counted toward
+    pass/fail) or None (informational only, no effect on pass).
+    """
+    info = []
+    passed = True
+    requirements = _hil_host_mtu_requirements(hil_cfg)
+
+    if not requirements:
+        info.append(("Host MTU", None, "no declared HIL streaming MTU requirement"))
+        return True, info
+
+    for iface, required_mtu in requirements.items():
+        if not iface:
+            info.append(("Host MTU", False,
+                         f"--require-host-mtu {required_mtu} without --host-interface"))
+            passed = False
+            continue
+
+        try:
+            actual_mtu, error = _read_interface_mtu(iface)
+        except FileNotFoundError:
+            info.append((f"Host MTU {iface}", False, "ip tool not found"))
+            passed = False
+            continue
+        except subprocess.TimeoutExpired:
+            info.append((f"Host MTU {iface}", False, "ip link probe timed out"))
+            passed = False
+            continue
+
+        if error:
+            info.append((f"Host MTU {iface}", False, error))
+            passed = False
+        elif actual_mtu is None:
+            info.append((f"Host MTU {iface}", False, "mtu not reported"))
+            passed = False
+        elif int(actual_mtu) < required_mtu:
+            info.append((f"Host MTU {iface}", False,
+                         f"{actual_mtu} < required {required_mtu}"))
+            passed = False
+        else:
+            info.append((f"Host MTU {iface}", True,
+                         f"{actual_mtu} >= required {required_mtu}"))
+
+    return passed, info
 
 
 def check_vivado(settings_path):
@@ -421,6 +560,8 @@ def main() -> int:
                         help="Explicit path to Vivado settings64.sh")
     parser.add_argument("--project-dir", type=str, default=None,
                         help="Project directory to check structure (optional)")
+    parser.add_argument("--hil-config", type=str, default=None,
+                        help="Alternate HIL config path, relative to project root unless absolute")
     args = parser.parse_args()
 
     print_header("SOCKS Stage 0 -- Environment Preflight")
@@ -503,10 +644,14 @@ def main() -> int:
 
     # --- Section 6: HIL Tool Checks (auto-generate hil.json if missing) ---
     if args.project_dir:
-        hil_json = os.path.join(os.path.abspath(args.project_dir), "hil.json")
-        if not os.path.isfile(hil_json):
+        project_abs = os.path.abspath(args.project_dir)
+        hil_json = resolve_selected_hil_json(project_abs, args.hil_config)
+        default_hil_json = os.path.join(project_abs, "hil.json")
+        explicit_hil_json = bool(args.hil_config or os.environ.get("SOCKS_HIL_CONFIG"))
+
+        if not explicit_hil_json and not os.path.isfile(default_hil_json):
             # Auto-generate from socks.json + VHDL port analysis
-            socks_json = os.path.join(os.path.abspath(args.project_dir), "socks.json")
+            socks_json = os.path.join(project_abs, "socks.json")
             if os.path.isfile(socks_json):
                 sys.path.insert(0, SCRIPT_DIR)
                 from project_config import get_entity, get_part
@@ -517,11 +662,15 @@ def main() -> int:
                     sys.path.insert(0, hil_lib_dir)
                     from hil_prep import maybe_generate_artifacts
                     maybe_generate_artifacts(args.project_dir, _top, _part)
-                    if os.path.isfile(hil_json):
+                    if os.path.isfile(default_hil_json):
                         print_result(f"{'hil.json':24s} auto-generated from socks.json", True)
                     else:
                         print_result(f"{'hil.json':24s} generation failed", False)
                         all_warnings.append("hil.json auto-generation failed")
+
+        if not os.path.isfile(hil_json) and explicit_hil_json:
+            print_result(f"{'HIL config':24s} not found: {hil_json}", False)
+            all_passed = False
 
         uart_ok = False
         jtag_ok = False
@@ -529,7 +678,8 @@ def main() -> int:
         first_target = None
 
         if os.path.isfile(hil_json):
-            print(f"\n  HIL Tools (hil.json detected):")
+            hil_label = os.path.relpath(hil_json, project_abs)
+            print(f"\n  HIL Tools ({hil_label} detected):")
             # Import hil_lib for tool discovery
             hil_lib_dir = os.path.join(SCRIPT_DIR, "hil")
             sys.path.insert(0, hil_lib_dir)
@@ -560,12 +710,24 @@ def main() -> int:
                     print_result(f"{'pyserial':24s} NOT INSTALLED", False)
                     all_warnings.append("pyserial not installed -- required for HIL stages 17-18")
 
+                with open(hil_json) as _f:
+                    hil_cfg = json.load(_f)
+
+                # --- Section 6.4: HIL Host Network Preconditions ---
+                print(f"\n  HIL Host Network:")
+                net_ok, net_info = check_hil_host_network(hil_cfg)
+                for name, ok, detail in net_info:
+                    if ok is None:
+                        print_info(f"{name:24s} {detail}")
+                    else:
+                        print_result(f"{name:24s} {detail}", ok)
+                if not net_ok:
+                    all_passed = False
+
                 # --- Section 6.5: HIL Board Detection ---
                 print(f"\n  HIL Board Detection:")
 
                 # UART port check
-                with open(hil_json) as _f:
-                    hil_cfg = json.load(_f)
                 serial_candidates = list_serial_candidates(hil_cfg)
                 if serial_candidates:
                     print_info(f"{'UART candidates':24s} "

@@ -633,6 +633,8 @@ def main() -> int:
             if args.settings:
                 extra_args.extend(["--settings", args.settings])
                 reason += f" (user-specified: {args.settings})"
+            if args.hil_config:
+                extra_args.extend(["--hil-config", args.hil_config])
 
         elif stage == 1:
             project_scope = get_scope(project_dir) or args.scope
