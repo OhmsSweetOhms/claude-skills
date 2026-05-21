@@ -39,6 +39,12 @@ in --check mode):
   threads.non_canonical_linked_research  uses 'session' key or project-prefixed
                                          path instead of canonical 'path' +
                                          '.research/session-XXXX'
+  threads.malformed_date                 started/updated is not a bare ISO date
+                                         'YYYY-MM-DD' (has a time component or
+                                         trailing prose)
+  threads.invalid_status                 thread or plan-hop status is not one of
+                                         the unified enum (active/blocked/
+                                         superseded/closed)
   research.broken_spawning_thread        spawning_thread references a missing
                                          .threads/<id>/ directory
   research.non_canonical_spawning_thread spawning_thread is prefixed with
@@ -131,6 +137,34 @@ def utc_now_iso() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Field-format validation (schema-contract enforcement)
+# ---------------------------------------------------------------------------
+
+# Unified status enum — threads AND plan hops share these four values.
+# See references/layout.md "unified status vocabulary"; substance/nuance goes
+# in `outcome` prose, never in new enum values.
+VALID_STATUSES = ("active", "blocked", "superseded", "closed")
+
+_BARE_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def is_bare_iso_date(value: Any) -> bool:
+    """True iff value is a bare ISO calendar date 'YYYY-MM-DD'.
+
+    Rejects datetime forms ('2026-05-09T16:00:00') and date-plus-prose
+    ('2026-05-20 (CLOSED ...)') — both crash status_review.py's strict
+    date parse. Callers treat empty/None as 'not present' and skip it.
+    """
+    if not isinstance(value, str) or not _BARE_ISO_DATE.match(value):
+        return False
+    try:
+        dt.date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Thread extraction
 # ---------------------------------------------------------------------------
 
@@ -217,6 +251,37 @@ def extract_thread(path: Path, existing_session_ids: set[str]) -> tuple[dict[str
             thread_id, "closed_without_findings",
             "thread.status='closed' but findings[] is empty"
         ))
+
+    # Date-format contract: started/updated must be bare ISO dates. Left
+    # unenforced for a long time, which let closure summaries and datetime
+    # stamps accrete in `updated` and crash downstream date parsing. Only
+    # flag present-but-malformed values; absence is a separate concern.
+    for field_name in ("started", "updated"):
+        value = raw.get(field_name)
+        if value and not is_bare_iso_date(value):
+            findings.append(ThreadFinding(
+                thread_id, "malformed_date",
+                f"{field_name}={value!r} is not a bare ISO date 'YYYY-MM-DD' "
+                "(no time component, no prose — narrative belongs in the hop "
+                "outcome, handoff.md, or README)"
+            ))
+
+    # Status-enum contract: thread + each plan hop must use one of the four
+    # unified values. Catches invented values like 'open' or 'done', which
+    # get silently dropped from status rollups.
+    if status is not None and status not in VALID_STATUSES:
+        findings.append(ThreadFinding(
+            thread_id, "invalid_status",
+            f"thread status={status!r} is not one of {VALID_STATUSES}"
+        ))
+    for hop in plan_hops_raw:
+        hop_status = hop.get("status")
+        if hop_status is not None and hop_status not in VALID_STATUSES:
+            findings.append(ThreadFinding(
+                thread_id, "invalid_status",
+                f"plan hop {hop.get('file') or hop.get('num')!r} "
+                f"status={hop_status!r} is not one of {VALID_STATUSES}"
+            ))
 
     summary = {
         "id": thread_id,

@@ -154,6 +154,19 @@ Per-thread manifest. Authoritative for what's in this thread.
 
 - `id` — identical to the `threads.json` entry. One canonical
   form.
+- `status` — unified enum: `active`, `blocked`, `superseded`,
+  `closed`. Nuance goes in plan-hop `outcome` prose, never in new
+  enum values. The indexer's `--check` flags anything else as
+  `invalid_status` (an invented value like `open` is silently
+  dropped from status rollups otherwise).
+- `started`, `updated` — bare ISO calendar dates, `YYYY-MM-DD`
+  **only**. No time component (`2026-05-09T16:00:00` is wrong — use
+  `date.today().isoformat()`, not `datetime.now().isoformat()`) and
+  no trailing prose (`2026-05-20 (CLOSED — plan-02 landed …)` is
+  wrong). Closure/transition narrative belongs in the hop
+  `outcome`, `handoff.md`, or the README status header — not here.
+  The indexer's `--check` flags violations as `malformed_date`; a
+  malformed value crashes `status_review.py`'s strict date parse.
 - `parent_plans[]` — Type A plans this thread investigates under.
   Usually one entry; sometimes zero (exploratory); occasionally
   two (cross-cutting investigation).

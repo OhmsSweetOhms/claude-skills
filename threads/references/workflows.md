@@ -211,7 +211,11 @@ deserves its own plan rather than appending to the current one.
 3. Append the new hop:
    `{"num": N, "file": "plan-NN-<slug>.md", "status": "active", "outcome": null}`.
 4. Update `thread.json.current_plan` to the new hop's filename.
-5. Update `thread.json.updated` to today's date.
+5. Update `thread.json.updated` to today's date — a bare
+   `YYYY-MM-DD` (no time component, no prose). The transition
+   narrative goes in the new hop's `outcome` and the `handoff.md`
+   session-log, never in this date field. The indexer's `--check`
+   flags a malformed value as `malformed_date`.
 6. Update `<threads-path>/threads.json`: find this thread's entry,
    update `current_plan` and `updated`.
 7. Copy `assets/templates/plan-01-template.md` →
@@ -490,7 +494,11 @@ thread, or blocked indefinitely).
 1. Set `thread.json.status` to the chosen value.
 2. Set the active plan hop's `status` to match (typically `closed`
    or `superseded`) and fill its `outcome`.
-3. Update `thread.json.updated`.
+3. Update `thread.json.updated` to today's date — bare `YYYY-MM-DD`
+   only. The closure narrative goes in the hop `outcome`, the final
+   findings snapshot, and `handoff.md` — never in this date field.
+   (The indexer's `--check` flags a malformed value as
+   `malformed_date`.)
 4. Update `<threads-path>/threads.json`: find this thread's entry,
    update `status` and `updated`.
 5. Update the thread's `README.md` status header.
