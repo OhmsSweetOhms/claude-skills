@@ -1,6 +1,6 @@
 ---
 name: gps-design
-description: "GPS L1 C/A receiver design, debug, and test for the gps_design project (Python block-level golden model -> bare-metal PS firmware -> Zynq PL VHDL). Use this skill whenever the user is working on the GPS receiver pipeline: acquisition (PCPS FFT), tracking loops (DLL/PLL/FLL with Kaplan coefficients), nav-bit extraction and subframe decode (LNAV), pseudorange anchoring and SV-transmit-time recovery, PVT solver (WLS + Cholesky), antenna geometry and link budget, AD9986/AD9081 front-end NCO/JESD profile planning, or weak-signal cislunar extensions. Also triggers on debugging anchor drift, first-fix position error, sf_end_sample_idx attribution, preamble sync, dump_end_sample_idx timing, scenario_engine IQ generation, tx_time_offset_profiles, ZCU102 AD9986 profile work, or the .research session directories for GPS receiver topology. The skill consolidates project-specific knowledge organized by receiver pipeline chapter -- each chapter is a reference file you load on demand. Apply this skill even when the user doesn't explicitly invoke 'GPS' by name, if they're touching any file under gps_receiver/, gps_iq_gen/, scenario_engine/, or the AD9986/ZCU102 GPS streaming profiles."
+description: "GPS L1 C/A receiver design, debug, and test for the gps_design project (Python block-level golden model -> bare-metal PS firmware -> Zynq PL VHDL). Use this skill whenever the user is working on the GPS receiver pipeline: acquisition (PCPS FFT), tracking loops (DLL/PLL/FLL with Kaplan coefficients), nav-bit extraction and subframe decode (LNAV), pseudorange anchoring and SV-transmit-time recovery, PVT solver (WLS + Cholesky), antenna geometry and link budget, AD9986/AD9081 front-end NCO/JESD profile planning, or weak-signal cislunar extensions. Also triggers on debugging anchor drift, first-fix position error, sf_end_sample_idx attribution, preamble sync, dump_end_sample_idx timing, scenario_engine IQ generation, tx_time_offset_profiles, ZCU102 AD9986 profile work, regenerating the docs/json-structure spec-stack HTML atlas (tools/build_json_atlas.py) or the docs/results-dashboard run-results dashboard (tools/build_results.py), creating and running a scenario (scenario_engine/scenarios/*.v2.json) and capturing its outcome to the dashboard (outputs.results sink, gps_scenario.py --stream-replay), or the .research session directories for GPS receiver topology. The skill consolidates project-specific knowledge organized by receiver pipeline chapter -- each chapter is a reference file you load on demand. Apply this skill even when the user doesn't explicitly invoke 'GPS' by name, if they're touching any file under gps_receiver/, gps_iq_gen/, scenario_engine/, or the AD9986/ZCU102 GPS streaming profiles."
 ---
 
 # GPS Design -- L1 C/A Receiver for the gps_design Project
@@ -28,7 +28,7 @@ single coherent pipeline. The receiver is intentionally split by
   (telemetry decoder — bit-sync + preamble + TLM/HOW + parity +
   SF1/2/3 ephemeris decode), PS.B12 (PVT), PS.B13 (Observables).
 
-See `gps_receiver/CLAUDE.md`, `shared-interfaces.v1.json`, and
+See `gps_receiver/CLAUDE.md`, `shared-interfaces.json`, and
 `blocks_map.json` for the authoritative current block inventory.
 
 See the project's `CLAUDE.md` for the big-picture architecture. This
@@ -56,6 +56,7 @@ in the order the data flows through.
 | Antenna geometry | `references/gps-antenna-geometry.md` | Stub | Link budget, off-boresight angle, occultation, cislunar dynamics |
 | FPGA PL bring-up | `references/fpga-pl-bringup.md` | Current | Hardware target matrix (ZCU102/AD9986 + Zynq-7030/Zedboard/AD9361), decimation chain (/30 vs /15 prime cascades), xsim verification convention, HIL-as-system substrate pattern, per-PL-block thread structure, SOCKS conventions |
 | AD9986 GPS NCO planning | `references/ad9986-gps-nco-frequency-planning.md` | Current | 3.93216 GHz clean converter-clock math, L1/L2/L5/Iridium NCO plans, RX CDDC/FDDC vs TX CDUC/FDUC placement, JESD/profile validation checklist |
+| Adding a scenario **& running it** | `references/adding-a-scenario.md` | Current | Author a `scenario_engine/scenarios/*.v2.json` root (`signal_source` branches, platform/entity/`receiver_profile`/iq_gen/outputs blocks), validate, register a mode, regen the atlas — **then run it and capture results to the dashboard** (`outputs.results` sink, `--stream-replay` for heavy runs, `tools/build_results.py`). Read this whenever the user asks to create/run a scenario or see its results. |
 
 For project-wide thread sequencing across all active work (not just
 PL), see `gps_receiver/threads/tiered-execution-flow.md` — strategic
@@ -124,35 +125,154 @@ mismatch.
 
 ## The JSON Spec Stack
 
-Four JSON files form the configuration contract. Their content is the
-single source of truth for block structure, parameters, telemetry, and
-test scenarios. Code reads from these at runtime; don't hardcode
-values that should come from profiles.
+The stack pivoted in 2026-05 (plan-02 of the receiver-consolidation
+sprint): a v2 scenario JSON at `scenario_engine/scenarios/<name>.v2.json`
+is now the **single root of truth** for an end-to-end run. It carries the
+receiver location, platform, entities, environment, and the `iq_gen` block
+(cn0, doppler envelope, duration, noise, dynamics) that used to live inline
+in `tracking-mode-profiles.json`. Modes in
+`tracking-mode-profiles.json` are now **thin pointers**:
+`{scenario_root, diagnostic_overlay?, notes}`. Code reads from these at
+runtime; don't hardcode values that belong in a scenario or profile.
 
 ```
-tracking-mode-profiles.v1.json       <- "test this scenario"
-  |-- iq_gen_defaults                -> gps_iq_gen satellite config
-  +-- receiver_profile: "open_sky"   -> receiver-block-profiles.v1.json
-        +-- per-block params         -> shared-interfaces.v1.json
-              +-- telemetry signals  -> monitor-signals.json
+tracking-mode-profiles.json        thin-pointer registry ("test this scenario")
+  └─ scenario_root: "<name>.v2.json"  ← single root of truth for the run
+       platforms.<p>.{trajectory, antennas}
+       entities.<e>.{platform, antenna, receiver_profile, kind}
+       environment.{elevation_mask_deg, t_sys_k, cn0_floor_dbhz}
+       iq_gen.{doppler_type, nav_data, duration_s, noise_model, ...}
+         └─ receiver_profile (string)  → receiver-block-profiles.json
+              └─ per-block params       → shared-interfaces.json
+                   └─ telemetry signals → monitor-signals.json
+  validated by:   scenario_engine/schemas/scenario.schema.json (Draft-07)
+  physics inputs: rf.json (GPS tx + propagation), receiver.json (hardware)
 ```
 
 | File | Purpose | Consumed By |
 |------|---------|-------------|
-| `shared-interfaces.v1.json` | Block IDs, Python module/class, I/O contracts, transport | Code structure, tests, FPGA build |
-| `receiver-block-profiles.v1.json` | Runtime parameters per profile per block | `GPSReceiver(profile=...)` at init |
-| `monitor-signals.json` | Telemetry signals with types, rates, `source_block` attribution | Telemetry frame packing, viewer, tests |
-| `tracking-mode-profiles.v1.json` | Operational scenarios mapping dynamics envelopes -> IQ gen config + receiver profile | End-to-end test fixtures |
+| `scenario_engine/scenarios/*.v2.json` | **Scenario root**: platform/entity/environment/iq_gen/outputs(/targets). Single source of truth per run. | `gps_scenario.load_scenario_root_v2`, RINEX export |
+| `scenario_engine/schemas/scenario.schema.json` | Draft-07 validator for the v2 shape (conditional per `signal_source`: synthetic / test_24sv / rinex / live). | `gps_scenario._validate_v2_scenario` |
+| `tracking-mode-profiles.json` | Thin-pointer mode registry: `{scenario_root, diagnostic_overlay?, notes}`. | `gps_scenario.build_config(mode)` |
+| `receiver-block-profiles.json` | Runtime parameters per profile per block (open_sky, urban, high_dynamic, indoor, cislunar). | `GPSReceiver(profile=...)` at init |
+| `shared-interfaces.json` | Block IDs, Python module/class, I/O contracts, transport. | Code structure, tests, FPGA build |
+| `monitor-signals.json` | Telemetry signals with types, rates, `source_block` attribution. | Telemetry frame packing, viewer, tests |
+| `rf.json` / `receiver.json` | GPS tx + propagation physics / receiver hardware (antenna, AD9361, decimation, bit-select). | `scenario_engine` link budget + synthesis |
 
 ### Invariants
 
-- Parameter names in `receiver-block-profiles.v1.json` must match
+- Parameter names in `receiver-block-profiles.json` must match
   `.get()` keys in `receiver.py`. If you add a parameter, wire both.
-- Block IDs (`PL.B1`, `PS.B4`, etc.) are canonical across all four
-  files. Don't invent new IDs without updating all files.
-- `tracking-mode-profiles.v1.json`'s `receiver_profile` values are
-  keys into `receiver-block-profiles.v1.json`'s `profiles`. `null`
-  means IQ generation only (no matched receiver config).
+- Block IDs (`PL.B1`, `PS.B4`, etc.) are canonical across all the files.
+  Don't invent new IDs without updating all of them.
+- A scenario binds its receiver via `entities.<e>.receiver_profile` (a
+  string key into `receiver-block-profiles.json::profiles`) — **not**
+  via `tracking-mode-profiles`. For pure IQ generation with no matched
+  receiver config (e.g. `extreme_dynamic`), omit the entity entirely
+  under `signal_source: synthetic` (the old `receiver_profile: null`
+  convention is gone).
+- Adding a scenario = write `scenario_engine/scenarios/<name>.v2.json`,
+  validate it (`tests.test_scenario_root_schema` auto-discovers any
+  `*.v2.json`), then optionally add a thin-pointer mode — or load it
+  directly with `--scenario-root <path>`.
+- "Profile" is overloaded: `tracking-mode-profiles` are **selectors**
+  above the scenario (a mode just points at a `.v2`), while
+  `receiver-block-profiles` are **receiver tuning** the scenario binds
+  below it. The scenario is the hub, not either profile file.
+
+### Visualizing & regenerating the spec stack (HTML atlas)
+
+`docs/json-structure/index.html` is a browser view of the spec stack —
+three tabs: **Module Map** (scenario `.v2.json` = root of truth),
+**Schema Explorer** (nested `.v2` shape), **Scenarios** (inventory of
+every `scenario_engine/scenarios/*.v2.json`, with mode/targets/orphan
+flags). The data that churns (scenario inventory, per-file counts, drift
+flags) is **generated**, not hand-coded.
+
+**When a user asks to "regen the project JSON HTML":**
+
+```bash
+python3 tools/build_json_atlas.py        # rewrite docs/json-structure/atlas-data.js
+# then reload docs/json-structure/index.html in a browser
+```
+
+The page reads the generated `atlas-data.js` (`window.ATLAS`) on load —
+the HTML *structure* isn't rebuilt, only the data. Re-run after
+adding/removing/editing any scenario `.v2.json` or changing config-file
+counts (modes, profiles, blocks). Variants:
+
+- `--print` — also dump the spec-stack drift audit (orphans, missing
+  `targets`, three-way version drift, stale rationales). This is the
+  **canonical drift-walker** (it replaced a standalone diagnostic).
+- `--check` — exit 1 if `atlas-data.js` is stale; use as a pre-commit/CI gate.
+
+Runs from any cwd (resolves the repo root from its own location). The
+curated module-map **SVG layout** and the schema **teaching tree** are
+hand-authored in `index.html` and are NOT regenerated — changing those is
+a manual edit. Pipeline: `spec/spec-manifest.json` → `tools/build_json_atlas.py`
+→ `docs/json-structure/atlas-data.js` → `index.html`. See
+`docs/json-structure/README.md`.
+
+**Count labels are data-driven (the layout is curated, the numbers are
+not hand-typed).** The SVG boxes and schema tree are hand-authored, but
+the counts inside them — Scenarios tab `(N)`, the intro count + `n/N`
+targets ratio, the schema `targets` note, the v2 click-detail
+"N shipped files" — are populated from `window.ATLAS` on load. They were
+hand-typed once and drifted (`22` vs `23`) when a scenario landed, so
+they were wired to the data. **Never re-introduce a hand-typed scenario
+count in `index.html`**; `tests/test_json_atlas_labels.py` guards it
+(Pattern C, browser-rendered, skips without Playwright — see
+`docs/test-conventions.md`).
+
+**Inspecting the rendered page — you cannot see a browser, and reading
+the HTML source tells you nothing** (the tables and count labels are
+built by JS on load). Render it instead:
+
+```bash
+# pixels: full-page render at an exact size (no display server, no crop)
+google-chrome --headless=new --disable-gpu --hide-scrollbars \
+  --virtual-time-budget=3000 --window-size=1400,2400 \
+  --screenshot=/tmp/atlas.png "file://$(pwd)/docs/json-structure/index.html"
+# content: dump the post-JS DOM and grep what actually rendered
+google-chrome --headless=new --dump-dom --virtual-time-budget=3000 \
+  "file://$(pwd)/docs/json-structure/index.html"
+```
+
+The headless screenshot only shows the default **Module Map** tab. To
+capture **Schema Explorer** / **Scenarios** (each needs a click) or to
+assert that rendered text equals the data, drive Playwright: click
+`.tabs button[data-pane="scenarios"]`, `wait_for_function` on
+`window.ATLAS`, read counts via `page.evaluate`, and screenshot the
+active `.pane`. This is exactly how `tests/test_json_atlas_labels.py`
+verifies the labels.
+
+### Results dashboard (run outcomes)
+
+The atlas above visualizes the scenario *config*; the **results dashboard**
+(`docs/results-dashboard/index.html`) visualizes a run's *outcome* — PVT
+accuracy vs engine truth, satellites tracked + health, C/N0 over time, an az/el
+skyplot, and a drag/playback 3D track. Same generated-data pattern as the
+atlas: the page reads `results-data.js` (`window.RESULTS`) on load; the HTML is
+hand-authored, the data is generated. Full create→run→view how-to is
+`references/adding-a-scenario.md` §6.
+
+**When a user asks to run a scenario and see its results:**
+
+1. **Run it** — every run emits a results JSON via the `outputs.results` sink
+   (default on), serialized by `gps_scenario._build_results_payload` through the
+   one `_emit_sidecar` writer (you don't write a serializer):
+   - light / short (in-RAM): `gps_scenario.py --scenario-root <…>.v2.json --output /tmp/run.iq16` → `/tmp/run.iq16.results.json`.
+   - heavy / long (in-RAM OOMs — IQ is 16 B/sample): `gps_scenario.py --mode <m> --duration <N> --stream-replay` → `results/<scenario-slug>_<N>s.results.json` (memory-bounded streaming IQ→disk + chunked receiver replay via the `run_receiver_on_iq_file` primitive; explicit, warm-start only).
+2. **Aggregate + view:** `python3 tools/build_results.py` (`results/*.results.json` → `results-data.js`; `--check` is the staleness gate, like `build_json_atlas.py --check`), then reload `index.html`.
+
+`results/` is the canonical **committed** store (small durable JSONs; the bulky
+`.iq16` stays in gitignored `/temp/`). Panels are richest for `test_24sv` +
+`nav_data=subframe` (engine truth + PVT); `all_ones` runs gray out the PVT
+panels, synthetic `--prn` runs have no 3D-track/skyplot truth. Render test:
+`tests/test_results_dashboard.py` (Playwright, system python3, auto-covers every
+run in the store). Don't hand-edit `results-data.js`. Pipeline:
+`results/*.results.json` → `tools/build_results.py` → `results-data.js` →
+`index.html` (thread `cross-cutting/20260524-results-dashboard`).
 
 ---
 
@@ -217,7 +337,7 @@ architectural review, not a block-level tweak.
 - **Physical constants in `constants.py`**, never hardcoded inline.
 - **Deterministic RNG:** `np.random.default_rng(seed)` everywhere.
   Never use `np.random.*` module-level functions.
-- **Block IDs from `shared-interfaces.v1.json` are canonical
+- **Block IDs from `shared-interfaces.json` are canonical
   everywhere.**
 - **No matplotlib dependency in generator or receiver** -- visualization
   is the sdr-viewer's responsibility.
