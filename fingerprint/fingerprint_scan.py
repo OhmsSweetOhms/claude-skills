@@ -154,11 +154,15 @@ def _iter_commits(repo_dir: str, rev_range: str = "--all"):
 
 
 def mode_scan_commits(repo_dir: str, rev_range: str = "--all",
-                      label_prefix: str = "all") -> int:
+                      label_prefix: str = "all",
+                      check_identity: bool = False) -> int:
     """Scan commit messages in the given rev range.
 
     rev_range: argument passed to git log. "--all" walks every reachable ref;
     "@{upstream}..HEAD" walks only commits not yet on upstream.
+    check_identity: also block commits whose author/committer identity is not
+    the allowed persona (the metadata surface, off by default so full-history
+    scans aren't flooded by pre-policy commits; enabled for --scan-unpushed).
     """
     repo_dir = os.path.abspath(repo_dir)
     if not is_git_repo(repo_dir):
@@ -178,6 +182,9 @@ def mode_scan_commits(repo_dir: str, rev_range: str = "--all",
         label = f"commit:{sha[:7]} {subject[:60]}"
         for lineno, line in enumerate(body.splitlines(), 1):
             scanner.scan_line(label, lineno, line)
+
+    if check_identity:
+        scanner.scan_commit_identities(repo_dir, [rev_range])
 
     print(f"Scanned {commit_count} commit message(s)", file=sys.stderr)
     print("=" * 56, file=sys.stderr)
@@ -213,7 +220,8 @@ def mode_scan_unpushed(repo_dir: str) -> int:
 
     upstream = upstream_r.stdout.strip()
     return mode_scan_commits(repo_dir, f"{upstream}..HEAD",
-                             label_prefix=f"unpushed vs {upstream}")
+                             label_prefix=f"unpushed vs {upstream}",
+                             check_identity=True)
 
 
 # ---------------------------------------------------------------------------
