@@ -1,6 +1,6 @@
 ---
 name: emi
-description: "EMI/EMC bench automation and MIL-STD-461 measurement workflows for the EMI project. Use this skill whenever the user mentions EMI, EMC, MIL-STD-461, RE102, CE102, radiated emissions, conducted emissions, GNSS RF environment surveys, analyzer substitution, Rigol RSA5000/RSA5065, R&S FPH/Spectrum Rider, SMA100A, SDG2000/SDG2042X, spectrum analyzer Ethernet/SCPI/FTP export, TBMA1B antenna factors, LISN measurements, dBuV/m, dBuV, noise-floor vs UUT-on plots, scan manifests, calibration/system-check runs, or organizing EMI scan data."
+description: "EMI/EMC bench automation and MIL-STD-461 measurement workflows for the EMI project. Use this skill whenever the user mentions EMI, EMC, MIL-STD-461, RE102, CE102, radiated emissions, conducted emissions, GNSS RF environment surveys, analyzer substitution, Rigol RSA5000/RSA5065, R&S FPH/Spectrum Rider, SMA100A, SDG2000/SDG2042X, spectrum analyzer Ethernet/SCPI/FTP export, TBMA1B antenna factors, LISN measurements, dBuV/m, dBuV, noise-floor vs UUT-on plots, scan manifests, calibration/system-check runs, RSA tracking-generator cable-loss characterization, or organizing EMI scan data."
 ---
 
 # EMI Bench Workflows
@@ -53,6 +53,7 @@ repo files and safe workflows.
    - `docs/Siglent_SDG2042X_User_Manual.md`
    - `docs/SMA100A_OperatingManual_en_14.md`
    - `docs/MIL-STD-461F.md`
+   - `docs/calibration_workflows.md`
 
 ## Live Hardware Rules
 
@@ -68,6 +69,10 @@ live hardware.
 - Keep direct signal-generator calibration separate from antenna-based RE102
   data. A cabled generator run is receiver input power in dBm/dBuV, not
   dBuV/m.
+- For cable-loss characterization, prefer the RSA tracking-generator workflow
+  over external signal-generator absolute-power checks. Keep it relative:
+  acquire a through-reference trace and a DUT trace, preserve both raw CSVs,
+  and derive `loss_db = reference_thru_dbm - dut_dbm`.
 - For CE102 signal-generator checks, use the project CLI instead of ad hoc SCPI:
   `ce102 system-check-plan` and `ce102 system-check-tone`. The SDG2042X was
   observed at `192.168.0.2`; turn output off before moving equipment or ending
@@ -123,6 +128,18 @@ campaign loop rather than one-off `re102 scan` commands:
   regenerate the campaign/report SVGs requested by the user. Keep ambient,
   config, combined-summary, and ambient-delta views distinct.
 
+For RSA tracking-generator cable-loss checks, keep work under
+`data/characterization/cable_loss/<campaign_date>/<run_id>/` and use the repo
+CLI:
+
+- `.venv/bin/python tools/emi_control.py rsa tg-cable-loss-init <run_id> --date <YYYY-MM-DD>`
+- `.venv/bin/python tools/emi_control.py rsa tg-cable-loss-scan <run.json> --stage reference`
+- `.venv/bin/python tools/emi_control.py rsa tg-cable-loss-scan <run.json> --stage dut --process`
+
+This is a relative insertion-loss workflow, not a VNA S-parameter calibration;
+do not reuse external signal-generator-derived cable-loss data unless the
+source output has been independently verified.
+
 For calibration or measurement-system checks, stage artifacts under
 `data/<test>/calibration/<run_id>/` and record injection plane, losses, source
 limits, tone plan, raw traces, derived JSON, plots, optional formal reports,
@@ -168,6 +185,7 @@ unless the user has defined a separate engineering criterion.
 | GNSS RF environment survey | `references/gnss.md` | GPS L1/L2 survey planning, active antenna safety, non-MIL reporting |
 | Instruments and analyzer substitution | `references/instruments.md` | RSA vs FPH behavior, SDG/SMA generator checks, safe trace export paths |
 | Data layout | `references/data-layout.md` | Organizing `data/re102`, `data/ce102`, `data/gnss`, calibration runs, manifests |
+| Calibration workflows | `docs/calibration_workflows.md` | RSA tracking-generator cable loss, CE102 calibration runs, system-check artifact layout |
 
 ## Bundled Scripts
 
