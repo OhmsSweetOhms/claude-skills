@@ -4,3 +4,7 @@ threads-workspace/
 .claude/
 __pycache__/
 research/references/domains/_pending.json
+# Per-thread Codex execution scaffolding (launch packets + handbacks).
+# These carry host-absolute paths / project bookkeeping and belong in the
+# project's .threads/ tracking, not in this shareable-skills repo.
+codex-handoff/
