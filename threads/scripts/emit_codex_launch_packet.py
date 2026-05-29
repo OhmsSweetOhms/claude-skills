@@ -145,7 +145,12 @@ def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | N
                     return resolved, entry.get("branch")
             # Fall through to the next entry if no candidate exists
             continue
-        path = Path(raw_path)
+        # Expand a leading ~ first: thread.json stores worktree paths
+        # home-relative (~/.claude/skills-<slug>) to keep the username out
+        # of committed bookkeeping. Without expansion, ~/... is not
+        # is_absolute(), so the branch below would prepend main_repo and
+        # never resolve.
+        path = Path(raw_path).expanduser()
         if not path.is_absolute():
             path = (main_repo / raw_path).resolve()
         if path.exists():
@@ -172,6 +177,13 @@ def emit_packet(
 {plan_file}
 
 # Codex launch packet — {thread_id} / {plan_id}
+
+> ⚠ HOST-LOCAL ARTIFACT. This packet contains absolute paths for *this*
+> machine (and therefore the local username). It is meant to live only in
+> the worktree's `codex-handoff/{plan_id}/` inbox. Do NOT commit it to a
+> public or shared repository — gitignore `codex-handoff/` there. (Codex
+> genuinely needs the real absolute paths below, so they are not portable;
+> the safe boundary is "don't publish the inbox", not "rewrite the paths".)
 
 The plan-file absolute path is the first line of this packet so it
 can be copied without scrolling. The rest of this document is the

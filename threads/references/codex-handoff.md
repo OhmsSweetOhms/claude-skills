@@ -89,6 +89,19 @@ the handoff infrastructure across two repos (e.g. prompt in
 `.threads/`, handback in the worktree) is an anti-pattern that creates
 drift; the inbox keeps it self-contained.
 
+> **Public-repo caveat.** The inbox is **host-local**: `prompt.md` and the
+> handback artifacts contain absolute paths (and thus the local username),
+> because Codex needs real paths to operate. That is fine for a private
+> project repo, where the inbox lands on `main` at merge-back as useful
+> bookkeeping. But if the worktree's repo is **public** (e.g. a published
+> skills repo), the inbox is a fingerprint-leak surface — **gitignore
+> `codex-handoff/` in that repo** so the scaffolding never gets committed
+> or published. The fix is "don't publish the inbox," not "scrub the paths"
+> (they are not portable). Lesson from socks/20260424-hil-streaming-mode:
+> a merge-back into a public skills repo nearly published the inbox's
+> host-absolute paths; the work was instead reconstructed clean (skill
+> files only) with `codex-handoff/` gitignored.
+
 ```text
 <worktree>/codex-handoff/<plan-id>/
   README.md            (main-session-written: inbox description, who writes what)
