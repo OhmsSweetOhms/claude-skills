@@ -14,9 +14,11 @@
 #             absent).
 
 set build_dir  "{{BUILD_DIR}}"
-set ws_dir     [file join $build_dir vitis_ws]
-set xsa_path   [file join $build_dir system_wrapper.xsa]
+set ws_dir     "{{WS_DIR}}"
+set xsa_path   "{{XSA_PATH}}"
 set processor  "{{PROCESSOR}}"
+set platform_name "{{PLATFORM_NAME}}"
+set app_name "{{APP_NAME}}"
 set bsp_config_tcl "{{BSP_CONFIG_TCL}}"
 
 # Parse --debug flag
@@ -54,18 +56,18 @@ setws $ws_dir
 
 if {$do_create} {
     # Create platform from XSA
-    platform create -name hil_platform -hw $xsa_path \
+    platform create -name $platform_name -hw $xsa_path \
         -proc $processor -os standalone
 
     # Create application
-    app create -name hil_app -platform hil_platform \
+    app create -name $app_name -platform $platform_name \
         -template "Empty Application"
 
     # Optional project-specific BSP configuration. This is used by system HIL
     # projects that need a non-default standalone domain, such as R5/lwIP.
     if {$bsp_config_tcl ne ""} {
         puts "=== Applying BSP config: $bsp_config_tcl ==="
-        platform active hil_platform
+        platform active $platform_name
         domain active standalone_domain
         source $bsp_config_tcl
         bsp regenerate
@@ -77,22 +79,22 @@ if {$do_create} {
 
     # Let nested imported source trees include headers from the app source root
     # (for example, "net/foo.h" and "drv/bar.h").
-    configapp -app hil_app -add compiler-misc {-I../src}
+    configapp -app $app_name -add compiler-misc {-I../src}
 
     # Add debug symbols and disable optimization if --debug
     if {$debug_mode} {
-        configapp -app hil_app -add compiler-misc {-g -O0 -fno-omit-frame-pointer}
-        configapp -app hil_app -add compiler-misc {-DHIL_DEBUG_MODE}
+        configapp -app $app_name -add compiler-misc {-g -O0 -fno-omit-frame-pointer}
+        configapp -app $app_name -add compiler-misc {-DHIL_DEBUG_MODE}
         puts "=== Debug mode: -g -O0 -fno-omit-frame-pointer + HIL_DEBUG_MODE ==="
     }
 }
 
 if {$do_build} {
-    app build -name hil_app
+    app build -name $app_name
     puts "=== Build complete (phase=$phase, debug=$debug_mode) ==="
-    puts "  ELF: [file join $ws_dir hil_app/Debug/hil_app.elf]"
+    puts "  ELF: [file join $ws_dir $app_name/Debug/$app_name.elf]"
 } else {
     puts "=== Phase complete: $phase (no app build) ==="
     puts "  Workspace: $ws_dir"
-    puts "  lscript:   [file join $ws_dir hil_app/src/lscript.ld]"
+    puts "  lscript:   [file join $ws_dir $app_name/src/lscript.ld]"
 }

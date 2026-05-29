@@ -337,7 +337,8 @@ def _build_first_firmware_cmd(xsdb, entry, bitstream, boot_init,
     flash_name = entry.get("flash_tcl")
     if not flash_name:
         if "cortexa53" in (processor or "").lower() or no_os_flow or \
-                "a53" in entry.get("role", "").lower():
+                "a53" in entry.get("role", "").lower() or \
+                entry.get("flow") == "no_os_make":
             flash_name = "flash_psu_no_os.tcl"
         else:
             flash_name = "flash_psu.tcl"
@@ -373,6 +374,39 @@ def _build_secondary_firmware_cmd(xsdb, entry, build_dir, project_dir, processor
             f"'{{name =~ \"*Cortex-R5 #0*\"}}').")
     flash_tcl = os.path.join(tcl_dir(), "flash_psu_load_only.tcl")
     return [xsdb, flash_tcl, elf, target_filter], "flash_psu_load_only.tcl"
+
+
+def _run_post_ready_cmd(fw, project_dir):
+    post_cmd = fw.get("post_ready_cmd")
+    if not post_cmd:
+        return 0
+    if isinstance(post_cmd, str):
+        post_cmd = shlex.split(post_cmd)
+    elif not isinstance(post_cmd, list):
+        print(f"\n  {fail_str()}: firmware.post_ready_cmd must be a string or list")
+        return 1
+
+    post_timeout = fw.get("post_ready_timeout_s", 30)
+    env = os.environ.copy()
+    env["HIL_PROJECT_DIR"] = project_dir
+    print(f"\n  Running post-ready check: {' '.join(post_cmd)}")
+    post_result = subprocess.run(
+        post_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=post_timeout,
+        text=True,
+        cwd=project_dir,
+        env=env,
+    )
+    print(post_result.stdout)
+    if post_result.returncode != 0:
+        print(f"  RESULT: {fail_str()} -- post-ready check failed")
+        print_separator()
+        return 1
+    print(f"  RESULT: {pass_str()} -- post-ready check")
+    print_separator()
+    return 0
 
 
 def _run_multi_firmware(hil_config, project_dir, build_dir, bitstream, boot_init,
@@ -487,7 +521,7 @@ def _run_multi_firmware(hil_config, project_dir, build_dir, bitstream, boot_init
         for role, uart, log in all_uarts:
             print(f"  UART log ({role}): {log}")
         print_separator()
-        return 0
+        return _run_post_ready_cmd(fw, project_dir)
     finally:
         # Stop all UART loggers cleanly regardless of outcome.
         for role, uart, log in all_uarts:
@@ -756,36 +790,7 @@ def main() -> int:
     if result != "PASS":
         return 1
 
-    post_cmd = fw.get("post_ready_cmd")
-    if post_cmd:
-        if isinstance(post_cmd, str):
-            post_cmd = shlex.split(post_cmd)
-        elif not isinstance(post_cmd, list):
-            print(f"\n  {fail_str()}: firmware.post_ready_cmd must be a string or list")
-            return 1
-
-        post_timeout = fw.get("post_ready_timeout_s", 30)
-        env = os.environ.copy()
-        env["HIL_PROJECT_DIR"] = project_dir
-        print(f"\n  Running post-ready check: {' '.join(post_cmd)}")
-        post_result = subprocess.run(
-            post_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=post_timeout,
-            text=True,
-            cwd=project_dir,
-            env=env,
-        )
-        print(post_result.stdout)
-        if post_result.returncode != 0:
-            print(f"  RESULT: {fail_str()} -- post-ready check failed")
-            print_separator()
-            return 1
-        print(f"  RESULT: {pass_str()} -- post-ready check")
-        print_separator()
-
-    return 0
+    return _run_post_ready_cmd(fw, project_dir)
 
 
 if __name__ == "__main__":

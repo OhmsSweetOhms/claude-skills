@@ -216,6 +216,10 @@ need the same override.
 | `firmware.linker_placement` | -- | Declarative override for the Vitis-generated `lscript.ld` MEMORY region. Object with three required fields: `memory_region` (string, e.g. `psu_r5_ddr_0_MEM_0`), `origin` (hex string or int), `length` (hex string or int). When present, Stage 16 runs XSCT in two phases (workspace+platform+app -> rewrite linker -> link) so the regenerated linker always lands the firmware where the project requires. When absent, Stage 16 runs XSCT in one shot (historical behavior). See "Stage 16 declarative linker placement" below. |
 | `firmware.firmwares` | -- | List of per-role firmware entries for multi-firmware Stage 17 boots (e.g. A53 no-OS holding JESD up + R5 streaming app). When set, Stage 17 sequentially flashes each entry and waits for its declared markers before moving on. Mutually exclusive with the single-firmware keys (`test_src`, `flow`, `pass_marker`, `pass_markers`, etc.) -- Stage 17 hard-fails if both shapes are present. See "Multi-firmware Stage 17" below for the entry schema and worked example. |
 
+Top-level `firmware.post_ready_cmd` and `firmware.post_ready_timeout_s`
+are valid in both single-firmware and multi-firmware shapes. They are
+not part of the per-entry build/runtime schema.
+
 ### Multi-firmware Stage 17
 
 Single-firmware HIL is the historical default and still works unchanged.
@@ -240,6 +244,18 @@ boots them sequentially.
 | `timeout_s` | no | Seconds to wait for this entry's markers. Defaults to the top-level Stage 17 timeout. |
 | `program_timeout_s` | no | Seconds to allow the flash TCL to complete. Defaults to 300. |
 
+**Stage 16 entry build fields:** when `firmware.firmwares[]` is set,
+Stage 16 iterates the same list before Stage 17 runs. Entries with
+`flow: "no_os_make"` use the existing ADI no-OS Make config from
+`build.no_os_make` or the entry's optional `no_os_make` block and stage
+the ELF under `build/hil/no_os/`. Entries with `flow: "vitis"` (or no
+`flow`) use per-entry Vitis fields: `processor`, `test_src`,
+`driver_sources`, `source_roots`, `bsp_config_tcl`, and
+`linker_placement`. Vitis entries must declare `elf`; Stage 16 derives
+the Vitis workspace/app/output shape from that path, which must look like
+`<workspace>/<app>/Debug/<app>.elf`. That keeps Stage 16 and Stage 17
+on one explicit ELF path without adding another schema field.
+
 **Lifecycle:** Stage 17 iterates `firmwares` in order. For each entry:
 
 1. Resolve the UART port for `uart_role` and start a per-entry
@@ -260,6 +276,22 @@ boots them sequentially.
    On `PASS`: advance to the next entry. On `FAIL` or `TIMEOUT`:
    stop all UART loggers, return non-zero -- but earlier firmwares
    that already passed stay running on the board.
+5. After every entry has passed, run top-level
+   `firmware.post_ready_cmd` if present. The command runs from the
+   project root with `HIL_PROJECT_DIR` in the environment, uses
+   `firmware.post_ready_timeout_s` (default 30 s), captures stdout and
+   stderr together into the Stage 17 console log, and fails Stage 17 on
+   a non-zero exit. Per-role UART loggers are still running while the
+   post-ready command executes; they stop only after the command returns
+   or fails.
+
+**Post-ready ordering decision:** multi-firmware `post_ready_cmd` runs
+after all role pass markers, not after the first role passes. It also
+runs before the per-role UART loggers stop, so the host-side soak and
+the A53/R5 UART evidence cover the same time window. No `streaming.*`
+schema field is added; the existing top-level
+`firmware.post_ready_cmd` is the contract in both single- and
+multi-firmware paths.
 
 **Why per-entry UART loggers:** the streaming flow that motivated
 this feature has A53 holding JESD up across the entire R5 lifetime.
@@ -269,12 +301,15 @@ shared port and confuse the A53 marker scanner. Per-entry loggers
 on per-role UART ports keep marker scans tight to one firmware's
 output.
 
-**Schema mix is a hard-fail.** Single-firmware keys (`test_src`,
-`flow`, `pass_marker`, `pass_markers`, `match_mode`,
+**Schema mix is a hard-fail.** Top-level single-firmware keys
+(`test_src`, `flow`, `pass_marker`, `pass_markers`, `match_mode`,
 `driver_sources`, `source_roots`, `fail_marker`,
-`use_active_profile_markers`) MUST NOT appear in the same
-`firmware` block as `firmwares`. Stage 17 hard-fails with the
-list of conflicting keys before any board side-effect.
+`use_active_profile_markers`) MUST NOT appear in the same `firmware`
+block as `firmwares`. Move those fields into the relevant
+`firmwares[]` entry. Stage 17 hard-fails with the list of conflicting
+keys before any board side-effect. Top-level `post_ready_cmd`,
+`post_ready_timeout_s`, and `reserved_arenas` are intentionally allowed
+alongside `firmwares`.
 
 **Worked example (A53 no-OS + R5 streaming, ZCU102 + AD9986):**
 
@@ -285,6 +320,8 @@ list of conflicting keys before any board side-effect.
       {
         "role": "A53",
         "elf": "build/hil/no_os/ad9081.elf",
+        "flow": "no_os_make",
+        "processor": "psu_cortexa53_0",
         "flash_tcl": "flash_psu_no_os.tcl",
         "uart_role": "a53",
         "pass_markers": [
@@ -301,6 +338,15 @@ list of conflicting keys before any board side-effect.
       {
         "role": "R5_0",
         "elf": "build/hil/vitis_ws/hil_r5/Debug/hil_r5.elf",
+        "flow": "vitis",
+        "processor": "psu_cortexr5_0",
+        "test_src": "sw/r5/main_soak_20480_pl_source_egress_10hz.c",
+        "source_roots": [
+          {"src": "sw/r5/drv", "dest": "drv"},
+          {"src": "sw/r5/net", "dest": "net"},
+          {"src": "sw/shared", "dest": "shared"}
+        ],
+        "bsp_config_tcl": "sw/r5/lwip_bsp_config_jumbo.tcl",
         "target": "{name =~ \"*Cortex-R5 #0*\"}",
         "uart_role": "r5",
         "pass_markers": ["R5_READY", "STREAM_ACTIVE"],
@@ -315,7 +361,9 @@ list of conflicting keys before any board side-effect.
     ],
     "reserved_arenas": [
       {"label": "r5_dma", "base": "0x70000000", "length": "0x04000000"}
-    ]
+    ],
+    "post_ready_cmd": ["python3", "tools/streaming_soak_check.py"],
+    "post_ready_timeout_s": 1200
   }
 }
 ```
@@ -335,7 +383,9 @@ In this configuration:
   R5, downloads the rewritten-linker R5 ELF, resumes. A53
   stays running. The R5 UART logger waits for the R5 markers.
   PASS.
-* Both firmwares running, both UART logs preserved.
+* Both firmwares keep running. The top-level `post_ready_cmd` runs
+  while the A53 and R5 UART loggers are still active, then Stage 17
+  stops both loggers and reports the post-ready result.
 
 **TCL files:**
 * `scripts/hil/tcl/flash_psu.tcl` -- entry 0, R5 first boot.
@@ -871,7 +921,7 @@ module HIL or staged the XSA/bitstream for system-scope HIL.
 first (see "Stage 16: Firmware Authoring Guide" above), then the build script
 runs.
 
-**What it does for the native Vitis flow:**
+**What it does for the native Vitis flow (single-firmware):**
 1. Hard-fails if `sw/hil_test_main.c` is missing (Claude must author it first)
 2. Expands `build_app.template.tcl` from `hil.json` firmware config
 3. Runs XSCT from the Vitis settings environment to create the Vitis workspace,
@@ -887,7 +937,19 @@ runs.
 6. Builds firmware ELF
 7. If `--debug` flag is set: defines `HIL_DEBUG_MODE`, writes `.debug_build` marker
 
-**Outputs:** `build/hil/vitis_ws/hil_app/Debug/hil_app.elf`
+**Outputs (single-firmware):** `build/hil/vitis_ws/hil_app/Debug/hil_app.elf`
+
+**What it does for multi-firmware:** when `firmware.firmwares[]` is
+present, Stage 16 iterates each entry. `flow: "no_os_make"` entries
+run the existing ADI no-OS Make flow and stage the ELF under
+`build/hil/no_os/`. `flow: "vitis"` entries run the same Vitis build
+path as single-firmware, but consume the entry's own `processor`,
+`test_src`, `driver_sources`, `source_roots`, `bsp_config_tcl`, and
+`linker_placement`. A Vitis entry's `elf` field is required and must
+use `<workspace>/<app>/Debug/<app>.elf`; Stage 16 derives the per-entry
+workspace/app/output from that path. Legacy single-firmware output and
+log paths remain unchanged; multi-firmware Vitis logs are written as
+`build/logs/hil_firmware_build-<role>.log`.
 
 **Prerequisite:** Stage 15 must have generated `system_wrapper.xsa`.
 
@@ -966,14 +1028,19 @@ uses the staged ELF and FSBL instead of the native `hil_app.elf`.
    - Run the flash command via XSDB.
    - Wait for entry's `pass_markers` on its UART logger.
    - PASS -> advance. FAIL or TIMEOUT -> stop loggers, return 1.
+4. After every entry passes, run top-level `firmware.post_ready_cmd`
+   when present. The command runs before the per-role UART loggers stop,
+   captures stdout/stderr into the Stage 17 console, and a non-zero exit
+   fails Stage 17.
 
 **Outputs (single-firmware):** Console log with UART output,
 PASS/FAIL result, and a timestamped UART transcript at
 `build/hil/uart-<timestamp>.log`.
 
 **Outputs (multi-firmware):** Console log with per-entry indented
-UART output, per-entry PASS/FAIL summary, and a per-entry UART
-log directory at `build/hil/uart-multi-<timestamp>/<index>-<role>.log`.
+UART output, per-entry PASS/FAIL summary, optional post-ready output,
+and a per-entry UART log directory at
+`build/hil/uart-multi-<timestamp>/<index>-<role>.log`.
 
 **Flags:**
 - `--serial /dev/ttyUSBx` -- override serial port auto-detection
@@ -1236,9 +1303,11 @@ option 2 to the offending file, re-stage, retry.
 
 Streaming HIL mode is an opt-in extension to Stage 17 for designs that need bulk-data
 validation over Ethernet (DSP/RF testing of PL blocks). It runs **after** the firmware
-emits its `pass_marker`, via the existing `firmware.post_ready_cmd` hook. Platform-agnostic
-— any HIL target with Ethernet + a TCP server in firmware can use it — and supports two
-test topologies:
+is ready, via the existing `firmware.post_ready_cmd` hook. In single-firmware HIL that
+means after the firmware emits its `pass_marker`; in multi-firmware HIL that means after
+every `firmware.firmwares[]` entry emits its own pass markers. Platform-agnostic — any
+HIL target with Ethernet + a TCP server in firmware can use it — and supports two test
+topologies:
 
 - **digital_loopback:** PL closes the IQ stream in fabric (e.g. `streaming_ctrl_0`
   self-loop). Validates transport, framing, telemetry contract.
@@ -1310,6 +1379,8 @@ NOT need streaming mode and should leave `streaming` absent from their `hil.json
 
 ### Lifecycle
 
+Single-firmware:
+
 ```
 Stage 17 firmware boot → pass_marker seen
   ↓
@@ -1339,6 +1410,118 @@ Teardown:
   exit 0 (or non-zero on failure → Stage 17 FAIL)
 ```
 
+Multi-firmware:
+
+```
+Stage 17 entry 0 boot → entry 0 pass_markers seen; entry 0 UART logger stays active
+  ↓
+Stage 17 entry 1..N boot → each entry's pass_markers seen; all UART loggers stay active
+  ↓
+top-level firmware.post_ready_cmd invoked from project root
+  ↓
+streaming checker runs the same TCP validation as single-firmware
+  ↓
+post_ready_cmd exits; Stage 17 stops all per-role UART loggers
+```
+
+The multi-firmware ordering is deliberate: the checker does not run
+until all firmware roles are ready, and it runs while the A53/R5 UART
+logs are still live. This is the shape needed by
+`fpga/20260424-zcu102-streaming-system` plan-04k for the combined
+A53 no-OS JESD + R5 PL-source egress soak. The worked HIL config path
+for that rerun is
+`<workspace-root>/socks-zcu102-streaming-system/systems/zcu102-gps-streaming/hil-r5-soak-20480-pl-source-egress-30s-10hz.json`;
+plan-04k rewrites its firmware block to `firmware.firmwares[]` with a
+top-level `post_ready_cmd`.
+
+### Worked example (digital loopback, hardware-proven)
+
+The current canonical digital worked instance is the gps_design ZCU102 D5
+streaming base. It is documented in the consumer-owned base note
+`systems/zcu102-gps-streaming/docs/hil-streaming-base.md` and harness
+declaration `systems/zcu102-gps-streaming/hil-streaming-harness.v1.json`, with
+thread evidence in
+`gps_design/.threads/fpga/20260523-gps-streaming-hil-pl-pipeline/findings-2026-05-25-plan01b-close.md`
+and
+`gps_design/.threads/fpga/20260523-gps-streaming-hil-pl-pipeline/findings-2026-05-26-plan01e-close.md`.
+The SOCKS skill owns the reusable streaming helper and HIL runner contract; the
+gps_design thread owns this receiver-pipeline base and its block-specific
+numeric checks.
+
+The reusable shape is:
+
+- **Ordered PL build selection:** `GPS_STREAMING_PIPELINE=d5 make -C
+  ADI/projects/gps_streaming` records the block order explicitly. The legacy
+  `GPS_STREAMING_D5_DECIMATOR=1` flag aliases to the same D5 block. Unsupported
+  tokens fail in `ADI/projects/gps_streaming/post_bd_mods.tcl` instead of
+  silently building the base path.
+- **Front-end-agnostic ingress seam:** `GPS_STREAMING_FRONTEND=eth_dma` is the
+  hardware-proven digital ingress path: host TCP IQ → R5/lwIP → AXI DMA MM2S →
+  `streaming_ctrl_0/m_axis` → `pl_ingress_axis`. The reserved
+  `GPS_STREAMING_FRONTEND=ad9986_adc` path must converge at the same
+  `pl_ingress_axis` seam when the ADC/JESD ingress-source swap lands; this hop
+  does not implement that analog data path.
+- **Runtime D5 through/bypass:** with the D5 block built, a runtime
+  `pipeline_bypass` control selects either `pl_ingress_axis -> FIR Compiler D5
+  -> axis_packetizer -> S2MM` or `pl_ingress_axis -> S2MM`, while stream enable
+  is low or immediately after a regmap reset.
+- **Return and checking modality:** axis-stream outputs return through the R5 TCP
+  egress loopback and are checked by byte/CRC gates or per-block numeric
+  checkers. Dump-producing blocks declare a separate PS dump capture path in the
+  harness JSON rather than overloading the telemetry monitor signal catalog.
+
+Proven gate shapes from that worked instance:
+
+| Gate shape | Target / evidence | Proven value |
+|------------|-------------------|--------------|
+| D5 strict long soak | `hil-r5-soak-20480-to-4096-d5-jumbo-decim-loopback-tmpfs-no-host-pace-10min-no-telemetry-tshark.json` in the gps_design streaming base; see `findings-2026-05-25-plan01b-close.md` | 20.48 MSPS ingress through D5 to 4.096 MSPS egress, packet-aligned 10-minute run, decimated CRC `0xe84d15e3`, `active_underrun=0` |
+| Native-rate bypass + telemetry | `hil-r5-e2e-d5-bypass-4096-tshark-30s.json`; see `findings-2026-05-25-plan01b-close.md` | runtime bypass, 4.096 MSPS ingress to 4.096 MSPS egress, telemetry active at 10 Hz, CRC `0xf3b72f8e` |
+| D5 numeric check | `hil-r5-d5-fir-numeric-loopback.json`; see `findings-2026-05-26-plan01e-close.md` and `hil-streaming-harness.v1.json` | Python-golden D5 compare, `max_abs_lsb=0`, numeric CRC `0x383643a7` |
+
+These values are examples of how to anchor a consumer's own gates; they do not
+extend the `streaming.*` schema and they do not migrate the gps_design
+receiver-pipeline base into the skill.
+
+### DSP streaming pitfalls / lessons
+
+These lessons are generic to high-throughput Ethernet streaming HIL and are
+backed by the ZCU102 gps_design evidence cited above plus the predecessor
+egress arc under
+`gps_design/.threads/fpga/20260424-zcu102-streaming-system/`.
+
+- **Zero-copy lwIP BSP sizing is load-bearing.** Clear
+  `TCP_WRITE_FLAG_MORE` on the small IQ header before writing the large payload;
+  otherwise `TCP_OVERSIZE` can defeat no-copy payload handling by folding the
+  payload into the header pbuf. Set `PBUF_POOL_BUFSIZE` large enough for the
+  Xilinx GEM jumbo request (`MAX_FRAME_SIZE_JUMBO`, 10368 bytes in the proven
+  profile; 9700 was too small). Keep `TCP_SND_BUF <= 65535` unless the BSP has a
+  widened/window-scaled `tcpwnd_size_t`; an unscaled `u16_t` wraps larger values.
+  For large receive windows, size `TCP_RCV_SCALE` deliberately: a 16 MiB receive
+  window requires scale 9.
+- **Strict soaks need packet-aligned EOS-tail accounting.** Long, packet-aligned
+  soaks should record ingress/egress TCP payload bytes with TShark and parse the
+  final UART timing ring. The hard floor is full-second active underrun bins,
+  not the benign post-EOS FIFO-empty tail. The generic helper
+  `streaming.evaluate_strict_uart(...)` separates
+  `active_underrun_delta` from `eos_tail_excluded_delta`.
+- **A PS-side ingress reservoir adds margin, not a cure.** A bounded pbuf/DMA
+  reservoir with low/high credit hysteresis gives backlog margin; the gps_design
+  comparison filled from a 1 MiB profile up to a 16 MiB profile. The reservoir
+  did not fix the non-reproducible first-second underrun by itself. The cure was
+  the startup gate below.
+- **Gate stream enable on connection order.** Hold PL stream-enable low until
+  both channels are connected and stable, with telemetry/egress established
+  before IQ ingress starts feeding the PL. A first-second race otherwise looks
+  like a sporadic active underrun and can mask a sound data path.
+- **Digital ingress can still run in the JESD RX clock domain.** The gps_design
+  D5 pipeline receives IQ by Ethernet/DMA, but `streaming_ctrl_0` source,
+  packetizer, D5 FIR, and egress-side PL processing are clocked by
+  `rx_device_clk` at 40.96 MHz, with `streaming_s2mm_axis_cc` crossing back to
+  `sys_cpu_clk` for S2MM. This is visible in
+  `ADI/projects/gps_streaming/post_bd_mods.tcl` and is the useful intermediate
+  topology between a free-running digital loopback and a future ADC/JESD
+  ingress data path.
+
 ### Helper module (`scripts/hil/streaming.py`)
 
 The skill ships a Python helper module that consumers' checker scripts import. It
@@ -1346,6 +1529,27 @@ encodes the 32-byte header struct, 64-byte telemetry struct, bounded-retry conne
 telemetry contract validation, scenario runners, and signal-integrity validators (both
 topologies). Consumers compose it; they do not reimplement the wire protocol or contract
 validation.
+
+The helper also carries reusable Ethernet-diagnostics primitives that are not
+specific to GPS:
+
+- `file_crc32`, `parse_crc32`, `crc32_hex`, and `assert_expected_crc32` for
+  expected-CRC gates.
+- `tshark_capture_filter`, `parse_tshark_payload_fields`,
+  `collect_tshark_payload_bins`, `write_tshark_bin_csv`, and
+  `summarize_tshark_pcap` for ingress/egress TCP payload byte accounting.
+- `parse_strict_uart_text`, `summarize_strict_uart`, and
+  `evaluate_strict_uart` for active-underrun/output-stall gates that exclude the
+  post-EOS tail.
+- `recommend_tcp_rcv_scale` and `analyze_streaming_lwip_sizing` for lwIP jumbo,
+  send-window, receive-window, header-MORE, and reservoir hysteresis checks.
+
+Project-local wrappers still own block-specific orchestration, golden-model
+comparisons, and target names. For example, the gps_design D5 soak and numeric
+checkers stay in `systems/zcu102-gps-streaming/tools/`; they should import or
+mirror these generic primitives as that consumer thread next touches them, but
+the skill does not absorb D5-specific coefficients, block IDs, or receiver-base
+content.
 
 The proven concrete reference is `<workspace-root>/socks/systems/zcu102-gps-streaming/tools/streaming_tcp_check.py`,
 which inlines the helper code today. The helper module under `scripts/hil/streaming.py`
@@ -1369,6 +1573,11 @@ rate-agnostic and topology-aware via `streaming.test_mode`.
 The streaming-mode extension is purely additive:
 - When `streaming` is absent from `hil.json`, behavior matches base Stage 14-19 flow.
 - When `streaming.enabled` is `false`, behavior is unchanged.
+- When `firmware.firmwares[]` is absent, the single-firmware
+  `post_ready_cmd` path and ELF output path are unchanged.
+- When `firmware.firmwares[]` is present without top-level
+  `post_ready_cmd`, multi-firmware Stage 17 behaves as the sequential
+  boot + per-role UART marker path only.
 - The 6 existing SOCKS modules' `hil.json` files were inspected for plan-01 closure of
   `socks/20260424-hil-streaming-mode`; none have `streaming.*` fields. MicroZed-USART
   Stage 14-15 regression preserved.
@@ -1378,6 +1587,7 @@ The streaming-mode extension is purely additive:
 | Topology | Live reference | Status |
 |----------|----------------|--------|
 | `digital_loopback` | `<workspace-root>/socks/systems/zcu102-gps-streaming/hil.json` + `tools/streaming_tcp_check.py` | Stage 17 PASS 2026-04-28 (`samples=1163, crc=0x55244279, drop=16, hdr_fail=3, dma=0x0001100a`) |
+| `digital_loopback`, multi-firmware post-ready | `<workspace-root>/socks-zcu102-streaming-system/systems/zcu102-gps-streaming/hil-r5-soak-20480-pl-source-egress-30s-10hz.json` in consumer plan-04k | Rerun target after `socks/20260424-hil-streaming-mode` plan-02 closes |
 | `analog_loopback` | gates on `fpga/20260424-zcu102-streaming-system` plan-05 | Future (Layer -1 + analog substrate work in flight) |
 
 ### Future named-stage promotion

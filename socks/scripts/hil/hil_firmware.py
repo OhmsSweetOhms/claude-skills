@@ -51,22 +51,40 @@ def _load_state_json(project_dir, name):
         return json.load(f)
 
 
-def _no_os_make_config(project_dir, socks_cfg, hil_config):
+def _safe_label(value):
+    text = str(value or "fw")
+    safe = "".join(
+        ch if ch.isalnum() or ch in ("-", "_", ".") else "_"
+        for ch in text
+    ).strip("._-")
+    return safe or "fw"
+
+
+def _entry_label(entry, index):
+    return entry.get("role") or entry.get("label") or f"fw{index}"
+
+
+def _no_os_make_config(project_dir, socks_cfg, hil_config, fw_cfg=None,
+                       entry_mode=False):
     build_cfg = socks_cfg.get("build", {}) if socks_cfg else {}
-    fw_cfg = hil_config.get("firmware", {}) if hil_config else {}
+    if fw_cfg is None:
+        fw_cfg = hil_config.get("firmware", {}) if hil_config else {}
     fw_flow = fw_cfg.get("flow")
     if fw_flow and fw_flow != "no_os_make":
         return None
     nested = build_cfg.get("no_os_make", {})
     fw_nested = fw_cfg.get("no_os_make", {})
 
-    enabled = (
-        build_cfg.get("flow") == "no_os_make" or
-        build_cfg.get("firmware_flow") == "no_os_make" or
-        fw_cfg.get("flow") == "no_os_make" or
-        bool(nested) or
-        bool(fw_nested)
-    )
+    if entry_mode:
+        enabled = fw_cfg.get("flow") == "no_os_make" or bool(fw_nested)
+    else:
+        enabled = (
+            build_cfg.get("flow") == "no_os_make" or
+            build_cfg.get("firmware_flow") == "no_os_make" or
+            fw_cfg.get("flow") == "no_os_make" or
+            bool(nested) or
+            bool(fw_nested)
+        )
     if not enabled:
         return None
 
@@ -205,7 +223,8 @@ def run_no_os_make(project_dir, build_dir, cfg, settings_path):
     return 0
 
 
-def stage_firmware_sources(project_dir, build_dir, hil_config):
+def stage_firmware_sources(project_dir, build_dir, hil_config, fw_config=None,
+                           stage_name=None):
     """Stage only the firmware files listed in hil.json into a clean dir.
 
     `importsources -path <dir>` imports every file in the directory, so we
@@ -216,11 +235,14 @@ def stage_firmware_sources(project_dir, build_dir, hil_config):
     `firmware.source_roots`: each entry copies a source directory into the
     staged import tree while preserving its internal layout.
     """
-    stage = os.path.join(build_dir, "fw_src")
+    if stage_name:
+        stage = os.path.join(build_dir, "fw_src", stage_name)
+    else:
+        stage = os.path.join(build_dir, "fw_src")
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage, exist_ok=True)
 
-    fw = hil_config.get("firmware", {})
+    fw = fw_config if fw_config is not None else hil_config.get("firmware", {})
     for root in fw.get("source_roots", []):
         if isinstance(root, str):
             src_rel = root
@@ -259,9 +281,9 @@ def stage_firmware_sources(project_dir, build_dir, hil_config):
     return stage
 
 
-def build_import_sources_tcl(stage_dir):
+def build_import_sources_tcl(stage_dir, app_name="hil_app"):
     """Generate a single importsources TCL line for the staged dir."""
-    return f'importsources -name hil_app -path "{stage_dir}"'
+    return f'importsources -name {app_name} -path "{stage_dir}"'
 
 
 SUPPRESSED_PATTERNS = [
@@ -322,12 +344,9 @@ def _normalize_addr(value):
     raise ValueError(f"address must be int or hex string, got {type(value).__name__}")
 
 
-def linker_placement_from_hil(hil_config):
-    """Read firmware.linker_placement from hil.json. Returns the
-    normalized dict (with int origin/length) or None when the field is
-    absent. Raises ValueError on a malformed entry."""
-    fw = hil_config.get("firmware", {}) if hil_config else {}
-    placement = fw.get("linker_placement")
+def linker_placement_from_firmware(fw_config):
+    """Read a firmware config's linker_placement block."""
+    placement = fw_config.get("linker_placement") if fw_config else None
     if not placement:
         return None
     if not isinstance(placement, dict):
@@ -346,6 +365,14 @@ def linker_placement_from_hil(hil_config):
         "origin": _normalize_addr(origin),
         "length": _normalize_addr(length),
     }
+
+
+def linker_placement_from_hil(hil_config):
+    """Read firmware.linker_placement from hil.json. Returns the
+    normalized dict (with int origin/length) or None when the field is
+    absent. Raises ValueError on a malformed entry."""
+    fw = hil_config.get("firmware", {}) if hil_config else {}
+    return linker_placement_from_firmware(fw)
 
 
 def rewrite_lscript_ld(lscript_path, placement):
@@ -522,37 +549,43 @@ def verify_elf_layout(firmware_elfs, reserved_arenas):
     return conflicts
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Stage 16: HIL Firmware Build")
-    parser.add_argument("--project-dir", required=True, help="Project root")
-    parser.add_argument("--debug", action="store_true",
-                        help="Enable HIL_DEBUG_MODE (ILA pacing)")
-    parser.add_argument("--settings", default=None,
-                        help="Path to Xilinx settings64.sh")
-    args = parser.parse_args()
+def _vitis_layout_from_firmware(project_dir, build_dir, fw_config):
+    elf_value = fw_config.get("elf")
+    if elf_value:
+        elf_path = _resolve_project_path(project_dir, elf_value)
+    else:
+        elf_path = os.path.join(
+            build_dir, "vitis_ws", "hil_app", "Debug", "hil_app.elf")
 
-    project_dir = os.path.abspath(args.project_dir)
-    print_header("Stage 16: HIL Firmware Build")
+    debug_dir = os.path.dirname(elf_path)
+    app_dir = os.path.dirname(debug_dir)
+    ws_dir = os.path.dirname(app_dir)
+    app_name = os.path.basename(app_dir)
+    elf_name = os.path.basename(elf_path)
+    if os.path.basename(debug_dir) != "Debug" or not app_name:
+        raise ValueError(
+            "firmware.elf for Vitis builds must use the Vitis output shape "
+            "<workspace>/<app>/Debug/<app>.elf")
+    if elf_name != f"{app_name}.elf":
+        raise ValueError(
+            "firmware.elf basename must match the Vitis app directory "
+            f"({app_name}.elf), got {elf_name}")
+    if any(ch.isspace() for ch in app_name):
+        raise ValueError("Vitis app name derived from firmware.elf cannot contain spaces")
 
-    # Load hil.json
-    hil_config = load_hil_json(project_dir)
-    if hil_config is None:
-        print(f"\n  No hil.json -- skipping")
-        return 0
+    return {
+        "elf_path": elf_path,
+        "ws_dir": ws_dir,
+        "app_name": app_name,
+        "platform_name": (
+            f"{_safe_label(app_name)}_platform" if elf_value
+            else "hil_platform"),
+    }
 
-    build_dir = hil_build_dir(project_dir)
-    socks_cfg = load_project_config(project_dir) or {}
 
-    try:
-        no_os_cfg = _no_os_make_config(project_dir, socks_cfg, hil_config)
-    except ValueError as e:
-        print(f"\n  ERROR: {e}")
-        return 1
-    if no_os_cfg:
-        return run_no_os_make(project_dir, build_dir, no_os_cfg, args.settings)
-
-    # Hard-fail if firmware source is missing (Claude must author it)
-    fw_config = hil_config.get("firmware", {})
+def run_vitis_firmware_build(project_dir, build_dir, hil_config, fw_config,
+                             processor, xsa_path, xsct, settings_path,
+                             enable_debug, label=None):
     test_src = fw_config.get("test_src", "sw/hil_test_main.c")
     test_src_path = os.path.join(project_dir, test_src)
     if not os.path.isfile(test_src_path):
@@ -560,72 +593,45 @@ def main() -> int:
               f"Claude must write firmware before Stage 16 can build.")
         return 1
 
-    # Check prerequisite: XSA exists
-    xsa_path = os.path.join(build_dir, "system_wrapper.xsa")
-    if not os.path.isfile(xsa_path):
-        print(f"\n  ERROR: XSA not found: {xsa_path}")
-        print(f"  Run Stage 15 first.")
-        return 1
-
-    # Debug mode: --debug flag or SOCKS_DEBUG_BUILD env var (set by hil_ila.py rebuild)
-    enable_debug = args.debug or os.environ.get("SOCKS_DEBUG_BUILD") == "1"
-
-    print(f"\n  Project:  {project_dir}")
-    print(f"  XSA:      {xsa_path}")
-    print(f"  Debug:    {enable_debug}")
-    processor = firmware_processor(hil_config)
-    print(f"  Proc:     {processor}")
-
-    # Find XSCT
-    xsct = find_xsct()
-    if xsct is None:
-        print(f"\n  ERROR: XSCT not found (part of Vitis SDK)")
-        return 1
-    print(f"  XSCT:     {xsct}")
-
-    # Stage only the files listed in hil.json, then generate build_app.tcl
+    stage_name = _safe_label(label) if label else None
     try:
-        stage_dir = stage_firmware_sources(project_dir, build_dir, hil_config)
-    except FileNotFoundError as e:
+        layout = _vitis_layout_from_firmware(project_dir, build_dir, fw_config)
+        stage_dir = stage_firmware_sources(
+            project_dir, build_dir, hil_config, fw_config=fw_config,
+            stage_name=stage_name)
+    except (FileNotFoundError, ValueError) as e:
         print(f"\n  ERROR: {e}")
         return 1
-    import_tcl = build_import_sources_tcl(stage_dir)
+
+    logs_dir = os.path.join(project_dir, "build", "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    if stage_name:
+        log_path = os.path.join(logs_dir, f"hil_firmware_build-{stage_name}.log")
+        build_tcl_path = os.path.join(build_dir, f"build_app-{stage_name}.tcl")
+    else:
+        log_path = os.path.join(logs_dir, "hil_firmware_build.log")
+        build_tcl_path = os.path.join(build_dir, "build_app.tcl")
+
+    import_tcl = build_import_sources_tcl(stage_dir, layout["app_name"])
     build_tcl = expand_template(
         os.path.join(tcl_dir(), "build_app.template.tcl"),
-        os.path.join(build_dir, "build_app.tcl"),
+        build_tcl_path,
         {
             "{{BUILD_DIR}}": build_dir,
+            "{{WS_DIR}}": layout["ws_dir"],
+            "{{XSA_PATH}}": xsa_path,
             "{{IMPORT_SOURCES_TCL}}": import_tcl,
             "{{PROCESSOR}}": processor,
+            "{{PLATFORM_NAME}}": layout["platform_name"],
+            "{{APP_NAME}}": layout["app_name"],
             "{{BSP_CONFIG_TCL}}": os.path.abspath(os.path.join(
                 project_dir, fw_config.get("bsp_config_tcl", "")))
             if fw_config.get("bsp_config_tcl") else "",
         },
     )
 
-    # Run XSCT from the Vitis environment. If the orchestrator forwards a
-    # Vivado settings path, prefer the matching Vitis version for firmware.
-    settings = find_vitis_settings(args.settings)
+    settings = find_vitis_settings(settings_path)
     debug_arg = " --debug" if enable_debug else ""
-
-    # Stage 16 has two execution shapes:
-    #   - linker_placement absent (the historical default): one XSCT
-    #     invocation with --phase all (or equivalently no --phase flag).
-    #   - linker_placement present: two XSCT invocations sandwiching the
-    #     Python linker rewrite. The first call (--phase create) lays
-    #     down the workspace + platform + app + Vitis-generated
-    #     lscript.ld but does not link. Python rewrites lscript.ld's
-    #     MEMORY region. The second call (--phase build) runs `app
-    #     build` against the now-corrected linker.
-    try:
-        placement = linker_placement_from_hil(hil_config)
-    except ValueError as e:
-        print(f"\n  ERROR: {e}")
-        return 1
-
-    logs_dir = os.path.join(project_dir, "build", "logs")
-    os.makedirs(logs_dir, exist_ok=True)
-    log_path = os.path.join(logs_dir, "hil_firmware_build.log")
 
     def _run_xsct(phase_label):
         phase_arg = f" --phase {phase_label}"
@@ -643,16 +649,29 @@ def main() -> int:
             text=True,
         )
 
-    if placement is None:
-        # Historical single-shot path -- no linker placement override.
+    try:
+        placement = linker_placement_from_firmware(fw_config)
+    except ValueError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
+
+    if label:
+        print(f"\n  Building firmware entry {label}...")
+        print(f"    Proc: {processor}")
+        print(f"    App:  {layout['app_name']}")
+        print(f"    ELF:  {layout['elf_path']}")
+        print(f"    Log:  {log_path}")
+    elif placement is None:
         print(f"\n  Building firmware...")
+    else:
+        print(f"\n  Building firmware (two-phase, linker_placement active)...")
+
+    if placement is None:
         result = _run_xsct("all")
         with open(log_path, "w") as lf:
             lf.write(result.stdout)
             lf.write(result.stderr)
     else:
-        # Two-phase path: create -> rewrite -> build.
-        print(f"\n  Building firmware (two-phase, linker_placement active)...")
         print(f"    Phase 1: workspace + platform + app (no link)")
         result = _run_xsct("create")
         with open(log_path, "w") as lf:
@@ -670,7 +689,7 @@ def main() -> int:
             return 1
 
         lscript_path = os.path.join(
-            build_dir, "vitis_ws", "hil_app", "src", "lscript.ld")
+            layout["ws_dir"], layout["app_name"], "src", "lscript.ld")
         if not os.path.isfile(lscript_path):
             print(f"\n  {fail_str()}: lscript.ld not generated by Vitis at "
                   f"{lscript_path}")
@@ -697,7 +716,6 @@ def main() -> int:
             lf.write(result.stdout)
             lf.write(result.stderr)
 
-    # Filter suppressed warnings from stdout display
     combined = result.stdout + result.stderr
     filtered, suppressed = filter_xsct_output(combined)
     if filtered.strip():
@@ -710,24 +728,179 @@ def main() -> int:
         print(f"\n  {fail_str()}: Firmware build failed (rc={result.returncode})")
         return 1
 
-    # Verify ELF output
-    elf_path = os.path.join(build_dir, "vitis_ws", "hil_app", "Debug", "hil_app.elf")
-    if not os.path.isfile(elf_path):
-        print(f"\n  {fail_str()}: ELF not generated at {elf_path}")
+    if not os.path.isfile(layout["elf_path"]):
+        print(f"\n  {fail_str()}: ELF not generated at {layout['elf_path']}")
         return 1
 
-    # Write debug build marker if debug mode
     if enable_debug:
-        marker_path = os.path.join(build_dir, "vitis_ws", ".debug_build")
+        marker_path = os.path.join(layout["ws_dir"], ".debug_build")
         with open(marker_path, "w") as mf:
             mf.write("debug\n")
         print(f"    Debug build marker written: {marker_path}")
 
     print(f"\n  {pass_str()}: Firmware built successfully")
-    print(f"    ELF: {elf_path}")
+    print(f"    ELF: {layout['elf_path']}")
     print(f"    Debug: {enable_debug}")
+    if label:
+        print(f"    Role: {label}")
     print_separator()
     return 0
+
+
+def run_multi_firmware_build(project_dir, build_dir, socks_cfg, hil_config, args):
+    fw_block = hil_config.get("firmware", {})
+    firmwares = fw_block.get("firmwares", [])
+    enable_debug = args.debug or os.environ.get("SOCKS_DEBUG_BUILD") == "1"
+    xsa_path = os.path.join(build_dir, "system_wrapper.xsa")
+    if not os.path.isfile(xsa_path):
+        print(f"\n  ERROR: XSA not found: {xsa_path}")
+        print(f"  Run Stage 15 first.")
+        return 1
+
+    vitis_entries = []
+    for i, entry in enumerate(firmwares):
+        flow = entry.get("flow", "vitis")
+        if flow == "no_os_make":
+            continue
+        if flow not in ("vitis", "vitis_app"):
+            print(f"\n  ERROR: firmware.firmwares[{i}].flow must be "
+                  f"'vitis' or 'no_os_make', got {flow!r}")
+            return 1
+        vitis_entries.append(entry)
+
+    xsct = None
+    if vitis_entries:
+        xsct = find_xsct()
+        if xsct is None:
+            print(f"\n  ERROR: XSCT not found (part of Vitis SDK)")
+            return 1
+
+    print(f"\n  Project:  {project_dir}")
+    print(f"  XSA:      {xsa_path}")
+    print(f"  Debug:    {enable_debug}")
+    if xsct:
+        print(f"  XSCT:     {xsct}")
+    print(f"\n  Multi-firmware Stage 16: {len(firmwares)} firmware role(s)")
+
+    for i, entry in enumerate(firmwares):
+        label = _entry_label(entry, i)
+        flow = entry.get("flow", "vitis")
+        print(f"\n  --- [{i + 1}/{len(firmwares)}] {label} ({flow}) ---")
+        if flow == "no_os_make":
+            try:
+                no_os_cfg = _no_os_make_config(
+                    project_dir, socks_cfg, hil_config, fw_cfg=entry,
+                    entry_mode=True)
+            except ValueError as e:
+                print(f"\n  ERROR: {e}")
+                return 1
+            if not no_os_cfg:
+                print(f"\n  ERROR: firmware.firmwares[{i}] requested "
+                      f"no_os_make but no no_os_make config was found")
+                return 1
+            rc = run_no_os_make(project_dir, build_dir, no_os_cfg, args.settings)
+            if rc != 0:
+                return rc
+            if entry.get("elf"):
+                elf_path = _resolve_project_path(project_dir, entry["elf"])
+                if not os.path.isfile(elf_path):
+                    print(f"\n  {fail_str()}: no-OS entry ELF not found at "
+                          f"{elf_path}")
+                    return 1
+            continue
+
+        if not entry.get("elf"):
+            print(f"\n  ERROR: firmware.firmwares[{i}] Vitis entries must "
+                  f"declare elf so Stage 16 and Stage 17 share one output path")
+            return 1
+        processor = entry.get("processor") or firmware_processor(hil_config)
+        rc = run_vitis_firmware_build(
+            project_dir=project_dir,
+            build_dir=build_dir,
+            hil_config=hil_config,
+            fw_config=entry,
+            processor=processor,
+            xsa_path=xsa_path,
+            xsct=xsct,
+            settings_path=args.settings,
+            enable_debug=enable_debug,
+            label=label,
+        )
+        if rc != 0:
+            return rc
+
+    print(f"\n  {pass_str()}: Multi-firmware build complete")
+    print_separator()
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Stage 16: HIL Firmware Build")
+    parser.add_argument("--project-dir", required=True, help="Project root")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable HIL_DEBUG_MODE (ILA pacing)")
+    parser.add_argument("--settings", default=None,
+                        help="Path to Xilinx settings64.sh")
+    args = parser.parse_args()
+
+    project_dir = os.path.abspath(args.project_dir)
+    print_header("Stage 16: HIL Firmware Build")
+
+    # Load hil.json
+    hil_config = load_hil_json(project_dir)
+    if hil_config is None:
+        print(f"\n  No hil.json -- skipping")
+        return 0
+
+    build_dir = hil_build_dir(project_dir)
+    socks_cfg = load_project_config(project_dir) or {}
+    fw_config = hil_config.get("firmware", {})
+
+    if isinstance(fw_config.get("firmwares"), list) and fw_config["firmwares"]:
+        return run_multi_firmware_build(
+            project_dir, build_dir, socks_cfg, hil_config, args)
+
+    try:
+        no_os_cfg = _no_os_make_config(project_dir, socks_cfg, hil_config)
+    except ValueError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
+    if no_os_cfg:
+        return run_no_os_make(project_dir, build_dir, no_os_cfg, args.settings)
+
+    # Check prerequisite: XSA exists
+    xsa_path = os.path.join(build_dir, "system_wrapper.xsa")
+    if not os.path.isfile(xsa_path):
+        print(f"\n  ERROR: XSA not found: {xsa_path}")
+        print(f"  Run Stage 15 first.")
+        return 1
+
+    # Debug mode: --debug flag or SOCKS_DEBUG_BUILD env var (set by hil_ila.py rebuild)
+    enable_debug = args.debug or os.environ.get("SOCKS_DEBUG_BUILD") == "1"
+    processor = firmware_processor(hil_config)
+
+    print(f"\n  Project:  {project_dir}")
+    print(f"  XSA:      {xsa_path}")
+    print(f"  Debug:    {enable_debug}")
+    print(f"  Proc:     {processor}")
+
+    # Find XSCT
+    xsct = find_xsct()
+    if xsct is None:
+        print(f"\n  ERROR: XSCT not found (part of Vitis SDK)")
+        return 1
+    print(f"  XSCT:     {xsct}")
+    return run_vitis_firmware_build(
+        project_dir=project_dir,
+        build_dir=build_dir,
+        hil_config=hil_config,
+        fw_config=fw_config,
+        processor=processor,
+        xsa_path=xsa_path,
+        xsct=xsct,
+        settings_path=args.settings,
+        enable_debug=enable_debug,
+    )
 
 
 if __name__ == "__main__":
