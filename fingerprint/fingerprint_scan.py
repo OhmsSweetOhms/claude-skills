@@ -11,7 +11,10 @@ Modes:
 
 Uses the shared fingerprint_engine for all pattern matching.
 
-Engine: ~/.claude/hooks/fingerprint_engine.py
+Engine: fingerprint_engine.py, bundled beside this script so the skill is
+self-contained / shareable. The private ~/.claude/hooks/fingerprint_engine.py
+is a symlink to this file (single source of truth; the git hooks import the
+same engine).
 """
 
 import json
@@ -20,8 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Import shared engine
-sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
+# Import the engine bundled beside this script (self-contained skill).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fingerprint_engine import (
     Scanner,
     filter_gitignored,

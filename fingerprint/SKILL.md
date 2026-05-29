@@ -142,7 +142,7 @@ For a parent directory containing multiple repos:
 - Email addresses, street addresses, MAC addresses
 
 **Fingerprint Material (all blocked):**
-- Absolute paths containing usernames (`/home/user/`, `/Users/user/`, `/media/user/`)
+- Absolute paths containing usernames (a `/home/`, `/Users/`, or `/media/` prefix followed by a username)
 - Machine hostnames in file content
 - Author/copyright lines with real names (must use OhmsSweetOhms)
 
@@ -236,8 +236,8 @@ curl -sL https://raw.githubusercontent.com/newren/git-filter-repo/main/git-filte
 
    **replacements.txt** (content rewrite, `literal==>replacement`):
    ```
-   /home/username/project/path==>.
-   /media/username/drive/path==>.
+   /ABSOLUTE/HOME/PATH/PREFIX==>.
+   /ABSOLUTE/MEDIA/PATH/PREFIX==>.
    old-hostname==>build-host
    ```
 
@@ -265,7 +265,7 @@ replacements file, then loop:
 
 ```bash
 echo "OhmsSweetOhms <noreply@OhmsSweetOhms> old-name <old@email>" > /tmp/mailmap
-echo "/home/user/path==>./" > /tmp/replacements
+echo "/ABSOLUTE/REPO/PATH==>./" > /tmp/replacements   # use your real absolute path prefix
 
 for repo in repo1 repo2 repo3; do
     cd "$repo"
