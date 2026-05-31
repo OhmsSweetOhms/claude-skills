@@ -136,6 +136,7 @@ section in `references/workflows.md`:
 | "Recover a missing codex handback" / "retroactive handback" / "closed plan has no handback" | **Retroactive handback** (`references/codex-handoff.md`) |
 | "Triage codex handback findings" / "process codex handback" / "classify handback follow-ons" | **Process codex handback** (`references/codex-handoff.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
+| "Reconcile threads pulled from another machine" / "thread state diverged across clones" / "threads.json merge conflict after pull" | **Cross-machine reconciliation** (`references/cross-machine-reconciliation.md`) |
 
 If the user's ask doesn't match cleanly, ask which operation they
 want before acting. Don't invent new operations.
@@ -206,6 +207,13 @@ one-line summary plus per-finding-kind breakdown.
 
 The registry must always be regenerated and committed in the same
 commit as the per-thread edits. A drifted registry is a bug.
+
+Because the registry is the one shared mutable file every thread
+operation rewrites, it is also the guaranteed conflict point when the
+same repo is worked on from more than one machine and both push. When
+that happens, never hand-merge the registry — resolve by rebuild, and
+seed the union of the non-derived blocks (`closure_log`,
+`current_metrics`) first. See `references/cross-machine-reconciliation.md`.
 
 ## Invariants (violate these and the pattern falls apart)
 
