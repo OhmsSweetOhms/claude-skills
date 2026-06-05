@@ -252,6 +252,12 @@ plan authoring, and troubleshooting.
 
 **For DSP rate-conversion / FIR / multi-rate designs:** read `references/dsp/rate-conversion.md` before Stage 1.
 
+**For authored fixed-point VHDL DSP datapaths:** read `references/dsp/fixed-point-vhdl.md` before Stage 1. This covers bit-exact integer gates, DSP inference/resource checks, OOC versus integrated timing, lane scheduler proofs, and multi-clock config/status/dump CDC.
+
+**For dynamic bit-select / quantizer datapaths:** read `references/dsp/fixed-point-vhdl.md` first, then `references/dsp/bit-select.md` before Stage 1. This covers windowed power, threshold-based shift selection, half-even right shifts, saturating clip, ping-pong buffering, telemetry fields, and bit-select HIL proof separation.
+
+**For GPS/GNSS correlator datapaths:** read `references/dsp/fixed-point-vhdl.md` first, then `references/dsp/gps-correlator.md` before Stage 1. This covers carrier/code NCO conventions, PRN/tap order, E/P/L integration, dump format, channel scheduler gates, and hardware vector-injection proof requirements.
+
 **VCD-based trigger plan generation:** If `ila_trigger_plan.json` doesn't exist
 or needs regeneration, run `scripts/hil/gen_trigger_plan.py` to auto-generate
 from VCD data (see `references/hil.md` § "Auto-Generating Trigger Plans from VCD").
