@@ -6,6 +6,10 @@
     "ad9986-fmca",
     "ad9081-fmca-ebz (reference design; some profiles work on AD9986-FMCA via chip-ID acceptance patch)"
   ],
+  "substrate_catalog": {
+    "file": "substrates.json",
+    "relationship": "This catalog holds freq-plan operating points (the JESD/datapath half). Its sibling `substrates.json` holds the boot/OS/hardware half (board rev, FMC + vcxo, Kuiper image fingerprints, boot-mode switches, post-boot dmesg + libiio baseline). substrate _|_ freq-plan: a validated substrate composes with any compatible freq-plan here. The substrate's `expected_dmesg_anchors` + `expected_libiio_baseline` gate the pre-freq-plan boot; a profile's `uart_pass_markers` gate the JESD bring-up on top of that booted substrate."
+  },
   "profiles": {
     "6144-jesd204b-m8l4": {
       "description": "61.44-MHz PL link clock; lane rate 2.4576 Gbps; JESD204B 8B/10B encoding, M=8 / L=4 / S=1 / NP=16 (RX = 4 ADC RF inputs each emitted as I/Q). HMC7044 PLL2 at 2.94912 GHz from a 122.88 MHz VCXO; SYSREF at 1.92 MHz LMFC.",

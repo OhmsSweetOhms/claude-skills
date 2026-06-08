@@ -1,0 +1,355 @@
+{
+  "schema_version": 1,
+  "board": "zcu102",
+  "kind": "substrate-catalog",
+  "description": "Xilinx ZCU102 (Zynq UltraScale+ MPSoC, XCZU9EG) SUBSTRATE catalog — the boot/OS/hardware half of the layered profile model whose other half is the freq-plan operating-point catalog in `profiles.json`. A substrate fixes the board rev, FMC carrier + vcxo, Linux image (with fingerprints), boot-partition deploy, boot-mode switches, and the post-boot baseline (dmesg anchors + libiio device shape) BEFORE any freq-plan is applied. Substrate ⊥ freq-plan: a validated substrate composes with any compatible freq-plan from `profiles.json`. Unlike `profiles.json` (which is name-only — it points at patch/manifest data living in the consuming project), substrate entries here are SELF-CONTAINED machine-verifiable validation artifacts: image SHA256s, deploy MD5s, regex dmesg anchors, and the exact libiio baseline, so a runtime can assert a live board matches the substrate it was validated on. Human-readable boot/switch procedure for these substrates lives in the `zynq-boot` skill (references/ad9986-zcu102-kuiper-sdboot.md); this file is the executable counterpart.",
+  "fmc_daughter_cards_supported": [
+    "ad9986-fmcb-ebz (AD9986-FMCB-EBZ-W3, validated)",
+    "ad9081-fmca-ebz (reference design; ADI Kuiper bundle ships the rev10-ad9081 board tree)"
+  ],
+  "how_to_use": "Select a substrate by id and compose it with a freq-plan from `profiles.json`. The substrate's `expected_dmesg_anchors` and `expected_libiio_baseline` are the pre-freq-plan acceptance gates; the freq-plan's own UART markers (see profiles.json) gate the JESD/datapath bring-up on top of the booted substrate. `validation_evidence` points back at the source thread + captured logs.",
+  "substrates": {
+    "zcu102-ad9986-vcxo122p88-kuiper-2022r2p1": {
+      "schema_version": "1",
+      "kind": "substrate",
+      "profile_id": "zcu102-ad9986-vcxo122p88-kuiper-2022r2p1",
+      "status": "active",
+      "supersedes": null,
+      "superseded_by": null,
+      "description": "Validated Linux bring-up substrate: ZCU102 Rev1.0 + AD9986-FMCB-EBZ-W3 on FMC HPC0 + 122.88 MHz vcxo + Kuiper Linux 2022_R2 Patch1 with the m8_l4 BOOT.BIN and m8_l4_vcxo122p88 system.dtb. Validated by plan-01 of the 20260515 ZCU102 AD9986 linux bring-up thread; all 3 M0 acceptance gates PASS.",
+      "owning_adrs": [
+        "docs/decision-log.md::ADR-001",
+        "docs/decision-log.md::ADR-007"
+      ],
+      "hardware": {
+        "board": {
+          "preset": "zcu102",
+          "rev": "rev10",
+          "silicon": "xczu9eg",
+          "board_manual": "Xilinx UG1182 — BUT see sw6.documentation_caveat below",
+          "sw6": {
+            "switches": [
+              1,
+              0,
+              0,
+              0
+            ],
+            "ps_mode_decimal": 1,
+            "uboot_token": "LVL_SHFT_SD_MODE1",
+            "documentation_caveat": "Xilinx UG1182 Table 13-1 prescribes [0,1,1,1] (PS_MODE 1110, mode SD1-LS) for SD card boot on ZCU102. EMPIRICAL FINDING (plan-01): this Rev1.0 board boots SD from PS_MODE 0001 with switches [1,0,0,0] — confirmed by U-Boot's own 'Bootmode: LVL_SHFT_SD_MODE1' echo. The UG1182 setting causes BootROM to silently load a stale 2018.3 FSBL from an alternate boot source and stall at 'PMU-FW is not running'. ADI's AD9081 quickstart wiki has the correct setting in 'OFF,OFF,OFF,ON' notation. Always verify empirically via the U-Boot 'Bootmode:' line."
+          },
+          "vadj": {
+            "voltage": "1V8",
+            "controlled_by": "FMC EEPROM (auto-detected by ZCU102 VADJ control)"
+          },
+          "fmc_supply": {
+            "required_pre_ps_boot": true,
+            "rationale": "AD9986 + HMC7044 SPI chip-selects assert correctly even with FMC unpowered, but MISO floats high and every register read returns 0xFF. Symptoms: 'hmc7044 spi2.0: Read/Write check failed (0x0)' + 'Probed, SPI read support failed' + 'ad9081 spi1.0: 8bit r/w test failed. Write 5a but readback is ff' + 'reset/init failed (-50)'. Linux still boots cleanly to login — board is alive but blind. Power FMC supply BEFORE powering the ZCU102."
+          }
+        },
+        "fmc": {
+          "slot": "HPC0",
+          "carrier": "AD9986-FMCB-EBZ-W3",
+          "carrier_chip": {
+            "part": "AD9986",
+            "rev": 3,
+            "grade": 2,
+            "driver_api_version": "1.6.0",
+            "is_ad9081_variant": true,
+            "driver_identification_note": "Linux kernel ad9081 driver prints 'Expected AD9081 found AD9986' at probe (informational, not error). Driver continues and probes the AD9986 successfully. Downstream consumers must use libiio context attribute hw_name=AD9986, not the device path basename 'axi-ad9081-{rx,tx}-hpc'."
+          },
+          "vcxo_hz": 122880000,
+          "vcxo_part_note": "122.88 MHz crystal oscillator on the FMC carrier. Documented as susceptible to a Kuiper 2023_R2 SPI boot bug (kernel-stage; does NOT manifest on 2022_R2_p1 — validated)."
+        },
+        "uart": {
+          "bridge": "Silicon Labs CP2108 Quad USB-to-UART (onboard ZCU102 debug)",
+          "vid_pid": "10c4:ea71",
+          "ps_uart_interface_index": 0,
+          "baud": 115200,
+          "selector_note": "Use SOCKS hil_lib.find_serial_port with board.preset=zcu102 + firmware.processor=psu_cortexa53_0 — auto-resolves to CP2108 interface 0 regardless of /dev/ttyUSB<N> reshuffle."
+        }
+      },
+      "linux": {
+        "distro": "kuiper",
+        "version": "2022_R2_p1",
+        "kernel_version": "5.15.36-182044-g85078536473b",
+        "uname_a": "Linux analog 5.15.36-182044-g85078536473b #1140 SMP Wed Apr 3 07:20:38 EEST 2024 aarch64 GNU/Linux",
+        "image": {
+          "url": "https://swdownloads.analog.com/cse/kuiper/image_2024-04-04-ADI-Kuiper-full.zip",
+          "zip_filename": "image_2024-04-04-ADI-Kuiper-full.zip",
+          "zip_size_bytes": 4081285559,
+          "zip_md5": "7118fc7fce9a5f102332976b6d5c1537",
+          "zip_sha256": "ddd279a9be24dd157b49f5a967369ae993986f66b5665d800a85a72775c060db",
+          "img_filename": "2024-04-04-ADI-Kuiper-full.img",
+          "img_size_bytes": 12377391104,
+          "img_sha256": "5810e12872bedfae781865be76ac4bcafdc67da1ecd23fe9b04179d2e967b82f",
+          "github_repo": "analogdevicesinc/kuiper",
+          "github_tag": "2022_r2_p1",
+          "kuiper_base": "bullseye"
+        },
+        "boot_partition": {
+          "fs": "vfat",
+          "size_gib": 2.0,
+          "kind": "ADI Kuiper multi-board bundle (RPi DTBs + SoCFPGA + many Zynq/ZynqMP variants in per-board subdirectories; NO root-level Image/BOOT.BIN/system.dtb pre-deployed)",
+          "deploy_script": "codex-handoff/plan-01/scripts/deploy_boot.sh",
+          "deploy_files": [
+            {
+              "src_in_bundle": "zynqmp-zcu102-rev10-ad9081/m8_l4/BOOT.BIN",
+              "dst_at_root": "BOOT.BIN",
+              "md5": "b14ac5da5457403b6f76edfc03ec8a37",
+              "size_bytes": 15938936,
+              "variant_note": "ADI stock m8_l4 (M=8 L=4) BOOT.BIN. Boot header analysis confirms PMUFW correctly prepended (pmu_fw_total_length=129760 bytes at offset 0x38)."
+            },
+            {
+              "src_in_bundle": "zynqmp-zcu102-rev10-ad9081/m8_l4/m8_l4_vcxo122p88/system.dtb",
+              "dst_at_root": "system.dtb",
+              "md5": "f6b73030eec0f5d75fc122b19d691934",
+              "size_bytes": 63450,
+              "variant_note": "m8_l4 variant for 122.88 MHz vcxo (vs default 100 MHz vcxo). Required for HMC7044 to lock against the AD9986 carrier oscillator."
+            },
+            {
+              "src_in_bundle": "zynqmp-common/Image",
+              "dst_at_root": "Image",
+              "md5": "a08fa0b482f5ac0bae1b3bde582b172f",
+              "size_bytes": 34955776,
+              "variant_note": "ADI Kuiper 2022_R2 common ZynqMP arm64 kernel. Shared across all zynqmp- projects."
+            }
+          ],
+          "uenv_overrides": {
+            "append_to_bootargs": [
+              "ip=192.168.0.200:::255.255.255.0:analog:eth0:off"
+            ],
+            "note": "Static IP via Linux kernel ipconfig (CONFIG_IP_PNP). Cosmetic quirk: IP-Config output shows gw=255.255.255.255 when gw field is blank — no actual default route installed, local-subnet routing works. For off-subnet routing add an explicit gateway."
+          }
+        },
+        "rootfs_partition": {
+          "fs": "ext4",
+          "device": "/dev/mmcblk0p2",
+          "auto_resize_on_first_boot": true,
+          "preflight_note": "SD card physical write-protect lock-tab MUST be in UNLOCK position; otherwise kernel detects (ro), rootfs mount with rw fails, EROFS, kernel panic. Six panics consumed before this was diagnosed in plan-01."
+        },
+        "network": {
+          "method": "kernel ip= cmdline arg via BOOT/uEnv.txt::bootargs",
+          "static_ip": "192.168.0.200",
+          "netmask": "255.255.255.0",
+          "gateway": null,
+          "hostname": "analog"
+        },
+        "auth": {
+          "username": "root",
+          "password": "analog"
+        }
+      },
+      "preflight_checklist": [
+        "SD card physical write-protect tab in UNLOCK position (slider toward contacts).",
+        "FMC HPC0 supply powered ON. Verify a power-indicator LED on the AD9986 carrier is lit BEFORE powering the ZCU102.",
+        "AD9986 carrier seated firmly on FMC HPC0; screws (if present) snug; no bent pins on FMC connector.",
+        "USB-UART cable: ZCU102 J83 → host. CP2108 enumerates as /dev/ttyUSB0..3 on the host (interface 0 = PS UART).",
+        "SW6 set to [SW6.1=ON, SW6.2=OFF, SW6.3=OFF, SW6.4=OFF]. Confirm at boot: U-Boot prints 'Bootmode: LVL_SHFT_SD_MODE1' within 5s of power-on. If you see 'Release 2018.3 Nov 8 2018' FSBL banner without PMUFW output, SW6 is wrong — flip SW6.1 to ON and the rest to OFF.",
+        "Optional for SSH: ethernet cable from ZCU102 J70 to a switch with a routable path to 192.168.0.x.",
+        "Optional: GNSS antenna into SMA on AD9986 carrier (RX1 input) — not required for M0; required for any subsequent GPS receiver tests."
+      ],
+      "expected_dmesg_anchors": [
+        {
+          "name": "fsbl_version_modern",
+          "pattern": "Xilinx Zynq MP First Stage Boot Loader\\s+Release 2022\\.2\\s+Feb\\s+7 2024",
+          "severity": "required",
+          "evidence_line": "Xilinx Zynq MP First Stage Boot Loader; Release 2022.2   Feb  7 2024  -  23:35:06"
+        },
+        {
+          "name": "bl31_active",
+          "pattern": "NOTICE:\\s+BL31:\\s+v2\\.8\\(release\\):xilinx-v2023\\.1",
+          "severity": "required",
+          "evidence_line": "NOTICE:  BL31: v2.8(release):xilinx-v2023.1"
+        },
+        {
+          "name": "pmufw_active",
+          "pattern": "PMUFW:\\s+v1\\.1",
+          "severity": "required",
+          "evidence_line": "PMUFW:\tv1.1"
+        },
+        {
+          "name": "uboot_sd_boot_mode",
+          "pattern": "Bootmode:\\s+LVL_SHFT_SD_MODE1",
+          "severity": "required",
+          "evidence_line": "Bootmode: LVL_SHFT_SD_MODE1"
+        },
+        {
+          "name": "sd_card_rw",
+          "pattern": "mmcblk0:\\s+mmc0:[0-9a-f]+\\s+SE128\\s+119\\s+GiB(?!\\s+\\(ro\\))",
+          "severity": "required",
+          "evidence_line": "[    5.099486] mmcblk0: mmc0:aaaa SE128 119 GiB"
+        },
+        {
+          "name": "hmc7044_pll1_locked_122p88",
+          "pattern": "hmc7044 spi2\\.0:\\s+PLL1:\\s+Locked,\\s+CLKIN0\\s+@\\s+122880000\\s+Hz",
+          "severity": "required",
+          "evidence_line": "[    4.247025] hmc7044 spi2.0: PLL1: Locked, CLKIN0 @ 122880000 Hz, PFD: 960 kHz - PLL2: Locked @ 3000.000000 MHz"
+        },
+        {
+          "name": "ad9986_probed",
+          "pattern": "ad9081 spi1\\.0:\\s+AD9986\\s+Rev\\.\\s+3\\s+Grade\\s+2\\s+\\(API\\s+1\\.6\\.0\\)\\s+probed",
+          "severity": "required",
+          "evidence_line": "[    8.191299] ad9081 spi1.0: AD9986 Rev. 3 Grade 2 (API 1.6.0) probed"
+        },
+        {
+          "name": "jesd204_topology_8_devices",
+          "pattern": "jesd204:\\s+found\\s+8\\s+devices\\s+and\\s+1\\s+topologies",
+          "severity": "required",
+          "evidence_line": "[    2.646125] jesd204: found 8 devices and 1 topologies"
+        },
+        {
+          "name": "axi_sysid_hdl_2022_r2",
+          "pattern": "axi_sysid\\s+85000000\\.axi-sysid-0:\\s+\\[ad9081_fmca_ebz\\]\\s+on\\s+\\[zcu102\\]\\s+git\\s+branch\\s+<hdl_2022_r2>",
+          "severity": "required",
+          "evidence_line": "[    3.804226] axi_sysid 85000000.axi-sysid-0: [ad9081_fmca_ebz] on [zcu102] git branch <hdl_2022_r2> git <7ea497b6c24172ee293d6e0a9a387a16973da5ce> clean [2024-02-07 22:23:35] UTC"
+        },
+        {
+          "name": "eth0_phy_dp83867_rgmii_id",
+          "pattern": "macb\\s+ff0e0000\\.ethernet\\s+eth0:\\s+PHY\\s+\\[ff0e0000\\.ethernet-ffffffff:0c\\]\\s+driver\\s+\\[TI DP83867\\]",
+          "severity": "expected",
+          "evidence_line": "[    7.577895] macb ff0e0000.ethernet eth0: PHY [ff0e0000.ethernet-ffffffff:0c] driver [TI DP83867] (irq=POLL)"
+        },
+        {
+          "name": "ip_config_static_192_168_0_200",
+          "pattern": "IP-Config: Complete:\\s+device=eth0,\\s+hwaddr=[0-9a-f:]+,\\s+ipaddr=192\\.168\\.0\\.200,\\s+mask=255\\.255\\.255\\.0",
+          "severity": "expected",
+          "evidence_line": "[   11.722126]      device=eth0, hwaddr=xx:xx:xx:xx:xx:xx, ipaddr=192.168.0.200, mask=255.255.255.0, gw=255.255.255.255"
+        },
+        {
+          "name": "kuiper_login_prompt",
+          "pattern": "Raspbian GNU/Linux 11 analog ttyPS0|Welcome to Kuiper GNU/Linux 11",
+          "severity": "required",
+          "evidence_line": "Raspbian GNU/Linux 11 analog ttyPS0"
+        }
+      ],
+      "expected_libiio_baseline": {
+        "device_count": 25,
+        "iio_devices": [
+          {
+            "id": "iio:device0",
+            "driver": "ams"
+          },
+          {
+            "id": "iio:device1",
+            "driver": "hmc7044"
+          },
+          {
+            "id": "iio:device2",
+            "driver": "axi-ad9081-rx-hpc (buffer capable)"
+          },
+          {
+            "id": "iio:device3",
+            "driver": "axi-ad9081-tx-hpc (buffer capable)"
+          },
+          {
+            "id": "iio_sysfs_trigger",
+            "driver": "(trigger)"
+          },
+          {
+            "id": "hwmon0",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon1",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon2",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon3",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon4",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon5",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon6",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon7",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon8",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon9",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon10",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon11",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon12",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon13",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon14",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon15",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon16",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon17",
+            "driver": "ina226"
+          },
+          {
+            "id": "hwmon18",
+            "driver": "max20751"
+          },
+          {
+            "id": "hwmon19",
+            "driver": "max20751"
+          }
+        ],
+        "context_attributes": {
+          "hdl_system_id": "[ad9081_fmca_ebz] on [zcu102] git branch [hdl_2022_r2] git [7ea497b6c24172ee293d6e0a9a387a16973da5ce] clean [2024-02-07 22:23:35] UTC",
+          "hw_model": "AD9986-FMCB-EBZ-W3 on ZynqMP ZCU102 Rev1.0",
+          "hw_carrier": "ZynqMP ZCU102 Rev1.0",
+          "hw_mezzanine": "AD9986-FMCB-EBZ-W3",
+          "hw_name": "AD9986",
+          "hw_vendor": "Analog Devices",
+          "local,kernel": "5.15.36-182044-g85078536473b",
+          "uri": "local:"
+        },
+        "baseline_note": "This is the libiio shape immediately after substrate boot WITHOUT any freq-plan applied. ADC/DAC clocks, NCO frequencies, and JESD lane rates reflect ADI's stock m8_l4 reference (e.g. main_nco_frequency=400 MHz on RX channel voltage0_i, dac_frequency=12 GHz, sampling_frequency=250 MSPS). The GPS project's actual frequency plans (2048-quad-band-txm8l4 etc.) require custom bitstream + DTB and produce a different libiio shape — see the freq-plan profiles."
+      },
+      "validation_evidence": {
+        "thread_id": "cross-cutting/20260515-zcu102-ad9986-linux-bringup",
+        "plan_id": "plan-01",
+        "session_date": "2026-05-15",
+        "handback_path": "codex-handoff/plan-01/handback.json",
+        "dmesg_artifact": "codex-handoff/plan-01/artifacts/m0_dmesg.log",
+        "iio_info_artifact": "codex-handoff/plan-01/artifacts/m0_iio_info.log",
+        "environment_record": "codex-handoff/plan-01/artifacts/m0_environment.json",
+        "boot_transcript": "codex-handoff/plan-01/temp/m0_boot.log",
+        "verdict": "M0 PASS (3/3 gates): Linux boots to userspace, AD9986 detected via libiio, NCO control via iio_attr verified read-side."
+      }
+    }
+  }
+}
