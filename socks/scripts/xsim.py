@@ -198,6 +198,11 @@ def main() -> int:
                         help="JSON signal map for selective VCD logging (used with --vcd)")
     parser.add_argument("--timeout", type=int, default=600,
                         help="Simulation timeout in seconds (default: 600)")
+    parser.add_argument("--plusarg", action="append", default=[],
+                        metavar="NAME=VALUE",
+                        help="Forward a plusarg to xsim as -testplusarg "
+                             "(repeatable). TB reads it via $value$plusargs; "
+                             "enables case sharding for parallel vector gates")
     args = parser.parse_args()
 
     project_dir = os.path.abspath(args.project_dir)
@@ -414,6 +419,9 @@ def main() -> int:
         print(f"  VCD output: {vcd_name}")
     else:
         sim_cmd = f"xsim {sim_name} -R"
+
+    for plusarg in args.plusarg:
+        sim_cmd += f' -testplusarg "{plusarg}"'
 
     ok, sim_output = run_tool(
         settings_path,

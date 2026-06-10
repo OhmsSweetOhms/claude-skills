@@ -103,11 +103,36 @@ crossings, and no neighbors. Treat a thin positive OOC margin
   of a bit-exact-gated block is the lever of last resort because it
   forces a full re-gate.
 
-## 6. Re-gate discipline
+## 6. Re-gate discipline — two tiers
 
-After ALL families are fixed: full simulation suite (identical counts),
-then synthesis per config. Per the handback contract, leave the `.dcp`
-on disk (unstaged) and emit `failing_paths.txt` when timing fails; a
-root-cause proposal must be consistent with the family histogram. If
-timing still fails after the directed fixes, hand back with the
-histogram — do not freelance another restructuring pass.
+Timing squeezing is an inner loop; full verification is a closure
+gate. Do not pay full-suite cost per squeeze attempt.
+
+**Smoke tier (per timing-fix attempt, quick turnaround):** the
+narrowest simulation set that exercises the retimed cone, plus one
+end-to-end case per config as a canary. Use case-sharding plusargs
+(`xsim.py --plusarg CASE_FIRST=n --plusarg CASE_LAST=m`, TB reads
+`$value$plusargs`) to run only the vector cases that drive the touched
+logic — e.g. a finish-FSM retime needs the bin-extreme and no-detect
+cases, not the whole ladder. Then re-synth only the failing config.
+
+**Full tier (once, before the handback / iteration close):** every
+simulation suite for every config with IDENTICAL check counts (the
+latency-only proof), then synthesis for all configs. A squeeze
+iteration is not done until the full tier passes — smoke-tier green is
+a working state, never a closure claim, and the handback must report
+full-tier results only.
+
+Independent vector cases parallelize at the process level: each
+`xsim.py --work-dir` invocation is self-contained, so shard cases
+across workers (compile once per config with `--compile-only`, fan out
+`--sim-only` workers via `xargs -P`). The aggregate gate must require
+every shard to pass AND the per-shard case counts to sum to the
+expected total — a silently dead shard must read as a failure, not a
+pass.
+
+Per the handback contract, leave the `.dcp` on disk (unstaged) and
+emit `failing_paths.txt` when timing fails; a root-cause proposal must
+be consistent with the family histogram. If timing still fails after
+the directed fixes, hand back with the histogram — do not freelance
+another restructuring pass.
