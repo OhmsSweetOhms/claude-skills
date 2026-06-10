@@ -147,6 +147,45 @@ Record useful material in `handoff_artifacts[]` with a promotion
 recommendation. The main session decides what becomes `.threads/`
 bookkeeping, tracked `data/`, or permanent package tests.
 
+## Synthesis-gate evidence (OOC / implementation runs)
+
+Two extra evidence rules apply to any gate backed by a Vivado
+synthesis or implementation run. Rationale: a timing summary answers
+"did it pass"; only the netlist answers "why not". A fix proposal
+scoped to `report_timing_summary`'s single worst path has already
+missed the dominant failing family once (pl-b2 plan-03 iteration 3:
+the proposed fix covered 26 of 2204 failing endpoints).
+
+1. **Leave the post-synth checkpoint on disk.** Every OOC/impl gate
+   run ends with `write_checkpoint` into the run's
+   `artifacts/ooc-<config>/` directory, and the `.dcp` must still be
+   there when the handback is written. Do NOT commit it: a `.dcp` is
+   a binary zip that can embed host paths and machine names
+   (fingerprint discipline) — same unstaged lifecycle as raw tool
+   logs. It exists so the consumer can interrogate the netlist
+   (`get_timing_paths`, utilization drill-down, path detail) without
+   re-synthesis. It is overwritten per run; the main session extracts
+   anything durable into `.threads/` during triage.
+
+2. **A failed timing gate must hand over the full failing-path
+   list, not just the summary.** Emit a machine-extracted dump —
+
+   ```tcl
+   set fh [open artifacts/ooc-<config>/failing_paths.txt w]
+   foreach p [get_timing_paths -max_paths 3000 \
+                -slack_lesser_than 0 -nworst 1] {
+     puts $fh "[get_property SLACK $p]\t[get_property STARTPOINT_PIN $p]\t[get_property ENDPOINT_PIN $p]"
+   }
+   close $fh
+   ```
+
+   — and cite it as the gate's `evidence_path` alongside the timing
+   summary. Netlist instance names only, so it is fingerprint-clean
+   and may be committed with the handback. Any root-cause proposal in
+   the handback must be consistent with the *family histogram* of
+   this list (endpoints grouped by destination register/instance),
+   not just the single worst path.
+
 ## Lifecycle and visibility
 
 Handback artifacts live on the Codex worktree branch until the
