@@ -279,10 +279,25 @@ codex worktree on X", "spawn codex on X", "run codex on X".
      contract `references/codex-handback.md` defines).
    - **Thread + plan IDs.**
 
-   Plus two generic operational rules baked into the script's output:
+   The emitted packet opens with a **"Copy-paste — Codex turn 1 (short
+   prompt)"** fenced block: a short prompt (execute-this-plan path +
+   worktree/branch + don't-push + stop-on-ambiguity + write-handback).
+   **Surface that block to the user as the thing to paste** — they want
+   the short prompt, not the long packet. The long-form context follows
+   it for reference.
+
+   Plus three generic operational rules baked into the script's output:
 
    - **Don't push the branch.** Worktree merge-back is a single terminal
      event at thread close, not at plan close.
+   - **Stop on architecture/contract ambiguity — never infer through
+     it.** If the plan/ADRs/golden vectors don't pin a decision Codex
+     needs (interface widths, storage semantics, register behavior,
+     golden intent), Codex must stop, pose the question with candidate
+     readings + evidence, and wait; the user relays it to the main
+     session and pastes back a resolution. The exchange is recorded in
+     the handback's `investigations[]`. A handed-back question that
+     catches a contract drafting error is a success, not a stall.
    - **Write structured handback** per `references/codex-handback.md` to
      `<worktree>/codex-handoff/<plan-id>/handback.{json,md}` with the
      required gates / discoveries / follow_ons / blockers / investigations

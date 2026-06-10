@@ -22,6 +22,9 @@ Generic operational rules emitted:
 
     - Don't push the branch (long-lived; merge-back at thread close).
     - Write structured handback per references/codex-handback.md.
+    - Stop on architecture/contract ambiguity: never infer through it;
+      pose the question and wait — the user relays it to the main
+      session and returns a resolution.
 
 Plan-specific operational rules (cross-repo edits, regression-baseline
 specifics, no-simulation constraints, etc.) live in the plan file's
@@ -37,7 +40,8 @@ Usage:
 
 The plan file is the launch prompt. This script produces a copy-paste
 launch packet inline that points Codex at the plan file and states the
-two generic operational rules (don't push, write structured handback).
+three generic operational rules (don't push, write structured handback,
+stop on architecture/contract ambiguity).
 """
 
 from __future__ import annotations
@@ -176,6 +180,28 @@ def emit_packet(
     return f"""\
 {plan_file}
 
+## Copy-paste — Codex turn 1 (short prompt)
+
+Paste this whole block into Codex's first turn:
+
+```
+Execute this plan from start to finish:
+{plan_file}
+
+Worktree: {worktree} (branch {branch}) — do NOT push or merge.
+Read the plan's "Hard constraints" section before running anything.
+If executing the plan requires inferring an architecture or contract decision
+the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Pose the
+question with the candidate readings + evidence and wait; the user will relay it
+to the main session and paste back a resolution. Record the exchange in
+investigations[].
+Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
+per ~/.claude/skills/threads/references/codex-handback.md.
+```
+
+(Everything below is the long-form context behind that short prompt —
+the plan file itself carries the run-specific rules.)
+
 # Codex launch packet — {thread_id} / {plan_id}
 
 > ⚠ HOST-LOCAL ARTIFACT. This packet contains absolute paths for *this*
@@ -217,13 +243,24 @@ handback.json + handback.md + scripts/ + temp/ + artifacts/ per
 
 **Thread / Plan IDs:** `{thread_id}` / `{plan_id}`
 
-## Two generic operational rules to state at Codex turn 1
+## Three generic operational rules to state at Codex turn 1
 
 1. **Don't push the branch.** `{branch}` is long-lived across the
    thread's plan hops; merge-back to `main` is a single terminal
    event at thread close on user request, not at plan close.
 
-2. **Write structured handback** to:
+2. **Stop on architecture/contract ambiguity — never infer through
+   it.** If executing the plan requires a decision the plan file,
+   ADRs, or golden vectors do not pin (interface widths, storage
+   semantics, register behavior, golden-model intent), do not pick
+   an interpretation. Stop, state the ambiguity with the candidate
+   readings and the evidence for each, and wait: the user relays the
+   question to the main session and pastes back a resolution (often
+   with a corrected plan/ADR). Record the exchange in the handback's
+   `investigations[]`. A handed-back question that catches a contract
+   drafting error is a success, not a stall.
+
+3. **Write structured handback** to:
 
    ```
    {handback_inbox}/handback.{{json,md}}

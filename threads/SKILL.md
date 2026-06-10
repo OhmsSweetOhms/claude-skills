@@ -85,9 +85,11 @@ the plan file at `.threads/<thread-id>/<plan-NN>-*.md` is the design
 artifact Codex consumes as turn 1. No separate prompt scaffold exists.
 `scripts/emit_codex_launch_packet.py` packages the six mechanical
 facts (plan-file absolute path, worktree, branch, base SHA, handback
-inbox, thread/plan IDs) plus two generic operational rules (don't push,
-write structured handback) that the user pastes into Codex's sidecar
-terminal at turn 1. The plan must be fleshed out per the tiered
+inbox, thread/plan IDs) plus three generic operational rules (don't
+push; stop on architecture/contract ambiguity — pose the question and
+wait for the user to relay a main-session resolution, never infer
+through it; write structured handback) that the user pastes into
+Codex's sidecar terminal at turn 1. The plan must be fleshed out per the tiered
 template before launch — base sections always filled, Codex add-ons
 below the divider filled when the hop is a Codex hop.
 
