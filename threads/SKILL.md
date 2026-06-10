@@ -67,18 +67,27 @@ contracts with examples.
 
 For Codex worktree sessions, `references/codex-handback.md` defines
 the root worktree handoff inbox (`codex-handoff/<plan-id>/` with
-`handback.json`, `handback.md`, `scripts/`, `temp/`, and
-`artifacts/`), the recording discipline, lifecycle visibility rules,
-and the consumer triage step before merge-back or next-hop activation.
-The full workflow (bootstrap, launch, merge-back) lives in
-`references/codex-handoff.md`, with templates under `assets/templates/`
-(`codex-handoff-dir-README.md` for the inbox README,
-`codex-handback-template.md` for handback.md,
+`handback.json`, `handback.md`, `scripts/`, `temp/`, `artifacts/`,
+and the `questions/` ambiguity mailbox), the recording discipline,
+lifecycle visibility rules, and the consumer triage step before
+merge-back or next-hop activation.
+The full workflow (bootstrap, launch, ambiguity mailbox, merge-back)
+lives in `references/codex-handoff.md`, with templates under
+`assets/templates/` (`codex-handoff-dir-README.md` for the inbox
+README, `codex-handback-template.md` for handback.md,
+`codex-question-template.md` for mailbox questions,
 `codex-handback-retroactive-prompt.md` for recovery cases), the JSON
 schema at `assets/schemas/codex-handback.schema.json`, and supporting
 scripts at `scripts/` (`bootstrap_codex_worktree.sh`,
-`emit_codex_launch_packet.py`, `triage_codex_handback.py`,
-`merge_codex_worktree_back.sh`).
+`emit_codex_launch_packet.py`, `watch_codex_questions.sh` +
+`await_codex_answer.sh` for the mailbox, `triage_codex_handback.py`,
+`merge_codex_worktree_back.sh`). The mailbox: when Codex hits an
+architecture/contract decision the plan/ADRs/vectors don't pin, it
+writes `questions/q-NN.md` (`status: open`) into the inbox and blocks
+(1 h cap); the main session's background watcher wakes, answers in
+the same file — or marks it `escalated` when it is a user-level
+decision — and relaunches the watcher. Timeout on either side
+degrades to the manual handback-as-blocked flow.
 
 **The plan file IS the launch prompt.** When a plan hop launches Codex,
 the plan file at `.threads/<thread-id>/<plan-NN>-*.md` is the design
@@ -86,8 +95,8 @@ artifact Codex consumes as turn 1. No separate prompt scaffold exists.
 `scripts/emit_codex_launch_packet.py` packages the six mechanical
 facts (plan-file absolute path, worktree, branch, base SHA, handback
 inbox, thread/plan IDs) plus three generic operational rules (don't
-push; stop on architecture/contract ambiguity — pose the question and
-wait for the user to relay a main-session resolution, never infer
+push; stop on architecture/contract ambiguity — write a
+`questions/q-NN.md` mailbox file and block on the answer, never infer
 through it; write structured handback) that the user pastes into
 Codex's sidecar terminal at turn 1. The plan must be fleshed out per the tiered
 template before launch — base sections always filled, Codex add-ons

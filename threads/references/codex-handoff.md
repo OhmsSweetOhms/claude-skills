@@ -442,6 +442,69 @@ superseded plan hop on a codex-enabled thread as
 `missing_codex_handback` when neither the main checkout nor the
 recorded worktree path contains the handback pair.
 
+## Ambiguity mailbox (`questions/`)
+
+**Purpose:** automate the transport of the stop-on-ambiguity rule.
+When a running Codex session hits an architecture/contract decision
+the plan/ADRs/golden vectors do not pin, it must not infer through it
+— it writes a question file into the inbox and blocks; the main
+session is woken by a background watcher, resolves (or escalates to
+the user), and writes the answer into the **same file**. No human
+copy-paste shuttle; both sides cap their wait at 1 hour so idle
+sessions don't burn tokens, and the timeout degrades to exactly the
+manual flow (question recorded as a blocker, handback
+`gate-incomplete`).
+
+**Layout:** `<worktree>/codex-handoff/<plan-id>/questions/q-NN.md`,
+one file per question (NN sequential), scaffolded from
+`assets/templates/codex-question-template.md`. Frontmatter `status`
+is the state machine: `open → answered | escalated → answered`, or
+`open → timeout` (set by Codex at its cap). Question files are part
+of the session record — committed with the inbox; keep paths
+repo-relative (fingerprint discipline).
+
+**Codex protocol** (stated in the launch packet's generic rule):
+
+1. Write `questions/q-NN.md` with `status: open`, the candidate
+   readings, and the evidence for each. Do not proceed on an assumed
+   reading.
+2. Block on
+   `bash ~/.claude/skills/threads/scripts/await_codex_answer.sh <file> 3600`
+   — exits 0 on `answered` (read `## Resolution`, proceed);
+   `escalated` means a user decision is in flight, keep waiting.
+3. On timeout (exit 3): set `status: timeout`, record the question as
+   a `blockers[]` entry AND an `investigations[]` entry, write the
+   handback (`gate-incomplete`/`blocked`), end the session.
+4. Every mailbox exchange — answered or not — is duplicated into the
+   handback's `investigations[]`.
+
+**Main-session protocol:**
+
+1. At Codex launch, start the watcher in the background
+   (`run_in_background`):
+   ```bash
+   bash ~/.claude/skills/threads/scripts/watch_codex_questions.sh \
+       <worktree>/codex-handoff/<plan-id> 3600
+   ```
+   Zero tokens while idle; re-invokes the session when a question
+   lands (exit 0, `OPEN_QUESTION <path>`) or at the 1 h cap (exit 2 —
+   do not relaunch automatically).
+2. On fire, read the question and pick the answer path — this
+   boundary is load-bearing:
+   - **`answered`** — only when the resolution is derivable from
+     already-pinned authority (ADR text, golden source, committed
+     vectors, plan prose). Write `## Resolution` citing the
+     authority, set `status: answered`, correct the plan/ADR in the
+     same pass if the question exposed a drafting error (cite the
+     commit in the resolution).
+   - **`escalated`** — the question requires a NEW decision
+     (ADR-grade choice, scope change). Set `status: escalated`,
+     surface it to the user, and write the resolution + `answered`
+     only once the user decides. The mailbox automates transport,
+     not authority.
+3. After answering, relaunch the watcher (step 1) to catch the next
+   question while Codex continues.
+
 ## Process codex handback
 
 **Trigger:** a forward or retroactive handback exists and the main

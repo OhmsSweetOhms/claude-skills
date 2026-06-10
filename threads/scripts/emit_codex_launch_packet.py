@@ -22,9 +22,11 @@ Generic operational rules emitted:
 
     - Don't push the branch (long-lived; merge-back at thread close).
     - Write structured handback per references/codex-handback.md.
-    - Stop on architecture/contract ambiguity: never infer through it;
-      pose the question and wait — the user relays it to the main
-      session and returns a resolution.
+    - Stop on architecture/contract ambiguity: never infer through it.
+      Write questions/q-NN.md (status: open) in the inbox, block on
+      scripts/await_codex_answer.sh (1 h cap); the main session's
+      background watcher (scripts/watch_codex_questions.sh) answers in
+      the same file. See codex-handoff.md §"Ambiguity mailbox".
 
 Plan-specific operational rules (cross-repo edits, regression-baseline
 specifics, no-simulation constraints, etc.) live in the plan file's
@@ -191,10 +193,15 @@ Execute this plan from start to finish:
 Worktree: {worktree} (branch {branch}) — do NOT push or merge.
 Read the plan's "Hard constraints" section before running anything.
 If executing the plan requires inferring an architecture or contract decision
-the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Pose the
-question with the candidate readings + evidence and wait; the user will relay it
-to the main session and paste back a resolution. Record the exchange in
-investigations[].
+the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Write the
+question (candidate readings + evidence) to {handback_inbox}/questions/q-NN.md
+with frontmatter "status: open" per
+~/.claude/skills/threads/assets/templates/codex-question-template.md, then block on
+  bash ~/.claude/skills/threads/scripts/await_codex_answer.sh <that-file> 3600
+Exit 0 = answered: read "## Resolution" and proceed. Exit 3 = 1 h timeout: set
+"status: timeout", record the question as a blocker + investigations[] entry,
+write the handback (gate-incomplete) and end. Every mailbox exchange is also
+recorded in investigations[].
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
 per ~/.claude/skills/threads/references/codex-handback.md.
 ```
@@ -253,12 +260,24 @@ handback.json + handback.md + scripts/ + temp/ + artifacts/ per
    it.** If executing the plan requires a decision the plan file,
    ADRs, or golden vectors do not pin (interface widths, storage
    semantics, register behavior, golden-model intent), do not pick
-   an interpretation. Stop, state the ambiguity with the candidate
-   readings and the evidence for each, and wait: the user relays the
-   question to the main session and pastes back a resolution (often
-   with a corrected plan/ADR). Record the exchange in the handback's
-   `investigations[]`. A handed-back question that catches a contract
-   drafting error is a success, not a stall.
+   an interpretation. Use the **ambiguity mailbox**
+   (`~/.claude/skills/threads/references/codex-handoff.md`
+   §"Ambiguity mailbox"):
+
+   - Write the question — candidate readings + evidence for each —
+     to `{handback_inbox}/questions/q-NN.md` (NN sequential) with
+     frontmatter `status: open`, scaffolded from
+     `~/.claude/skills/threads/assets/templates/codex-question-template.md`.
+   - Block on
+     `bash ~/.claude/skills/threads/scripts/await_codex_answer.sh <file> 3600`.
+     `answered` → read `## Resolution` in the same file and proceed.
+     `escalated` → a user decision is in flight; keep waiting.
+   - On the 1 h timeout: set `status: timeout`, record the question
+     as a `blockers[]` AND `investigations[]` entry, write the
+     handback (`gate-incomplete`), end the session.
+   - Record every mailbox exchange in `investigations[]` either way.
+     A question that catches a contract drafting error is a success,
+     not a stall.
 
 3. **Write structured handback** to:
 
