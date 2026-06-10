@@ -258,6 +258,10 @@ plan authoring, and troubleshooting.
 
 **For GPS/GNSS correlator datapaths:** read `references/dsp/fixed-point-vhdl.md` first, then `references/dsp/gps-correlator.md` before Stage 1. This covers carrier/code NCO conventions, PRN/tap order, E/P/L integration, dump format, channel scheduler gates, and hardware vector-injection proof requirements.
 
+**For FFT engines / PCPS acquisition datapaths:** read `references/dsp/fixed-point-vhdl.md` first, then `references/dsp/gps-acquisition-fft.md` before Stage 1. This covers why iterative in-place FFTs cannot map to BRAM, SDF stage discipline (zero-latency feedback, inter-stage rotator with sum-bypass), rounding-schedule configs needing one golden each, per-stage vector gating, streaming PCPS datapath patterns, and xsim/IRQ testbench lessons.
+
+**When a synthesis timing gate fails (or before any retime work) on an authored DSP datapath:** read `references/dsp/timing-closure.md`. This covers family-histogram triage from the full failing-path list, the latency-only invariant under bit-exact gating, the squeeze ladder (BRAM output regs → DSP pipelining → look-ahead index registration → lookup stages → FSM product-capture states), the `to_integer`-arithmetic synthesis crash class, and OOC-vs-in-context margin discipline.
+
 **VCD-based trigger plan generation:** If `ila_trigger_plan.json` doesn't exist
 or needs regeneration, run `scripts/hil/gen_trigger_plan.py` to auto-generate
 from VCD data (see `references/hil.md` § "Auto-Generating Trigger Plans from VCD").
