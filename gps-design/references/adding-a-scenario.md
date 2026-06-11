@@ -160,6 +160,9 @@ python3 tools/build_results.py --check     # CI staleness gate (mirrors build_js
 Then open `docs/results-dashboard/index.html` (zero-dependency, `file://`-safe;
 run selector + drag/playback 3D track). `results/` is the canonical **committed**
 store — small durable JSONs, unlike the gitignored `/temp/` `.iq16` captures.
+The emitted `results-data.js` is itself a **gitignored derived artifact**
+(untracked 2026-06-11): run `tools/build_results.py` once after a fresh clone
+(~0.3 s) and after runs land; `--check` exits 1 when it's missing or stale.
 Tests: `tests/test_results_dashboard.py` (Playwright render, system python3,
 auto-covers every run in the store) and `tests/test_stream_replay.py`
 (SCENARIO_SLOW, file-replay ≡ in-RAM). Mirrors the atlas pipeline:
