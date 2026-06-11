@@ -166,6 +166,10 @@ auto-covers every run in the store) and `tests/test_stream_replay.py`
 `results/*.results.json` → `tools/build_results.py` → `results-data.js` →
 `index.html`; see `docs/results-dashboard/` and `results/README.md`.
 
+For the 3D Cesium globe view of the same store — and the payload-field →
+render contract that decides what a run lights up there — see
+`references/using-the-cesium-viewer.md`.
+
 ## Gotchas (surfaced by the spec-stack hygiene thread)
 
 - **No stale rationales** — don't justify a choice by a capability that already
