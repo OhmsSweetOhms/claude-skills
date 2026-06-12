@@ -53,6 +53,43 @@ Write `plan.json` to the session directory.
 
 Ask: "Ready to proceed, or would you like to adjust the plan?"
 
+## Stage 1.5: Local Corpus Check (MANDATORY — before any web search)
+
+**Goal:** Mine what previous sessions already collected before spending web
+searches and downloads on it. Prior sessions routinely hold the exact PDFs,
+repos, and extractions a new query needs (papers go bot-walled or paywalled
+after the fact — the local copy may be the *only* obtainable one).
+
+1. **Enumerate the local corpus:**
+   - `<project>/.research/INDEX.json` — the research-side index written by
+     `~/.claude/skills/threads/scripts/index_threads_research.py` (session
+     IDs, titles, queries, thread back-links). If stale or missing, run the
+     indexer first.
+   - Every session's `CLAUDE.md` (under-30-line orientation file: query, key
+     findings, top resources) and `session-manifest.json` (full content
+     inventory: pdfs/blogs/app-notes/repos with titles).
+   - **Sibling/upstream research roots:** check the project CLAUDE.md for
+     "Research Sessions" tables pointing at other roots (e.g.
+     `../../research/.research/`) and enumerate those the same way.
+2. **Match against the plan:** grep session `CLAUDE.md` + manifest titles and
+   the queries for the plan's domain terms, synonyms (use the domain file's
+   synonym table), and known-source names (repos, missions, ASICs, authors).
+3. **Mine the hits before searching the web:** read the matching sessions'
+   extractions (`pdfs/*.md`), reuse their repos, and cite their files by
+   session-relative path (`.research/session-XXX/pdfs/foo.pdf`) — do NOT
+   re-download or re-clone what is already on disk.
+4. **Record the sweep in `plan.json`** under `local_corpus_check`:
+   `{"sessions_matched": [...], "artifacts_reused": [...], "subquestions_covered": [...]}`.
+   Sub-questions fully answered locally get their web budget reallocated or
+   dropped.
+5. Also grep the project tree itself (`3rdparty/`, vendored reference repos
+   listed in the project CLAUDE.md) for reference implementations before
+   cloning from GitHub.
+
+A web search that re-finds a PDF already sitting in a local session is a
+wasted call; a re-download that replaces a now-bot-walled source with an
+Anubis stub is worse than wasted.
+
 ## Stage 2: Collect
 
 **Goal:** Execute each role sequentially, collecting results.

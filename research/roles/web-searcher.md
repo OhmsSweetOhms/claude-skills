@@ -19,6 +19,8 @@ Additionally search:
 
 ## Search Execution
 
+0. **Stage 1.5 gate:** before any query, drop sub-questions/items already satisfied by the Local Corpus Check in plan.json `local_corpus_check` — never re-search or re-download what a local session already holds.
+
 1. Take sub-questions assigned to this role from the research plan
 2. For each sub-question, construct 3+ variant queries per `references/search-strategy.md`
 3. Include vendor-specific terms alongside generic (per domain reference vendor list, or from query context)

@@ -36,6 +36,8 @@ gh api repos/{owner}/{name}/readme --jq '.content' | base64 -d | head -100
 
 ## Search Execution
 
+0. **Stage 1.5 gate:** before any query, drop sub-questions/items already satisfied by the Local Corpus Check in plan.json `local_corpus_check` — never re-search or re-download what a local session already holds.
+
 1. Take sub-questions assigned to this role from the research plan, plus any `handoff_items` from other roles
 2. Check domain reference for known repositories. Search these by name first, then any from the research plan or handoffs
 3. Run broad domain queries derived from the research plan's sub-questions
