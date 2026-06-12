@@ -62,6 +62,7 @@ Terms in this domain have multiple names in the literature. Generate search vari
 | Source | URL / API | What it holds |
 |--------|-----------|---------------|
 | Zenodo | `zenodo.org` · REST: `https://zenodo.org/api/records/<id>` | Open-access datasets AND paper/preprint uploads. **Raw GNSS IQ recordings live here** — e.g. the LuGRE lunar GNSS mission data (record `16411687`, CC-BY-4.0: 30 L1+L5 IQ snapshots from trans-lunar/orbit/surface + receiver ICD + telemetry). Search the API (`/api/records?q=...`), check `files[].links.self` for direct downloads — these are bot-friendly (no Anubis/paywall), so prefer a Zenodo mirror when a paper or dataset is also hosted on a bot-walled site (HAL, publisher). DOIs minted per record make citations durable. |
+| FGI-JSDR | `maanmittauslaitos.fi/en/research/research/gnss-specialists/fgi-gnss-jamming-and-spoofing-dataset-repository-fgi-jsdr` (data on Fairdata: `etsin.fairdata.fi`) | **Raw GNSS IQ under jamming and spoofing** — Finnish Geospatial Research Institute repository, three collections: *FGI-SpoofRepo* (GPS L1 C/A, Galileo E1, GPS L5, Galileo E5a; synchronous / asynchronous / meaconing spoofing), *FGI OSNMA* (L1 C/A + E1, clean and spoofing-impaired, Jammertest 2023), *FGI Jammertest 2023* (Andøya, Norway: high-power jamming + incoherent/coherent spoofing). Companion paper in GPS Solutions ("An open GNSS spoofing data repository… with FGI-GSRx"); the reference processor is FGI-GSRx (see Known Repositories). The interference/RFI counterpart to LuGRE's weak-signal data: ground truth for jammer-detection, spoofing-defense, and CW/chirp interference work. |
 
 Workflow notes (learned 2026-06-12, LuGRE session):
 - Query the record API **first** to get file listing + sizes + license
@@ -82,6 +83,7 @@ Search these by name first — they are the most established open-source GNSS pr
 | SoftGNSS | (MATLAB) | Borre et al. textbook companion; reference for algorithms |
 | GNSS-VHDL | (search GitHub) | VHDL GNSS receiver components; smaller project |
 | gps-fpga | (search GitHub) | FPGA-based GPS receiver implementations |
+| FGI-GSRx | `github.com/nlsfi/FGI-GSRx` | FGI's MATLAB multi-GNSS receiver; the reference processor for the FGI-JSDR jamming/spoofing datasets (see Datasets & Open Repositories) |
 
 Also search for: `GNSS receiver FPGA`, `GPS VHDL`, `GPS Verilog`, `GNSS SDR FPGA`.
 
