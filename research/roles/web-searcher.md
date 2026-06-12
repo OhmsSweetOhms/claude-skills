@@ -16,6 +16,7 @@ Additionally search:
 - **Stack Exchange:** relevant Stack Exchange sites for the domain — substantive answers only
 - **YouTube talks / conference presentations:** capture title + speaker for reference (not transcription)
 - **University course materials:** lecture notes, design projects, lab assignments
+- **Zenodo (`zenodo.org`):** open repository for datasets, raw measurement captures (e.g. mission IQ recordings), and paper/preprint uploads. Bot-friendly direct downloads via the REST API (`https://zenodo.org/api/records/<id>` → `files[].links.self`) — prefer a Zenodo mirror when the primary host is bot-walled or paywalled. Query the record API for file sizes + license before downloading; format specs (ICDs) often ship in the same record as the data.
 
 ## Search Execution
 

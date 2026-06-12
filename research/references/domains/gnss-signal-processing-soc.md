@@ -57,6 +57,21 @@ Terms in this domain have multiple names in the literature. Generate search vari
 | Anti-windup | integrator clamping, conditional integration, back-calculation |
 | PLL bandwidth | loop bandwidth, noise bandwidth, Bn |
 
+## Datasets & Open Repositories
+
+| Source | URL / API | What it holds |
+|--------|-----------|---------------|
+| Zenodo | `zenodo.org` · REST: `https://zenodo.org/api/records/<id>` | Open-access datasets AND paper/preprint uploads. **Raw GNSS IQ recordings live here** — e.g. the LuGRE lunar GNSS mission data (record `16411687`, CC-BY-4.0: 30 L1+L5 IQ snapshots from trans-lunar/orbit/surface + receiver ICD + telemetry). Search the API (`/api/records?q=...`), check `files[].links.self` for direct downloads — these are bot-friendly (no Anubis/paywall), so prefer a Zenodo mirror when a paper or dataset is also hosted on a bot-walled site (HAL, publisher). DOIs minted per record make citations durable. |
+
+Workflow notes (learned 2026-06-12, LuGRE session):
+- Query the record API **first** to get file listing + sizes + license
+  before downloading (`curl https://zenodo.org/api/records/<id>`).
+- Mission/experiment datasets often ship their format spec (ICD PDF) in
+  the same record — grab it with the data.
+- Companion processing code is usually on GitHub, linked from the
+  uploader's blog/paper, not from the Zenodo record itself — search the
+  author's handle (e.g. daniestevez/lugre for the LuGRE data).
+
 ## Known Repositories
 
 Search these by name first — they are the most established open-source GNSS projects:
