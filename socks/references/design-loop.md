@@ -219,7 +219,7 @@ driver's computation functions directly, keeping formulas in one place.
 
 ### Stage 7 -- SV/Xsim Testbench
 
-Read `references/xsim.md`. Verify all 7 Xsim rules (X1-X7).
+Read `references/xsim.md`. Verify all 9 Xsim rules (X1-X9).
 
 Key rules:
 - Use monitor ports for signal access

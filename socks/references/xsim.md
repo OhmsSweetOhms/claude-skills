@@ -13,7 +13,7 @@ Read this file before Stage 7 (SystemVerilog testbench for Xsim).
 
 ## Compatibility rules
 
-Check every testbench against all seven rules before declaring it Xsim-ready.
+Check every testbench against all nine rules before declaring it Xsim-ready.
 
 | Code | Rule | Xsim behaviour if violated |
 |------|------|---------------------------|
@@ -25,6 +25,7 @@ Check every testbench against all seven rules before declaring it Xsim-ready.
 | X6 | Never write `2.0 ** 32`. Use the literal `4294967296.0`. | Evaluates to 0 at runtime in some Xsim versions |
 | X7 | No successive `#(delay)` for non-integer timing. Use absolute-time edge scheduling. | Cumulative drift corrupts stimulus after milliseconds of sim time |
 | X8 | No `$dumpfile`, `$dumpvars`, or any VCD system calls in the SV TB. VCD is managed by `xsim.py` via `vcd_signal_map.json`. | Xsim allows only one VCD file open; TB VCD conflicts with xsim.py VCD |
+| X9 | When a TB drives a beat and waits on a DUT backpressure/handshake signal (`tready`, `ready`, `grant`, `full`) to decide acceptance, sample it at the settled `negedge`, not the `posedge`. | Stale pre-edge read at the one cycle the signal toggles -> dropped/duplicated beat. Silent data corruption, not an error |
 
 ---
 
@@ -139,6 +140,53 @@ task send_and_receive(input [7:0] data);
     // Check rx_got_data, etc.
 endtask
 ```
+
+---
+
+## Handshake/backpressure sampling -- sample ready at negedge (X9 fix)
+
+When a TB streams beats into a DUT and uses a backpressure handshake
+(`tready`/`tvalid`, `ready`/`valid`, `grant`, `!full`) to decide whether a
+beat was accepted, **sample the handshake signal at the settled `negedge`,
+not the `posedge`.** This is the same delta-order hazard X4 fixes for
+reference drivers, but it bites *stimulus acceptance* and corrupts data
+silently instead of erroring.
+
+The mechanism: in a mixed-language sim, the TB's `@(posedge clk)` process and
+the DUT's registered `tready` update both fire on the same edge, and Xsim may
+evaluate them in **either delta order**. Reading `tready` right at the posedge
+can therefore catch its **pre-edge (stale) value**. While `tready` is steady
+(held high mid-stream) the stale read is harmless -- old value == new value.
+The bug surfaces only at the **one cycle where `tready` toggles** -- typically
+when the DUT fills its buffer and deasserts ready at a frame/burst boundary.
+There the TB reads the stale high, concludes its beat was accepted when it was
+not, and advances -- dropping that beat and (when the DUT re-opens) presenting
+the held next beat twice.
+
+```systemverilog
+// WRONG -- posedge-sampled ready, stale at the toggle cycle
+@(posedge clk);
+s_axis_tvalid <= 1'b1;
+s_axis_tdata  <= beat;
+while (!s_axis_tready) @(posedge clk);   // may read pre-edge tready
+count++;                                  // false "accepted" at the boundary
+
+// CORRECT -- hold the beat until accepted, sample ready at the settled negedge
+@(posedge clk);
+s_axis_tvalid <= 1'b1;
+s_axis_tdata  <= beat;
+do @(negedge clk); while (!s_axis_tready); // settled value; the next posedge
+count++;                                   // after a high sample is the accept edge
+```
+
+**Why this hides for an entire debug iteration:** a single-burst / single-frame
+test never makes `tready` toggle mid-stream (it captures once from idle, ready
+held high throughout), so it passes clean. Only a **multi-burst** stimulus
+(dwell >= 2, multi-packet, back-to-back frames) crosses a ready transition and
+exposes the drop. If a multi-pass test diverges on values while the
+single-pass equivalent is bit-exact, suspect this before suspecting the DUT --
+dump the DUT's input memory and diff it against the stimulus: a one-cell
+discrepancy at a burst boundary is the signature.
 
 ---
 
