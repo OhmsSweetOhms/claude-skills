@@ -64,6 +64,15 @@ GLOBAL_ALLOWLIST = HOME / ".claude" / "hooks" / "fingerprint-allowlist"
 GLOBAL_PATH_ALLOWLIST = HOME / ".claude" / "hooks" / "fingerprint-path-allowlist"
 GIT_IDENTITY_ALLOWLIST = HOME / ".claude" / "hooks" / "fingerprint-git-identity-allowlist"
 
+# The engine's own config files DEFINE the tokens/patterns it scans for, so
+# scanning them for those very tokens is a definitional false positive (the
+# guard would block any push that touches fingerprint-identity.txt). Skip them.
+SELF_CONFIG_BASENAMES = frozenset({
+    IDENTITY_FILE.name, GLOBAL_ALLOWLIST.name, GLOBAL_PATH_ALLOWLIST.name,
+    GIT_IDENTITY_ALLOWLIST.name,
+    ".fingerprint-allowlist", ".fingerprint-path-allowlist",
+})
+
 # ---------------------------------------------------------------------------
 # Identity auto-detection
 # ---------------------------------------------------------------------------
@@ -491,6 +500,11 @@ class Scanner:
         on paper author emails, FSF address, array-index numbers, etc.).
         """
         if not line.strip():
+            return
+
+        # Never scan the engine's own config files -- they hold the token and
+        # allowlist definitions, so a match there is circular, not a leak.
+        if os.path.basename(filepath) in SELF_CONFIG_BASENAMES:
             return
 
         path_allowed = is_path_allowlisted(filepath, self.path_allowlist)
