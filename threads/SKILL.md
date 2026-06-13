@@ -1,6 +1,6 @@
 ---
 name: threads
-description: Manage debug-thread directories for hypothesis-driven investigations that span multiple sessions. Use this skill whenever the user wants to start a new debug thread, add a plan hop to an existing thread, capture a findings snapshot, register a diagnostic script, import external review feedback (from Codex, claude.ai, or a colleague), promote a diagnostic into a permanent regression test, close a thread, or link a thread to a `/research` session. Also triggers on any mention of `threads/`, `thread.json`, "debug thread", "plan hop", "findings snapshot", "promote this diagnostic", "external comment", or when the user is working inside a `threads/<subsystem>/<slug>/` directory. This skill plays nice with `/research`: it maintains the bidirectional link (`thread.json.linked_research[]` ↔ `session-manifest.json.spawning_thread`). Do NOT use for sprint boards, feature planning, or one-off debug commands — this is specifically for multi-hop investigations that accrete plans, data, and diagnostics over time.
+description: Manage debug-thread directories for hypothesis-driven investigations that span multiple sessions. Use this skill whenever the user wants to start a new debug thread, add a plan hop to an existing thread, capture a findings snapshot, register a diagnostic script, import external review feedback (from Codex, claude.ai, or a colleague), promote a diagnostic into a permanent regression test, close a thread, or link a thread to a `/research` session. Also use it to process a Codex handback end-to-end — the self-healing triage→reconcile→ADR→commit→kickoff lifecycle, including superseded/zombie-thread detection against actual worktree state, identifier-collision scrubbing, provenance-checked ADRs, and bash-safety/fingerprint commit linting. Also triggers on any mention of `threads/`, `thread.json`, "debug thread", "plan hop", "findings snapshot", "promote this diagnostic", "external comment", "process a handback", "handback lifecycle", "superseded thread", "zombie thread", or when the user is working inside a `threads/<subsystem>/<slug>/` directory. This skill plays nice with `/research`: it maintains the bidirectional link (`thread.json.linked_research[]` ↔ `session-manifest.json.spawning_thread`). Do NOT use for sprint boards, feature planning, or one-off debug commands — this is specifically for multi-hop investigations that accrete plans, data, and diagnostics over time.
 ---
 
 # threads — Debug Investigation Container Pattern
@@ -114,6 +114,15 @@ a stale snapshot. The bootstrap script invoked from the plan does
 everything the inline spec would have specified, but stays current
 when the skill updates.
 
+To process a handback **end-to-end** — triage, reconcile against actual
+worktree state (superseded/zombie detection), author provenance-checked
+ADRs, close/launch, lint the commit and cleanup commands past the
+bash-safety and fingerprint guards, and emit a verified-whole kickoff
+packet — follow `references/self-healing-handback-cycle.md`. It is the
+orchestration macro over **Process codex handback**, **Close thread**,
+and **New plan hop**, adding the cross-stage heal checks and a
+per-stage report card.
+
 **Prompt and handback share the inbox.** The Codex launch packet
 belongs in the same `<worktree>/codex-handoff/<plan-id>/` directory
 as the handback Codex will write back. `scripts/emit_codex_launch_packet.py`
@@ -146,6 +155,7 @@ section in `references/workflows.md`:
 | "Hand thread X off to codex" / "spawn a codex worktree on X" / "spawn codex on X" / "run codex on X" | **Codex worktree handoff** (`references/codex-handoff.md`) |
 | "Recover a missing codex handback" / "retroactive handback" / "closed plan has no handback" | **Retroactive handback** (`references/codex-handoff.md`) |
 | "Triage codex handback findings" / "process codex handback" / "classify handback follow-ons" | **Process codex handback** (`references/codex-handoff.md`) |
+| "Run the full handback lifecycle" / "process this handback end-to-end" / "close the hop and launch the next" / "self-healing handback cycle" | **Self-healing handback lifecycle** (`references/self-healing-handback-cycle.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 | "Reconcile threads pulled from another machine" / "thread state diverged across clones" / "threads.json merge conflict after pull" | **Cross-machine reconciliation** (`references/cross-machine-reconciliation.md`) |
 
