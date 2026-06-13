@@ -128,10 +128,13 @@ For a parent directory containing multiple repos:
 
 ## What It Checks
 
-**Barebones scope (deliberate).** The scanner was cut down to two
-high-signal classes after the broad PII/secret battery's false positives on
-technical writing cost more (in diagnose-and-retry churn) than the rare real
-catch. See the `fingerprint_engine.py` module docstring for the rationale.
+**Barebones scope (deliberate).** The broad PII/secret battery was cut after
+its false positives on technical writing cost more (in diagnose-and-retry
+churn) than the rare real catch. What remains is three high-signal classes:
+identity tokens, a few secret/path tripwires, and the git author/committer
+**persona identity check** — the metadata surface that content scans cannot
+see and the real leak vector. See the `fingerprint_engine.py` module
+docstring for the rationale.
 
 **Personal identifiers (all blocked) -- the primary guard:**
 - A fixed set of identity tokens read from
@@ -147,16 +150,24 @@ catch. See the `fingerprint_engine.py` module docstring for the rationale.
   the token set is exactly what the file declares (predictable; blocks only
   on a real leak).
 
-**Secret tripwires (all blocked) -- three patterns only:**
+**Content tripwires (all blocked):**
 - Private keys (`-----BEGIN ... PRIVATE KEY-----`, all variants)
 - AWS access key IDs (`AKIA…`)
 - Quoted secret/token/password/api-key assignments (`secret = "…"`)
+- Absolute-path mount prefixes (`/home/`, `/Users/`, `/media/`, `C:\Users\`) —
+  kept because global Core Rule 15 mandates them, and they trip on **any**
+  username, not just ours.
+
+**Git author/committer persona check (all blocked):** every commit (on
+`git commit`) and every unpushed commit (on `git push`) must be authored and
+committed by the persona (`OhmsSweetOhms` + its non-leaking emails) — a
+real name/email in commit metadata is blocked. This is the surface content
+and message scans never see.
 
 **Removed (no longer scanned):** the vendor key-prefix battery (GCP, GitHub,
 GitLab, Slack, OpenAI, JWT, OAuth, DB URLs, SSH pubkeys, .netrc), standalone
-email/MAC/street-address regexes, absolute-path regexes (covered by the
-username token instead), the author/copyright real-name heuristic, and the
-long-disabled phone/IP rules. Add anything you still want caught as an
+email/MAC/street-address regexes, the author/copyright real-name heuristic,
+and the long-disabled phone/IP rules. Add anything you still want caught as an
 explicit token in `fingerprint-identity.txt`.
 
 ## Output
