@@ -128,31 +128,36 @@ For a parent directory containing multiple repos:
 
 ## What It Checks
 
-**Secrets (all blocked):**
-- Private keys (RSA, DSA, EC, OpenSSH, PGP)
-- Cloud API keys (AWS, GCP, GitHub, GitLab, Slack, OpenAI)
-- Generic API keys, passwords, tokens, secrets in assignments
-- Database connection strings with credentials
-- JWT tokens, OAuth tokens
-- SSH public keys, .netrc entries
+**Barebones scope (deliberate).** The scanner was cut down to two
+high-signal classes after the broad PII/secret battery's false positives on
+technical writing cost more (in diagnose-and-retry churn) than the rare real
+catch. See the `fingerprint_engine.py` module docstring for the rationale.
 
-**Personal Identifiers (all blocked):**
-- Auto-detected: `$USER`, hostname, git config name/email, home dir
-- Additional patterns from `~/.claude/hooks/fingerprint-identity.txt`
-- Email addresses, street addresses, MAC addresses
+**Personal identifiers (all blocked) -- the primary guard:**
+- A fixed set of identity tokens read from
+  `~/.claude/hooks/fingerprint-identity.txt` (the PRIVATE config file; the
+  engine source is public and holds no tokens).
+- Case-insensitive **substring** match by default; a token prefixed with
+  `=` matches on **word boundaries** instead (so a short name part doesn't
+  fire as a substring of a common word).
+- This is a complete identity fingerprint: home path, username, email
+  local-part, and real-name parts are all substrings of those tokens, so a
+  `/home/<user>/` absolute path is caught by the username token.
+- There is **no** `$USER`/hostname/git-config auto-detection any more --
+  the token set is exactly what the file declares (predictable; blocks only
+  on a real leak).
 
-**Fingerprint Material (all blocked):**
-- Absolute paths containing usernames (a `/home/`, `/Users/`, or `/media/` prefix followed by a username)
-- Machine hostnames in file content
-- Author/copyright lines with real names (must use OhmsSweetOhms)
+**Secret tripwires (all blocked) -- three patterns only:**
+- Private keys (`-----BEGIN ... PRIVATE KEY-----`, all variants)
+- AWS access key IDs (`AKIA…`)
+- Quoted secret/token/password/api-key assignments (`secret = "…"`)
 
-**Disabled rules:**
-- Phone numbers -- removed because VHDL/HDL numeric constants (e.g. `4294967296`,
-  `2147483648`) triggered massive false positives across every FPGA project
-- IP addresses -- disabled because vendor manuals, standards documents,
-  firmware versions, section numbers, and RF/network examples created too much
-  noise for the local publishing workflow. Use path allowlists for third-party
-  reference folders and rely on identity/secret checks for actual leaks.
+**Removed (no longer scanned):** the vendor key-prefix battery (GCP, GitHub,
+GitLab, Slack, OpenAI, JWT, OAuth, DB URLs, SSH pubkeys, .netrc), standalone
+email/MAC/street-address regexes, absolute-path regexes (covered by the
+username token instead), the author/copyright real-name heuristic, and the
+long-disabled phone/IP rules. Add anything you still want caught as an
+explicit token in `fingerprint-identity.txt`.
 
 ## Output
 
@@ -179,8 +184,10 @@ used by `find_git_repos()` to prune the directory walk.
 ## Configuration
 
 **Identity file** (`~/.claude/hooks/fingerprint-identity.txt`):
-Additional identity strings to block, one per line. Variations, typos,
-nicknames, aliases. Auto-detected values don't need to be listed.
+The **sole** source of identity tokens (no auto-detection). One token per
+line; plain = substring, `=token` = word-boundary. Include variations,
+typos, nicknames, aliases. Keep real tokens here only -- never in the
+public engine source.
 
 **Gitignore** (`.gitignore` in project root):
 Files matching `.gitignore` patterns are automatically excluded from
@@ -195,9 +202,9 @@ test fixtures or example values only.
 
 **Path allowlist** (`.fingerprint-path-allowlist` in project root or
 `~/.claude/hooks/fingerprint-path-allowlist` globally):
-One fnmatch-style glob per line. Matching files skip generic content rules such
-as emails, street addresses, and MAC addresses, while identity-pattern checks
-still run. Use this for third-party reference material such as `.research/**`.
+One fnmatch-style glob per line. Matching files skip the secret-tripwire
+rules while identity-pattern checks still run. Use this for third-party
+reference material such as `.research/**`.
 
 **Known limitation:** The `.fingerprint-allowlist` file itself is not
 excluded from scanning. Avoid putting literal scannable values (long

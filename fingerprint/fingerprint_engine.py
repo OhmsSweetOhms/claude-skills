@@ -1,6 +1,25 @@
 """
-fingerprint_engine.py -- Core scanning engine for PII, secrets, and digital
-fingerprint material detection.
+fingerprint_engine.py -- Barebones identity + secret-tripwire scanner.
+
+Scope (deliberately minimal):
+  - Identity: a fixed set of personal tokens read from the PRIVATE config
+    file fingerprint-identity.txt, case-insensitive substring match (a token
+    prefixed with '=' matches on word boundaries instead -- so "=smith"
+    fires on "smith.jones" but not on "blacksmith"). This is a complete
+    digital-identity fingerprint because home path, username, email
+    local-part, and real-name parts are all substrings of those tokens.
+  - Secrets: three high-signal, near-zero-false-positive tripwires
+    (private key, AWS access key, quoted secret/token/password assignment).
+
+The broad PII/secret regex battery and the system/host/git-config identity
+derivation were removed on purpose: their false positives blocked
+legitimate commits and cost more (in diagnose-and-retry churn) than the
+rare real leak they caught. The token set is fixed and predictable so the
+scan blocks only on a real identity leak.
+
+IMPORTANT: this engine source lives under the PUBLIC skills repo. It must
+contain NO real identity tokens -- those live only in the private
+fingerprint-identity.txt. Keep it that way.
 
 Shared by:
   - git-fingerprint-guard.py  (PreToolUse hook)
@@ -9,7 +28,7 @@ Shared by:
 All findings are BLOCK. No warn tier.
 
 Config:
-  ~/.claude/hooks/fingerprint-identity.txt       (additional identity strings)
+  ~/.claude/hooks/fingerprint-identity.txt       (identity tokens; PRIVATE)
   ~/.claude/hooks/fingerprint-allowlist          (global line-content regex allowlist)
   .fingerprint-allowlist                         (per-project line-content regex allowlist)
   ~/.claude/hooks/fingerprint-path-allowlist     (global path-glob allowlist; whole files skipped)
@@ -38,54 +57,25 @@ GLOBAL_PATH_ALLOWLIST = HOME / ".claude" / "hooks" / "fingerprint-path-allowlist
 # Identity auto-detection
 # ---------------------------------------------------------------------------
 def build_identity_strings() -> list[str]:
-    """Gather identity strings from system + config file."""
+    """Read the identity token list from the private fingerprint-identity.txt.
+
+    No system/host/git-config derivation -- the set is exactly what the file
+    declares, so the scan is predictable and blocks only on a real leak. A
+    leading '=' on a token marks it for word-boundary matching (see
+    build_identity_pattern); it is preserved here and interpreted there.
+    """
     ids = []
-
-    user = os.environ.get("USER", "")
-    if user:
-        ids.append(user)
-
-    try:
-        hostname = subprocess.run(
-            ["hostname"], capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        if hostname:
-            ids.append(hostname)
-            short = hostname.split(".")[0]
-            if short and short != hostname:
-                ids.append(short)
-    except Exception:
-        pass
-
-    home_base = Path.home().name
-    if home_base and home_base != user:
-        ids.append(home_base)
-
-    for key in ("user.name", "user.email"):
-        try:
-            val = subprocess.run(
-                ["git", "config", key],
-                capture_output=True, text=True, timeout=5
-            ).stdout.strip()
-            if val:
-                ids.append(val)
-                if key == "user.email" and "@" in val:
-                    ids.append(val.split("@")[0])
-        except Exception:
-            pass
-
-    # Load additional identity strings
     if IDENTITY_FILE.is_file():
         for line in IDENTITY_FILE.read_text().splitlines():
             line = line.split("#")[0].strip()
             if line:
                 ids.append(line)
 
-    # Deduplicate, min length 3
+    # Deduplicate, min length 3 (measured on the token without the '=' marker)
     seen = set()
     result = []
     for s in ids:
-        low = s.lower()
+        low = s.lstrip("=").lower()
         if len(low) >= 3 and low not in seen:
             seen.add(low)
             result.append(s)
@@ -93,11 +83,23 @@ def build_identity_strings() -> list[str]:
 
 
 def build_identity_pattern(ids: list[str]) -> Optional[re.Pattern]:
-    """Build compiled case-insensitive regex from identity strings."""
+    """Build a compiled case-insensitive regex from identity tokens.
+
+    Plain tokens match as substrings. A token written with a leading '='
+    matches only when not flanked by ASCII letters, so "=smith" catches
+    "smith.jones" / "Smith_Jones" / "smith123" but not "blacksmith" or
+    "smithson".
+    """
     if not ids:
         return None
-    escaped = [re.escape(s) for s in ids]
-    return re.compile("|".join(escaped), re.IGNORECASE)
+    parts = []
+    for s in ids:
+        if s.startswith("="):
+            esc = re.escape(s[1:])
+            parts.append(rf"(?<![a-zA-Z]){esc}(?![a-zA-Z])")
+        else:
+            parts.append(re.escape(s))
+    return re.compile("|".join(parts), re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -178,67 +180,20 @@ def is_path_allowlisted(filepath: str, path_allowlist: list[str]) -> bool:
 SCAN_RULES: list[tuple[re.Pattern, str, str]] = []
 
 _RAW_RULES = [
-    # --- Hard secrets ---
+    # Barebones secret tripwires -- high signal, near-zero false positive.
+    # The identity scan (build_identity_pattern) is the primary guard; these
+    # three catch the one other class that must never land in a public repo.
+    # The broad PII/token battery (emails, MAC, JWT, vendor key prefixes,
+    # absolute-path regexes, author-name heuristic) was removed: its false
+    # positives on technical writing cost more than the rare real catch.
+    # Absolute home paths are still caught -- "/home/<user>/" contains the
+    # username, which is an identity token.
     (r"-----BEGIN\s*(RSA|DSA|EC|OPENSSH|PGP|PRIVATE)\s*(PRIVATE\s*)?KEY-----",
      "PRIVATE_KEY", "Private key detected"),
     (r"AKIA[0-9A-Z]{16}",
      "AWS_KEY", "AWS access key ID detected"),
-    (r"(?i)(aws_secret_access_key|aws_session_token)\s*[:=]",
-     "AWS_SECRET", "AWS secret key assignment detected"),
-    (r"AIza[0-9A-Za-z_\-]{35}",
-     "GCP_KEY", "Google Cloud API key detected"),
-    (r"(?i)(api[_\-]?key|apikey)\s*[:=]\s*[\"'][a-zA-Z0-9]{16,}",
-     "API_KEY", "API key assignment detected"),
-    (r"(?i)(password|passwd|pwd)\s*[:=]\s*[\"'][^\"']{4,}",
-     "PASSWORD", "Password assignment detected"),
-    (r"(?i)(secret|token|auth_token|access_token)\s*[:=]\s*[\"'][^\"']{8,}",
-     "SECRET", "Secret/token assignment detected"),
-    (r"(mysql|postgres|postgresql|mongodb|redis|amqp|mssql)://[^\s]+@[^\s]+",
-     "DB_URL", "Database connection string with credentials detected"),
-    (r"eyJ[a-zA-Z0-9_\-]{10,}\.eyJ[a-zA-Z0-9_\-]{10,}\.[a-zA-Z0-9_\-]{10,}",
-     "JWT", "JWT token detected"),
-    (r"ghp_[a-zA-Z0-9]{36}",
-     "GITHUB_TOKEN", "GitHub personal access token detected"),
-    (r"gho_[a-zA-Z0-9]{36}",
-     "GITHUB_OAUTH", "GitHub OAuth token detected"),
-    (r"glpat-[a-zA-Z0-9_\-]{20,}",
-     "GITLAB_TOKEN", "GitLab personal access token detected"),
-    (r"xox[bpas]-[a-zA-Z0-9\-]+",
-     "SLACK_TOKEN", "Slack token detected"),
-    (r"sk-[a-zA-Z0-9]{20,}",
-     "OPENAI_KEY", "OpenAI API key detected"),
-    (r"ya29\.[0-9A-Za-z_\-]+",
-     "GOOGLE_OAUTH", "Google OAuth token detected"),
-
-    # --- PII ---
-    (r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
-     "EMAIL", "Email address detected"),
-    (r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}",
-     "MAC_ADDRESS", "MAC address detected"),
-    # STREET_ADDRESS regex removed -- too many false positives on
-    # legitimate technical writing (e.g., "plan-04 of PL.INTERPOLATOR",
-    # "plan-04 in place", "Plan-02 of PL.DECIMATOR", "2026-05-11
-    # reframing PL.INTERPOLATOR" all matched against PL.* block names
-    # and numbered-plan adjacencies). Specific street addresses are
-    # caught via fingerprint-identity.txt substring entries instead.
-    (r"(?i)(ssh-rsa|ssh-ed25519|ssh-dss|ecdsa-sha2)\s+[A-Za-z0-9+/=]{20,}",
-     "SSH_PUBKEY", "SSH public key detected (may reveal identity)"),
-    (r"(?i)machine\s+\S+\s+login\s+\S+\s+password\s+\S+",
-     "NETRC", ".netrc credential entry detected"),
-
-    # --- Absolute paths (fingerprint material) ---
-    (r"/home/[a-zA-Z0-9_\-]+/",
-     "ABS_PATH_HOME", "Absolute home directory path detected"),
-    (r"/Users/[a-zA-Z0-9_\-]+/",
-     "ABS_PATH_MACOS", "Absolute macOS user path detected"),
-    (r"/media/[a-zA-Z0-9_\-]+/",
-     "ABS_PATH_MEDIA", "Absolute media mount path detected"),
-    (r"C:\\\\Users\\\\[a-zA-Z0-9_\-]+",
-     "ABS_PATH_WIN", "Absolute Windows user path detected"),
-
-    # --- Author attribution (must be OhmsSweetOhms only) ---
-    (r"(?i:author|maintainer|copyright\s*(?:\(c\)|©)?)\s*[:=]?\s*[\"']?(?!.*OhmsSweetOhms)[A-Z][a-z]+\s+[A-Z][a-z]+",
-     "AUTHOR_NAME", "Author/copyright with real name (must use OhmsSweetOhms)"),
+    (r"(?i)(secret|token|auth_token|access_token|password|passwd|pwd|api[_\-]?key|apikey)\s*[:=]\s*[\"'][^\"']{4,}",
+     "SECRET", "Quoted secret/token/password assignment detected"),
 ]
 
 for _pat_str, _cat, _msg in _RAW_RULES:
@@ -490,10 +445,6 @@ class Scanner:
                 continue
 
             matched = m.group()
-
-            if category == "EMAIL":
-                if re.search(r"Co-Authored-By.*Claude|noreply@anthropic", line, re.I):
-                    continue
 
             if is_allowlisted(line, self.allowlist):
                 continue
