@@ -367,6 +367,15 @@ def flag_triage(
                 plan_id = plan_id_for_hop(hop)
                 if plan_id == "plan-??":
                     continue
+                # A triage record on main proves the handback existed and was
+                # consumed -- you cannot triage a handback that never existed --
+                # even when the raw json/.md pair stayed behind in a cross-repo
+                # or since-removed worktree (sanitized worktree paths in the
+                # manifest are unresolvable, so handback_pair_visible() can never
+                # see those). Mirror the untriaged-flag's triage-awareness below
+                # so an already-processed hop is not re-surfaced as "missing".
+                if handback_triage_record_exists([threads_path / tid], plan_id):
+                    continue
                 if not handback_pair_visible(threads_path, tid, worktree_thread_data, plan_id):
                     flags.append({
                         "id": tid,
