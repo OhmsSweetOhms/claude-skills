@@ -280,8 +280,19 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    - **Thread + plan IDs.**
 
    The emitted packet opens with a **"Copy-paste — Codex turn 1 (short
-   prompt)"** fenced block: a short prompt (execute-this-plan path +
-   worktree/branch + don't-push + stop-on-ambiguity + write-handback).
+   prompt)"** fenced block. The **first thing in that block is a "WORKING
+   CONTEXT" header**: (1) where Codex is launched from — the worktree cwd
+   (`cd <worktree> && source .envrc && codex`) — and (2) where this
+   thread's bookkeeping (the "main thread": plan, ADRs, findings, handback
+   inbox) lives, stated both as an absolute path and **relative to that
+   cwd**, with the read-there (`.threads/`, read-only) / write-here
+   (worktree source) split spelled out. This leads every prompt so the
+   launch location is never ambiguous — load-bearing in a **cross-repo
+   handoff** where the thread lives in one repo and the worktree in
+   another (the relative path is computed with `os.path.relpath`, so it
+   resolves either way). The rest of the short prompt follows
+   (execute-this-plan path + worktree/branch + don't-push +
+   stop-on-ambiguity + write-handback).
    **Surface that block to the user as the thing to paste** — they want
    the short prompt, not the long packet. The long-form context follows
    it for reference.

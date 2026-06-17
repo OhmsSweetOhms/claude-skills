@@ -9,6 +9,14 @@ absolute path to it plus a handful of run-specific operational facts.
 This script emits those six mechanical facts plus two generic operational
 rules in a human-readable format ready to paste into Codex's turn 1.
 
+The copy-paste short prompt always OPENS with a "WORKING CONTEXT" header
+stating (1) where Codex is launched from (the worktree cwd) and (2) where
+this thread's bookkeeping (the "main thread") lives, both absolute and
+relative to that cwd. This is the first thing Codex reads so the
+read-there (thread `.threads/`) / write-here (worktree source) split is
+unambiguous — especially in a cross-repo handoff where the thread and the
+worktree are in different repositories.
+
 Mechanical facts emitted:
 
     - Plan file absolute path   (resolved from .threads/<thread-id>/)
@@ -50,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -173,12 +182,19 @@ def emit_packet(
     *,
     plan_file: Path,
     worktree: Path,
+    main_repo: Path,
     branch: str,
     base_sha: str,
     handback_inbox: Path,
     thread_id: str,
     plan_id: str,
 ) -> str:
+    # Where the thread's bookkeeping lives (the "main thread"), and how to
+    # reach it from the worktree Codex is launched in. In the same-repo case
+    # this is a sibling (../<repo>/.threads/...); in a cross-repo handoff
+    # (thread in repo A, worktree in repo B) relpath still resolves it.
+    thread_dir = main_repo / ".threads" / thread_id
+    rel_thread = os.path.relpath(thread_dir, worktree)
     return f"""\
 {plan_file}
 
@@ -187,6 +203,15 @@ def emit_packet(
 Paste this whole block into Codex's first turn:
 
 ```
+WORKING CONTEXT — set this up FIRST:
+- Launch Codex from (cwd):  {worktree}
+      cd {worktree} && source .envrc && codex
+- This thread's bookkeeping (plan, ADRs, findings, handback inbox) lives in the
+  MAIN checkout — read it from there, do NOT edit .threads/:
+      {thread_dir}
+      (relative to your cwd: {rel_thread})
+- You EDIT source in the worktree (your cwd); the thread/plan docs are read-only.
+
 Execute this plan from start to finish:
 {plan_file}
 
@@ -412,6 +437,7 @@ def main() -> None:
     packet = emit_packet(
         plan_file=plan_file,
         worktree=worktree,
+        main_repo=main_repo,
         branch=branch,
         base_sha=base_sha,
         handback_inbox=handback_inbox,
