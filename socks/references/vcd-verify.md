@@ -162,3 +162,17 @@ python scripts/xsim.py --project-dir . --top module_tb --vcd
 # VCD verification (after simulation)
 python scripts/vcd_verify.py module_verify.vcd --signal-map signals.json
 ```
+
+---
+
+## IP-boundary handshakes: the sim VCD is only half the proof
+
+This verifier proves a module's VCD against its *own* expected behaviour. When the DUT is
+a **3rd-party or custom IP block integrated into a BD**, a sim-only VCD pass is **not**
+sufficient — the boundary handshake (`tvalid`/`tready`) a behavioural TB drives can differ
+from what the real IP does on silicon, and that divergence passes sim while corrupting the
+rate on hardware. For any IP-into-BD integration, this sim VCD must be matched against a
+**HW ILA capture of the same boundary handshakes over ≥512 samples** — the mandatory
+**IP-Boundary Handshake Equivalence Gate** in `references/hil.md` (§ Stage 19). Log the
+boundary `s_axis`/`m_axis` `{tvalid, tready, tdata}` here so the same signals exist on both
+the VCD and the ILA side for comparison.

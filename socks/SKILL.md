@@ -246,7 +246,14 @@ plan authoring, and troubleshooting.
 | 16 | HIL: Firmware Build | `scripts/hil/hil_firmware.py` + guidance | `references/hil.md` (§ Firmware Authoring Guide; ADI no-OS Make) |
 | 17 | HIL: Program + Test | `scripts/hil/hil_run.py` | `references/hil.md` |
 | 18 | HIL: ILA Capture + ARM Debug | `scripts/hil/hil_ila.py` | `references/hil.md` (VCD required, debug build) |
-| 19 | HIL: ILA Verify | `scripts/hil/hil_verify.py` | `references/hil.md` (VCD required) |
+| 19 | HIL: ILA Verify | `scripts/hil/hil_verify.py` | `references/hil.md` (VCD required; **IP-Boundary Handshake Equivalence Gate** for IP-into-BD work) |
+
+**When integrating any IP block (custom or 3rd-party) into a top-level BD:** the
+**IP-Boundary Handshake Equivalence Gate is mandatory** — `dbg_hub` + ILA at every IP
+boundary, and the HW ILA handshake cadence (`tvalid`/`tready` duty + burst structure)
+must match the SV-TB VCD over ≥512 samples. A passing SV/`max_abs_lsb=0` sim does **not**
+license trust in the integrated IP until this gate is green. See `references/hil.md`
+§ "IP-Boundary Handshake Equivalence Gate".
 
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
 

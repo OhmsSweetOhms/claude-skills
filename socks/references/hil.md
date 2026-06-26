@@ -526,6 +526,68 @@ captures.
 
 ---
 
+### Debug-hub clocking: free-running PS clock, never the RX/JESD clock
+
+The companion rule to the section above. ILA *cores* may sample on a
+datapath clock (`rx_device_clk` for RX-domain probes), but the Vivado
+**debug hub** (`dbg_hub`) — which times JTAG/XVC *readback* — must be
+clocked from a **dedicated free-running clock**. On Zynq/ZynqMP that is a
+PS-sourced **`pl_clk0`** (always-on, independent of fabric/link state).
+Per UG908 the hub clock must be free-running, **match** its configured
+frequency, be **≥ 2.5× the JTAG/XVC TCK**, and **≤ 100 MHz** — so
+`pl_clk0` at 100 MHz is the sweet spot.
+
+**Never clock `dbg_hub` from a transceiver/JESD-derived clock** (e.g.
+`rx_device_clk`): it gates when the link isn't streaming, so the hub sees
+"clock stopped" and readback fails even though the design runs. Note this
+is the *clock source*, not "PS vs PL" — `pl_clk0` is itself routed into the
+PL; what matters is that it is free-running and honestly constrained.
+
+Set `C_CLK_INPUT_FREQ_HZ` to the **real** frequency and keep the
+`create_clock` honest. A bogus `create_clock` (e.g. an inherited
+387.597 MHz / 2.580 ns on a net that physically runs 40.96 MHz /
+24.4141 ns) makes the hub time readback for the wrong rate. Symptoms:
+
+- `[Labtools 27-3312]` — corrupted ILA upload (frequency mismatch).
+- `[Labtools 27-3428]` / `[27-3429]` — "Ila core clock has stopped.
+  Unable to arm / upload" (the hub clock gated or is wrong).
+
+**Mechanism — you cannot fix this in the block design or on a routed DCP.**
+`dbg_hub` is auto-inserted during `opt_design`, and `set_property` /
+`connect_debug_port` on an already-**routed** checkpoint cannot re-source a
+clock net (the topology is frozen — a metadata edit changes the baked
+frequency but leaves the hub on the old net). Re-sourcing the hub clock
+needs a **from-source synth/BD rebuild** with a pre-place hook that runs
+after opt creates the hub and before `implement_debug_core` locks it:
+
+```tcl
+# system_project.tcl — register the hook (gate behind a debug-build env flag
+# so production builds are unchanged):
+set_property STEPS.PLACE_DESIGN.TCL.PRE <hook>.tcl [get_runs impl_1]
+
+# <hook>.tcl — re-source every dbg_hub onto the free-running pl_clk0 net.
+# Validate the net is actually 100 MHz before using it; fail closed if absent.
+foreach hub [get_debug_cores -quiet dbg_hub*] {
+  set_property C_CLK_INPUT_FREQ_HZ 100000000 $hub
+  set_property C_ENABLE_CLK_DIVIDER false     $hub
+  connect_debug_port [get_property NAME $hub]/clk [get_nets <pl_clk0 net>]
+}
+```
+
+**ILA-under-Linux on ZynqMP (headless benches).** Two extra failure modes
+appear under Linux that are absent in bare-metal/no-OS: (1) `cpuidle`
+powers down idle APU cores → JTAG scan chain goes unstable; (2) the Common
+Clock Framework gates "unused" clocks. Add `clk_ignore_unused cpuidle.off=1`
+to the kernel bootargs (necessary hygiene — but it does **not** fix a
+wrong hub clock; that is the clocking rule above). For a durable headless
+debug path, prefer **XVC-over-Ethernet** — a **Debug Bridge** IP in
+AXI-to-BSCAN mode (included in the Vivado IP catalog, no extra license) +
+the open-source Xilinx `xvcServer` (or a distro's `xvcd`) on PS Linux, so
+Vivado's `hw_server` reaches the ILAs over TCP/IP with no physical JTAG
+cable and no scan-chain instability.
+
+---
+
 ## Modules Without AXI-Lite
 
 The HIL block design creates a PS7 + AXI interconnect + DUT topology.
@@ -1161,6 +1223,51 @@ capture-only path does not run this check (no plan, no iterations).
 **Philosophy:** Behavioural comparison, not sample-by-sample. The ILA and VCD
 have different time bases and capture windows. What matters is that the same
 state transitions occur in the same order.
+
+### IP-Boundary Handshake Equivalence Gate (mandatory for IP-into-BD integration)
+
+**Applies to:** every IP block — custom *or* 3rd-party (Xilinx/ADI/vendor) — wired
+into a top-level block design (BD). This is a **blocking gate**, not a warning, and
+it deliberately **strengthens** the default Stage-19 comparison above: for an IP-block
+boundary, "same states in the same order" is not enough — the handshake *cadence*, and
+the effective sample rate it implies, must match.
+
+**Why it exists.** An SV/behavioural testbench of an integrated IP can compile, run, and
+report PASS while modelling the boundary handshake *wrong*. A decimate-by-5
+`fir_compiler` instance (40.96 MHz clock, 20.48 MS/s sample rate) was "proven" in sim,
+but the TB asserted `s_axis_data_tvalid` every clock and ignored `s_axis_data_tready`;
+the real IP meters its input through `tready` in a 7-high/7-low burst (50% duty =
+20.48 MS/s). That single unmodelled handshake silently halved the downstream rate on
+silicon (a ÷2 plus a packing spur) and cost several debug hops to localize. **Sim PASS ≠
+silicon match for a handshake you never measured.** A `max_abs_lsb=0` data-match in sim
+does not license trust in the integrated block — the handshake match is what does.
+
+**The gate — three requirements:**
+1. **`dbg_hub` + ILA at every IP-block boundary is mandatory.** Probe the AXIS handshake
+   on *both* sides of the IP: `s_axis {tvalid, tready, tdata[, tlast, tkeep]}` and
+   `m_axis {tvalid, tready, tdata[, tlast, tkeep]}`. Clock the `dbg_hub` from the
+   free-running PS `pl_clk0` (see "Debug-hub clocking" above), never the RX/JESD clock.
+2. **HW ILA handshake cadence must MATCH the SV-TB VCD handshake cadence over ≥512
+   consumed/produced samples.** Match means the **accept/backpressure pattern itself** —
+   the `tvalid && tready` duty cycle, burst structure, and the effective sample rate it
+   implies — agrees between VCD and ILA, not merely that states occur in the same order.
+   512 samples is the minimum window so a periodic burst cadence (e.g. a 14-clock FIR
+   accept pattern) is observed many times over and a duty/rate divergence cannot hide in
+   a short transient.
+3. **Until the boundary passes, the IP's SV proof is provisional.** The block is not
+   "verified" in the results contract, and downstream blocks may not be trusted against
+   it, until the handshake gate is green.
+
+**Where in the pipeline.** Stage 18 (capture) must include the boundary handshake probes
+in `ila_trigger_plan.json` (the AXIS activity summary already scans `TVALID`/`TREADY`/
+`TLAST`/`TKEEP`). Stage 19 (verify) enforces the cadence match. For system scope this
+gates BD integration (Stage 20 → HIL). A faithful SV-TB handshake model is itself worth
+characterizing first on the desk — the real IP's `tready` schedule can be read straight
+from an `xsim` VCD of the encrypted IP before any board run.
+
+**Provenance:** gps_design txm8l4 slow-path `fir_decint_5` ÷2 investigation — sim-vs-ILA
+handshake characterization that root-caused the rate halving to the ADC→FIR feed
+ignoring `tready` (2026-06).
 
 ---
 
