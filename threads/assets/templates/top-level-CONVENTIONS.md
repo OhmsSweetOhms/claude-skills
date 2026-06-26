@@ -66,6 +66,42 @@ the enum.
 
 ---
 
+## Record discipline — three edit-classes (the anti-poison rule)
+
+A long thread rots when refuted-but-unscrubbed conclusions accumulate in
+**forward-facing** prose and a fresh reader inherits every dead hypothesis with
+equal weight. The fix is not a richer schema — it is bounding the forward-facing
+field and being clear about which records are overwritten vs frozen. Every record
+in a thread falls into exactly one class:
+
+| Class | Files / fields | Rule |
+|---|---|---|
+| **Current-state (overwrite)** | the handoff **"Current truth"** block; the `thread.json` `codex_worktrees[].notes` field *as a pointer* | **Overwritten** each hop, kept **bounded**. A claim that dies **leaves** the block. Overwriting is not "rewriting history" — git holds every prior version. The `notes` field is a **pointer** to the Current-truth block + load-bearing structural facts (head SHA, worktree sharing, merge-back) — **never** a hop-by-hop changelog. |
+| **Append-only (journal)** | the handoff **Session log** | New dated entries go on **top**; existing entries are **never edited**. Long is fine — you read newest-first and stop. Each claim's death is recorded **once**, here, as it happens. |
+| **Immutable (snapshot)** | `findings-*.md` bodies; closed-hop `outcome`; external-review verbatim | **Never** edited. A correction is a **new** `findings-*.md` that supersedes (e.g. `…-p7b` corrects `…-p7`), not an edit of the old one. |
+
+**The one sanctioned exception:** a superseded `findings-*.md` may get a **single
+top-line banner** pointing to its successor (`> SUPERSEDED by findings-YYYY-MM-DD-…`)
+— a forward-pointer only, exactly like an ADR supersession. The body stays frozen.
+
+**Enforcement.** Beyond convention, a **pre-commit guard** mechanically enforces the
+immutable + append-only classes across *all* committers (Claude, Codex, you):
+`scripts/check_record_discipline.py` rejects any staged diff that removes/edits a
+`findings-*.md` body (only a leading `> SUPERSEDED by …` banner may be added) or that
+edits/deletes a past Session-log entry (prepending a new entry, and editing the
+Current-truth block above the header, stay allowed). It no-ops on commits with no
+`.threads/` artifacts. Install once by dropping a `pre-commit` hook (in `.git/hooks/`
+or your `core.hooksPath` dir) that runs the script; override a specific commit with
+`git commit --no-verify` (the committer's explicit choice). The guard **channels**
+back-editing to the one sanctioned place (the Current-truth block) and now **blocks**
+the destructive kind rather than relying only on `git blame` + review.
+
+**The "RULED OUT" line is load-bearing.** Keep refuted dead-ends visible (one-liner +
+why) in the Current-truth block — deletion loses the "don't re-run this" signal that
+git history won't surface unless someone goes looking.
+
+---
+
 ## JSON schemas
 
 ### `threads/threads.json`

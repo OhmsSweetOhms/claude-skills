@@ -257,14 +257,24 @@ seed the union of the non-derived blocks (`closure_log`,
   `data/` instead.
 - **Handoff tracks plan state.** Whenever a plan hop is added,
   closed, superseded, or materially edited in place, the
-  `handoff.md` forward-looking sections (Current state, Blockers,
-  "What the next session should do first", Reading order,
-  Cross-references) must be updated in the same commit — and a
-  new Session-log entry appended at the top describing the
-  transition in prose. The New-plan-hop and Close-thread workflows
-  include this step; in-place plan edits are the user's
-  responsibility to mirror into the handoff. A handoff that
-  references a closed or superseded plan is a cold-start trap.
+  `handoff.md` **"Current truth" block** must be **overwritten** (not
+  appended) against the new plan state in the same commit — kept
+  bounded, dead claims let leave it, "RULED OUT" kept current — and a
+  new Session-log entry appended at the top describing the transition.
+  The New-plan-hop and Close-thread workflows include this step;
+  in-place plan edits are the user's responsibility to mirror. A
+  Current-truth block that still names a closed/refuted claim is a
+  cold-start trap.
+- **Record discipline is enforced, not just convention.** Three
+  edit-classes (CONVENTIONS § "Record discipline"): the Current-truth
+  block + `notes`-as-pointer are **overwritten**; the Session log is
+  **append-only**; `findings-*.md` bodies / closed `outcome` /
+  external-review verbatim are **immutable** (a correction is a new
+  findings file; a dead one may gain only a `> SUPERSEDED by …`
+  banner). `scripts/check_record_discipline.py`, wired as a pre-commit
+  hook, **blocks** commits that edit a findings body or a past
+  Session-log entry. Don't bypass it with `--no-verify` without a
+  reason — it is catching exactly the back-edit that poisons threads.
 
 ## Sanity checks before acting
 
@@ -345,18 +355,21 @@ Three prose artefacts, three different cadences and purposes:
 |------|---------|------|
 | `README.md` | Changes rarely; structural | Status header, plan-lineage table, findings table, research linkage, next-step pointer. The stable overview. |
 | `findings-<YYYY-MM-DD>.md` | Once per plan hop closure / decision point | Point-in-time snapshot. What was measured, what was refuted, what the current best understanding is. Never overwritten. |
-| `handoff.md` | **Whenever a plan changes** (new hop, close, supersede, material in-place plan edit) + on user request for in-session notes | Reverse-chronological running journal. "I'm about to X", "I tried Y, it failed because Z", "confirmed-green baseline as of <time>", "next session should start here". The bridge between formal findings and ephemeral conversation. |
+| `handoff.md` | **Whenever a plan changes** (new hop, close, supersede, material in-place plan edit) + on user request for in-session notes | Two parts, two cadences: a **bounded "Current truth" block** (overwritten each hop — the only forward-facing state) and an **append-only Session log** (dated journal, newest-first). See CONVENTIONS § "Record discipline — three edit-classes". |
 
 `handoff.md` is **updated by the New-plan-hop and Close-thread
 workflows**, alongside `README.md` and `thread.json`. It is also
 updated on user request for in-session notes. The reason: when the
-plan changes, the handoff's forward-looking sections — Current
-state, Blockers, "What the next session should do first", Reading
-order, Cross-references — go stale immediately, and a cold-start
-reader lands on a misleading snapshot. The fix is to re-check
-those sections against the new plan state in the **same commit**
-that changes the plan. The Session-log entry at the top of
-`handoff.md` gets a new block in prose describing the transition.
+plan changes, the handoff's **"Current truth" block** goes stale
+immediately, and a cold-start reader lands on a misleading snapshot.
+The fix: **overwrite** that block against the new plan state in the
+**same commit** that changes the plan — keep it bounded, let dead
+claims leave it (move the "why it died" into a Session-log entry),
+and keep the "RULED OUT" line current. Do **not** append the change
+into the block as a changelog — that is the poison the bounded block
+exists to prevent. A new Session-log entry at the top describes the
+transition in prose. The `thread.json` `codex_worktrees[].notes`
+field stays a **pointer** to this block, never a parallel changelog.
 
 `handoff.md` is never **derived mechanically** from other files —
 that's what `thread.json` is for. Always edit with attention: the
