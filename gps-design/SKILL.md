@@ -50,7 +50,7 @@ in the order the data flows through.
 |---------|-----------|--------|--------|
 | Tracking loops | `references/gps-tracking.md` | Current | DLL/PLL/FLL, Kaplan 3rd-order, Costas, M2M4, NBPW, PLI, state machine |
 | Pseudorange anchoring | `references/pseudorange-anchoring.md` | Current | IS-GPS-200 TOW convention, three-way debug methodology, PS.TLM → PS.B13 chain pointers |
-| Acquisition | `references/gps-acquisition.md` | Stub | PCPS FFT, peak1/peak2, doppler/code-phase search |
+| Acquisition | `references/gps-acquisition.md` | Current | PCPS pipeline, same-row peak1/peak2 semantics, r2/r22 fixed-point schedules (one golden per RTL config), vector-authority rules, B2→PS→B3 rational seed handoff, Doppler ceiling / code-Doppler smear |
 | Nav decode | `references/gps-nav-decode.md` | Current | PS.TLM LNAV semantics, TOW forward-projection, TOW continuity gate |
 | PVT solver | `references/gps-pvt.md` | Current | PS.B12 WLS + Cholesky, PVTFix contract, firmware-port notes |
 | Antenna geometry | `references/gps-antenna-geometry.md` | Stub | Link budget, off-boresight angle, occultation, cislunar dynamics |
