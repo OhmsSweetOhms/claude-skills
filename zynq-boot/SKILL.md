@@ -149,14 +149,30 @@ From `xsct` (source the toolchain first, then run `xsct`):
 connect
 targets -set -filter {name =~ "Cortex-A53 #0"}
 rst -system
-exec program_flash -f boot.mcs -flash_type qspi-x8-dual_parallel \
-    -fsbl /abs/path/to/fsbl.elf
+puts [exec program_flash -f boot.mcs -flash_type qspi-x8-dual_parallel \
+    -fsbl /abs/path/to/fsbl.elf]
 ```
 
+- **Wrap `program_flash` in `puts [exec ...]`, not a bare `exec`.** Tcl's `exec`
+  captures the child's stdout into its *return value*; a bare `exec program_flash`
+  therefore runs the flash but **swallows the entire progress/verification log** —
+  you see the `hw_server` banner and then nothing, and `xsct` exits 0. That exit 0
+  is real (a bare `exec` *does* raise a Tcl error and exit non-zero if
+  `program_flash` returns non-zero, so a hard failure won't pass silently), but you
+  get **no positive confirmation** — no erase/program percentages, no
+  `Flash Operation Successful`. `puts [exec ...]` prints the captured log so you can
+  actually see `Program Operation successful` / `Flash Operation Successful` and the
+  per-sector `Written: OK` lines. Don't report a flash as done off exit 0 alone;
+  confirm the success string.
 - `-flash_type` is board-specific (`qspi-x8-dual_parallel` is the ZCU102 dual
   QSPI); the reference names it.
 - `program_flash` needs the **FSBL** to drive the flash, separate from the FSBL
   baked into the image — pass an absolute path.
+- **`$USER` / shell vars do NOT expand inside the xsct/Tcl script** — only the
+  invoking bash shell expands them. Resolve every path to a literal absolute path
+  before handing it to xsct (e.g. build the `.tcl` in bash with the var expanded,
+  or paste the fully-resolved path). A `$USER` left in a Tcl `-fsbl` arg reaches
+  `program_flash` verbatim and the file won't be found.
 - The Vitis GUI equivalent is **Xilinx → Program Flash**.
 
 ## 6. Set boot mode and power-cycle
@@ -175,6 +191,28 @@ trust it over generic tables:
 Don't carry a switch setting from one board/boot-device to another. After setting
 SW6, power-cycle (not just reset) so the straps are re-latched.
 
+## When you can't select JTAG boot mode (hardwired QSPI/NAND)
+
+Everything above (§5–6) assumes you can strap the board to JTAG to flash, then to
+QSPI to boot. **Some custom boards hardwire the boot mode to QSPI with resistors —
+there is no JTAG strap to select**, and `program_flash` then fails (a documented
+2020.x+ regression, **AMD AR 76051**: the BootROM boots stale QSPI and seizes the PS
+before the tool can load its FSBL).
+
+You don't need JTAG *boot* mode — only JTAG *access*, which is always alive
+regardless of the straps. `ps7_init`/`psu_init` reconfigures the whole PS (clocks,
+DDR, QSPI MIO) by writing registers directly, independent of the boot mode. And
+`program_flash` already talks to its helper over the **ARM DCC (JTAG), not a UART** —
+so the whole flash can run with no serial port.
+
+Use **`scripts/jtag_qspi_flash.sh`**: it halts the BootROM (`rst -system; stop`),
+re-inits the PS, loads a **DCC-console U-Boot** (the cfgmem helper, or a custom
+`CONFIG_ARM_DCC` build), and opens `jtagterminal` so you can run `sf probe/erase/write`
+over JTAG. Full rationale, the UART-vs-DCC table, and the bring-up verification steps
+live in **`references/jtag-flash-bootmode-independent.md`**. (Quicker alternative if
+`program_flash` is otherwise fine: just prepend `rst -system; stop` before the
+`program_flash` call to apply the AR 76051 workaround without going fully manual.)
+
 ## Common failure → cause
 
 | Symptom | Likely cause |
@@ -184,6 +222,9 @@ SW6, power-cycle (not just reset) so the straps are re-latched.
 | bootgen "cannot find" a component | BIF has a stale absolute path; build tree moved or component not built yet |
 | App loads then spins at a low address (≈0x0–0x200) | Wrong init (psu_init vs FSBL flow) — DDR not up; a startup problem, not your code |
 | `make`/`bootgen`/`xsct`: command not found | Forgot to `source .settings64-Vitis.sh` in this shell |
+| `program_flash` ran but no log printed, `xsct` exited 0 | Bare `exec program_flash` swallowed stdout — wrap in `puts [exec ...]` to see the `Flash Operation Successful` confirmation |
+| `program_flash` can't find fsbl/mcs path that "looks right" | `$USER`/shell var left unexpanded in the Tcl script — xsct doesn't expand it; resolve to a literal absolute path before calling xsct |
+| `program_flash` fails on a board hardwired to QSPI/NAND boot mode | AMD AR 76051 regression — BootROM boots stale flash and seizes the PS. Prepend `rst -system; stop`, or use `scripts/jtag_qspi_flash.sh` (boot-mode-independent JTAG flash, no UART) |
 
 ## Adding a new project
 
