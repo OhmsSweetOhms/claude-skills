@@ -27,8 +27,9 @@ Source contract: hardware B2 taps the **pre-B1 12-bit D5 output**
 Shared invariant = common receiver sample-index origin, not identical IQ.
 
 Golden: `gps_receiver/blocks/pl_b2_acquisition.py::PCPSAcquisition`.
-Float behavioral path (GLRT peak/median-noise) is the receiver-level
-default; `backend="fixed_point"` is the RTL vector authority,
+Float behavioral path detects on **peak1/peak2** (golden ≡ RTL — plan-03, see
+below); the GLRT peak/median-noise ratio is retained only as a diagnostic
+(`glrt_metric`). `backend="fixed_point"` is the RTL vector authority,
 constructed explicitly by tests/generators — never through `GPSReceiver`.
 
 ## Peak1/Peak2 Semantics (hard-won)
@@ -124,32 +125,52 @@ contract level before the DDR soak engine is sized. Full analysis:
 From `receiver/20260522-weak-signal-decode-floor` plan-02 (acquisition floor
 36 → ~32 dB-Hz). Load these before any acquisition-sensitivity or threshold work.
 
-### The float GLRT metric mean is dwell-INDEPENDENT
-The receiver's float acquisition metric is `peak_power / median(power_grid)`, and
-its **mean is `1 + SNR_1ms` — independent of the non-coherent dwell count.**
-Non-coherent accumulation scales the signal peak AND the noise median together, so
-**more dwells at a fixed threshold do not lower the floor.** The √D sensitivity
-gain is entirely in the **noise-metric-tail variance** (max over 60 trials:
-1.58 @80 → 1.35 @250 → 1.23 @500 dwells), which is captured only by **lowering the
-threshold as D grows** — the dwell-aware `thr(D) = 1 + k/√D` (ADR-PL-B2-009). And
-**`code_doppler_comp="slewed"` (ADR-PL-B2-006) is required** at high D, or the code
+### The GLRT diagnostic's mean is dwell-INDEPENDENT (why GLRT is not the detector)
+The retained GLRT diagnostic `glrt_metric = peak_power / median(power_grid)` has
+**mean `1 + SNR_1ms` — independent of the non-coherent dwell count**: non-coherent
+accumulation scales the signal peak AND the noise median together, so **more dwells
+at a fixed GLRT threshold do not lower the floor.** That dwell-independent mean is
+*why GLRT was not kept as the detector* — the √D sensitivity gain lives entirely in
+the **noise-tail variance** (max over 60 trials: 1.58 @80 → 1.35 @250 → 1.23 @500
+dwells), which the **peak1/peak2** detector captures (the winning-row second peak
+shrinks with D) but a fixed-threshold GLRT does not. Detector-agnostic and still
+required: **`code_doppler_comp="slewed"` (ADR-PL-B2-006)** at high D, or the code
 phase drifts across FFT bins over the long dwell window and smears the peak (D=400
-"none" → 0% valid even @36). The landed open_sky operating point: 250 dwells,
-threshold 2.0, slewed → ~31–32 floor at a 0.65 noise-metric margin
-(findings-2026-06-27-step3g). Note this differs from the fixed-point peak1/peak2
-metric, whose value scales differently — do not port the float threshold to the FP
-path.
+"none" → 0% valid even @36). The actual detector + open_sky operating point
+(peak1/peak2, threshold **1.6**, 250 dwells, slewed) are in the next section; the
+old GLRT operating point (threshold 2.0, "~32 floor", findings-2026-06-27-step3g)
+was measured on this diagnostic ratio, which the hardware does not implement — **do
+not use it as the detection threshold**, and do not port either threshold across the
+float/FP boundary (the metrics scale differently).
 
-### Cross-correlation: float vs fixed-point divergence (KNOWN GAP)
-The float peak/median GLRT has **no C/A cross-correlation rejection**; the
-fixed-point peak1/peak2 path does (second peak in the winning Doppler row). At a
-high threshold (≥4.0) cross-corr (~2–3) is below threshold and the gap is masked;
-**any float-path threshold relaxation unmasks it on multi-SV captures** (real-IQ
-JT23 cold-start at thr 2.0 found 5 cross-corr candidates at metric ~2.0 alongside
-the real SVs, findings-2026-06-27-step3h). So "float and FP acquisition are
-detection-equivalent" holds for **noise only, not cross-correlation.** Multi-SV
-cold start on the float path needs a peak1/peak2 gate or must use the FP backend.
-Single-SV / noise diagnosis is blind to this — validate acquisition on multi-SV.
+### Detection is peak1/peak2 in BOTH paths — golden ≡ RTL (plan-03)
+The float path is a **golden model**: its detection DECISIONS must match the
+fixed-point RTL authority, which detects on the same-Doppler-row **peak1/peak2**
+(GNSS-SDR `first_vs_second_peak_statistic`). The float path historically used a
+*different* detector — the GLRT peak/median ratio — which is more sensitive but has
+**no C/A cross-correlation rejection**. That divergence was masked at a high
+threshold (≥4.0) but unmasked when open_sky dropped to 2.0
+(findings-2026-06-27-step3g): real-IQ JT23 cold-start admitted 5 cross-corr
+candidates the RTL would reject (step3h). **plan-03 closed it by aligning the
+statistic** — the float path now detects on `peak1/peak2 > threshold`, exactly the
+RTL rule (verified: float and FP make identical decisions PRN-by-PRN on the real
+JT23 IQ). GLRT survives only as a diagnostic (`glrt_metric`).
+
+Key consequences:
+- **`peak1/peak2 ≤ GLRT` always** (the winning-row second peak ≥ the grid median),
+  so the peak1/peak2 floor is ~1 dB higher than GLRT at the same threshold. The
+  GLRT "~32 floor" was measured on a metric the hardware doesn't implement.
+- **The threshold's binding constraint is cross-correlation, not noise.** Noise
+  peak1/peak2 ≤1.09 (D=250), but real-SV cross-corr reaches ≤1.46 (emitters
+  ≤50 dB-Hz) / ≤1.35 (real JT23). So the threshold floor is set by cross-corr
+  (~1.5), not noise (~1.1). open_sky uses **1.6**: it rejects real-SV cross-corr
+  AND holds the ~32 floor (weak-SV peak1/peak2 ≥1.88 @32). Do NOT lower below the
+  cross-corr ceiling on a multi-SV capture.
+- **Jammer cross-corr is out of scope.** A >~52 dB-Hz single-PRN emitter
+  (jammer/spoofer, not a real SV) can push cross-corr peak1/peak2 above 1.6;
+  that's deferred to downstream RAIM/SQM, not acquisition.
+- Single-SV / noise diagnosis is blind to cross-corr — validate acquisition on
+  **multi-SV** captures (real IQ or a synthetic strong+weak pair).
 
 ### Detector threshold-relaxation patterns (general, from this work)
 Reusable when relaxing any lock/detect threshold for weak signal:
