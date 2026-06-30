@@ -35,6 +35,7 @@ under `socks/references/` — no external skill dependencies.
 │    test-discovery-system.md (system scope test discovery) │
 │    dpll.md               (DPLL/PLL designs)              │
 │    structure-module.md   (module/block directory layout)  │
+│    vendored-ip-reuse.md  (wrap ADI/3rd-party IP in a module)│
 │    structure-system.md   (system scope directory layout)  │
 │    migration-module.md   (legacy + flat→SOCKS migration) │
 │    migration-system.md   (Vivado project→SOCKS migration)│

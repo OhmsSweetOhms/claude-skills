@@ -5,7 +5,9 @@ bit-exact: mixers, NCO-driven datapaths, integrate-and-dump blocks,
 accumulators, threshold/power logic, fixed-point control loops, or custom
 sample pipelines. For FIR/rate-conversion vendor IP, read
 `references/dsp/rate-conversion.md` instead. For GPS/GNSS correlators, read
-this file first, then `references/dsp/gps-correlator.md`.
+this file first, then `references/dsp/gps-correlator.md`. For FFT engines and
+PCPS acquisition datapaths, read this file first, then
+`references/dsp/gps-acquisition-fft.md`.
 
 Keep block-specific facts in the project docs and handback. Add only reusable
 SOCKS workflow lessons here.

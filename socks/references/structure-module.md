@@ -28,6 +28,12 @@ project_name/
 
 One file per entity. Core module + any sub-modules. No testbench code.
 
+**Reusing vendored IP** (an ADI / 3rd-party cell — DDS, FIR, mux, CORDIC): don't
+reimplement or fork it — wrap the pristine vendored cell in a hand-authored
+module and list it as a `socks.json` dep. See `vendored-ip-reuse.md` (wrap-don't-
+fork, mixed-language VHDL-around-Verilog, provenance via `source-manifest.json`,
+and where the unit vs integration tests live).
+
 ### `tb/` — Testbenches and audit
 
 - `module_tb.py` — Cycle-accurate Python model + tests

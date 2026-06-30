@@ -253,7 +253,11 @@ plan authoring, and troubleshooting.
 boundary, and the HW ILA handshake cadence (`tvalid`/`tready` duty + burst structure)
 must match the SV-TB VCD over ≥512 samples. A passing SV/`max_abs_lsb=0` sim does **not**
 license trust in the integrated IP until this gate is green. See `references/hil.md`
-§ "IP-Boundary Handshake Equivalence Gate".
+§ "IP-Boundary Handshake Equivalence Gate". **Run req. 0 of that gate — the static,
+ILA-free interface-integrity assertion (`scripts/hil/assert_intf_integrity.py`) — as a
+hard post-route gate on every build that adds/modifies RTL or BD or inserts an ILA**; a
+BD edit or even an ILA insertion can silently sever an AXIS interface in the netlist while
+sim, synthesis, and routing all pass.
 
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
 

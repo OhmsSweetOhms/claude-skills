@@ -1242,7 +1242,31 @@ silicon (a ÷2 plus a packing spur) and cost several debug hops to localize. **S
 silicon match for a handshake you never measured.** A `max_abs_lsb=0` data-match in sim
 does not license trust in the integrated block — the handshake match is what does.
 
-**The gate — three requirements:**
+**The gate — four requirements:**
+0. **Static interface-integrity assertion FIRST (ILA-free).** Before trusting any
+   ILA, prove in the *routed netlist* that each critical data-path interface is
+   still wired source→sink. This catches the failure mode the other three cannot:
+   a BD edit or **an ILA insertion itself** can silently detach an AXIS interface
+   member. `connect_bd_net` on an interface *member* pin (the `BD 41-1306` class)
+   reroutes that member to its new target and strips it from the source→sink
+   interface net — so the data path goes to the debug probe instead of its real
+   sink, while synthesis, routing, and the `max_abs_lsb=0` sim all still pass. A
+   bit-exact sim cannot see it (the sever happens below the RTL the sim runs); and
+   the ILA-cadence check (req. 2) cannot be trusted to find it, because adding the
+   ILA is what causes it. The static check adds **no probes**, so it cannot perturb
+   what it measures. Run it on every build that adds/modifies RTL or BD, or inserts
+   an ILA. Tool: `scripts/hil/assert_intf_integrity.py --checkpoint <routed.dcp>
+   --interfaces <allowlist.json>` (exit 1 = a critical interface is severed → FAIL
+   the build). The allowlist is **project-supplied** (critical data-path interfaces
+   only) — each entry asserts a `driver` net-glob fans out to a leaf load under the
+   `sink` glob; a load list that reaches only an ILA is a FAIL. **`sink` is the
+   destination *instance* hierarchy (`*rx_decim_dma*`), not the boundary port name** —
+   after implementation `s_axis_valid`/`m_axis_tready` are optimized into the consuming
+   logic, so a literal port-name sink (`*s_axis*valid*`) false-positives on a *correct*
+   build (verified on the txm8l4 safe-taps rebuild); match "does the source reach the
+   destination IP at all." Wire it as a hard post-route gate: for SOCKS-authored builds, after
+   `run_impl.tcl`; for ADI reference-design builds (which use the ADI `make` flow,
+   not `run_impl.tcl`), as a `STEPS.ROUTE_DESIGN.TCL.POST` hook in the project.
 1. **`dbg_hub` + ILA at every IP-block boundary is mandatory.** Probe the AXIS handshake
    on *both* sides of the IP: `s_axis {tvalid, tready, tdata[, tlast, tkeep]}` and
    `m_axis {tvalid, tready, tdata[, tlast, tkeep]}`. Clock the `dbg_hub` from the
@@ -1267,7 +1291,11 @@ from an `xsim` VCD of the encrypted IP before any board run.
 
 **Provenance:** gps_design txm8l4 slow-path `fir_decint_5` ÷2 investigation — sim-vs-ILA
 handshake characterization that root-caused the rate halving to the ADC→FIR feed
-ignoring `tready` (2026-06).
+ignoring `tready` (2026-06). Req. 0 (static interface-integrity) added after the same
+thread's plan-09 slow-ring 0 MiB regression: the offload→DMAC AXIS interface was *severed*
+by debug member taps (offload `m_axis_tvalid` drove only the ILA; DMAC `s_axis` valid/ready
+tied off), found only by a routed-netlist trace — no warning, no sim failure, and the ILA
+that was meant to observe the boundary is what cut it.
 
 ---
 

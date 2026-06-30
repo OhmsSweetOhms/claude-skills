@@ -52,6 +52,13 @@ If the design has output clocks derived from the system clock (e.g.,
 For software-configurable dividers, a generated clock constraint is usually
 not appropriate. Use `set_output_delay` or `set_false_path` instead.
 
+**Debug-hub clock:** if the design carries a Vivado ILA/`dbg_hub`, its
+`create_clock` must be honest (match the real frequency) and the hub must be
+clocked from a free-running clock (a PS `pl_clk0` ≤ 100 MHz on Zynq/ZynqMP),
+**never** a transceiver/JESD-derived clock like `rx_device_clk`. A bogus
+`create_clock` or a gated hub clock corrupts JTAG readback
+(`Labtools 27-3312` / `27-3428`). See `hil.md` §"Debug-hub clocking".
+
 ### 2c. Async Input False Paths
 
 For each async input that has a CDC synchroniser in the RTL:
