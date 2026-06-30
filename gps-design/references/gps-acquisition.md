@@ -1,10 +1,12 @@
 # GPS Acquisition -- PL.B2 (PCPS FFT)
 
 **Status: Active chapter.** Expanded 2026-06-09 from the plan-03 RTL
-thread (`.threads/fpga/20260424-pl-b2-acquisition/`). RTL-authoring
-counterpart: `~/.claude/skills/socks/references/dsp/gps-acquisition-fft.md`
-(SDF architecture, BRAM discipline, TB lessons — read that when writing
-VHDL; read this for the algorithm/contract side).
+thread (`.threads/fpga/20260424-pl-b2-acquisition/`) and seeded with the
+weak-signal cold-floor findings (2026-06-27, see "Findings — weak-signal
+cold-floor work" below). RTL-authoring counterpart:
+`~/.claude/skills/socks/references/dsp/gps-acquisition-fft.md` (SDF
+architecture, BRAM discipline, TB lessons — read that when writing VHDL;
+read this for the algorithm/contract side).
 
 ---
 
@@ -116,6 +118,55 @@ contract level before the DDR soak engine is sized. Full analysis:
 - **L1C N=20480** (= 2¹²·5): the SDF pipeline keeps a radix-5 stage
   additive (`FftPlan` parameterization); not implemented.
 - **FFT zero-padding for sub-bin Doppler resolution** not implemented.
+
+## Findings — weak-signal cold-floor work (2026-06-27)
+
+From `receiver/20260522-weak-signal-decode-floor` plan-02 (acquisition floor
+36 → ~32 dB-Hz). Load these before any acquisition-sensitivity or threshold work.
+
+### The float GLRT metric mean is dwell-INDEPENDENT
+The receiver's float acquisition metric is `peak_power / median(power_grid)`, and
+its **mean is `1 + SNR_1ms` — independent of the non-coherent dwell count.**
+Non-coherent accumulation scales the signal peak AND the noise median together, so
+**more dwells at a fixed threshold do not lower the floor.** The √D sensitivity
+gain is entirely in the **noise-metric-tail variance** (max over 60 trials:
+1.58 @80 → 1.35 @250 → 1.23 @500 dwells), which is captured only by **lowering the
+threshold as D grows** — the dwell-aware `thr(D) = 1 + k/√D` (ADR-PL-B2-009). And
+**`code_doppler_comp="slewed"` (ADR-PL-B2-006) is required** at high D, or the code
+phase drifts across FFT bins over the long dwell window and smears the peak (D=400
+"none" → 0% valid even @36). The landed open_sky operating point: 250 dwells,
+threshold 2.0, slewed → ~31–32 floor at a 0.65 noise-metric margin
+(findings-2026-06-27-step3g). Note this differs from the fixed-point peak1/peak2
+metric, whose value scales differently — do not port the float threshold to the FP
+path.
+
+### Cross-correlation: float vs fixed-point divergence (KNOWN GAP)
+The float peak/median GLRT has **no C/A cross-correlation rejection**; the
+fixed-point peak1/peak2 path does (second peak in the winning Doppler row). At a
+high threshold (≥4.0) cross-corr (~2–3) is below threshold and the gap is masked;
+**any float-path threshold relaxation unmasks it on multi-SV captures** (real-IQ
+JT23 cold-start at thr 2.0 found 5 cross-corr candidates at metric ~2.0 alongside
+the real SVs, findings-2026-06-27-step3h). So "float and FP acquisition are
+detection-equivalent" holds for **noise only, not cross-correlation.** Multi-SV
+cold start on the float path needs a peak1/peak2 gate or must use the FP backend.
+Single-SV / noise diagnosis is blind to this — validate acquisition on multi-SV.
+
+### Detector threshold-relaxation patterns (general, from this work)
+Reusable when relaxing any lock/detect threshold for weak signal:
+1. **Margin + guard:** measure the signal-statistic vs noise-statistic
+   distributions; relax to capture the unused margin; add a noise-only guard test.
+2. **Early-eval trap:** a "lock when ratio > thr once N events seen" gate
+   false-locks on noise if you relax thr without raising N (the estimate hasn't
+   converged). Bit-sync needed min_events 10 → 200 *with* dominance 0.6 → 0.10.
+3. **Hybrid two-gate OR:** when relaxing would regress the strong-signal path
+   (latency, transition races), keep the reference gate (fast path) and add a weak
+   gate; lock on either. (Used for the bit-sync histogram lock, ADR-PL-B3A-001.)
+
+### Diagnostics (templates)
+`receiver/20260522-weak-signal-decode-floor/diagnostics/`:
+`probe_acq_dwell_floor.py` (float acq valid% + noise false-acq vs dwells/thr/comp),
+`diagnose_cold_acq_floor.py` (per-stage cold-floor attribution),
+`validate_jt23_realiq_fullcircle.py` (real-IQ multi-SV cold-start old-vs-new).
 
 ## When to Read This Chapter
 

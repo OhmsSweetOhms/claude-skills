@@ -484,8 +484,25 @@ def render_thread_index(idx: ThreadIndex) -> dict[str, Any]:
         payload["current_metrics"] = cm
     payload["promotion_log"] = flatten_promotions(idx.threads)
     payload["closure_log"] = _build_closure_log(idx.threads)
+    # adr_stores: optional project declaration of where ADRs live, surfaced so the
+    # tooling/next reader knows the stores (policy canon: threads skill
+    # references/adr-conventions.md). Read-if-present, backward-compatible.
+    adr_stores = _read_adr_stores()
+    if adr_stores is not None:
+        payload["adr_stores"] = adr_stores
     payload["threads"] = idx.threads
     return payload
+
+
+def _read_adr_stores() -> Any | None:
+    """Return <project>/.threads/adr-stores.json verbatim if present, else None."""
+    path = THREADS_DIR / "adr-stores.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def render_research_index(idx: ResearchIndex) -> dict[str, Any]:
