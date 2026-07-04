@@ -70,7 +70,18 @@ C/A — when extending, read `synthesize_satellite_tv` +
   tx-time-indexed (`_tx_time_epoch_index`).
 - **`code_phase_offset_profiles`**: additive chips AFTER Doppler
   integration; does not move overlay/data timing (the engine adjusts
-  the tx-offset side itself when stacking residuals).
+  the tx-offset side itself when stacking residuals). It moves
+  **BOTH C/A and L1C** primary code phase (empirical, impairment
+  audit 2026-07-04: a +0.30-chip inject shifts C/A, L1C-D, L1C-P all
+  by −0.300 chips on `numpy_legacy`). Consequence: the multipath and
+  thermal-DLL ranging surrogates that inject through this path are
+  **C/A-calibrated** — a joint scenario feeds L1C a C/A-magnitude
+  ranging bias (correlation right, magnitude wrong), so
+  **multipath/thermal scenarios are not L1C-valid** until the
+  geometry-aware multipath rework lands
+  (`gps_iq_gen/20260619-geometry-aware-multipath-iq`; schema caveat
+  on `environment.multipath`; verdict table in
+  `gps_iq_gen/20260704-impairment-bandwidth-audit`).
 - **`cn0_profiles`**: per-sample amplitude, C/A op chain verbatim.
 - **Backend posture:** TV-profile L1C is `numpy_legacy` only;
   `numpy_samplemajor` raises `SAMPLEMAJOR_L1C_TV_UNSUPPORTED_MESSAGE`
@@ -93,7 +104,7 @@ instantiation):
 
 | Block | Class | File | Notes |
 |-------|-------|------|-------|
-| PL.B2_L1C | `PCPSAcquisitionL1C` | `gps_receiver/blocks/pl_b2_l1c.py` | C/A-AIDED mode (`center_doppler_hz`, ±500 Hz @ 50 Hz). Standalone 500 Hz-step search loses ~19 dB at 250 Hz off-bin with the 10 ms coherent FFT (F1 scalloping defect — always aid). `overlay_search` defaults to hypothesis 0 ONLY — correct at stream start, wrong mid-stream. |
+| PL.B2_L1C | `PCPSAcquisitionL1C` | `gps_receiver/blocks/pl_b2_l1c.py` | C/A-AIDED mode (`center_doppler_hz`, ±500 Hz @ 50 Hz). Standalone 500 Hz-step search loses ~19 dB at 250 Hz off-bin with the 10 ms coherent FFT (F1 scalloping defect — always aid). `overlay_search` defaults to hypothesis 0 ONLY — correct at stream start, wrong mid-stream. Measured aided-mode accuracy on 60 s engine IQ: 232/232 detections, code-phase error ≤ **0.040 chips**, zero TMBOC side-peak captures (the seed-side-peak hypothesis is REFUTED — `receiver/20260703-l1c-code-seed-rootcause` findings) — comfortably inside the ±0.336-chip DLL capture region (8.4× margin). |
 | PL.B3_L1C | `L1CCorrelator` | `gps_receiver/blocks/pl_b3_l1c.py` | Dual-lane pilot(TMBOC+overlay-wipe)/data(BOC11) E/P/L; overlay index self-increments per 10 ms epoch. |
 | PS.B4_L1C–B9_L1C | via `L1CTrackingState` | `gps_receiver/receiver.py` | FGI-pattern 3-state machine (COARSE → PULL_IN → FINE_TRACKING); pilot-based `pilot_atan2` PLL. FLL pull-in range ≈ ±25 Hz — seed the carrier accordingly (see §4). |
 | PS.B13_L1C | `ObservablesL1C` | `gps_receiver/blocks/ps_b13_l1c.py` | Thin `Observables` subclass, fs=20.48e6, 10 ms packet cadence. Inherits the `(sample_counter − residual)/fs` t_rx formula — minus sign load-bearing. |
@@ -300,11 +311,17 @@ handoff.md/findings, not this file, for the point-in-time picture.
 
 ## 7. Cross-references
 
-- Threads: `gps_iq_gen/20260430-l1c-generator`,
-  `receiver/20260430-l1c-phase-a` (closed; merged `1e35c3f9`),
-  `cross-cutting/20260701-l1c-scenario-integration` (arc owner) +
-  its child `receiver/20260703-l1c-code-seed-rootcause` (gate-evaluator
-  root-cause + fix). Whole arc merged to main at `99752c7b`.
+- Threads: `gps_iq_gen/20260430-l1c-generator` +
+  `receiver/20260430-l1c-phase-a` (closed; merged `1e35c3f9`);
+  `cross-cutting/20260701-l1c-scenario-integration` (closed) + its
+  child `receiver/20260703-l1c-code-seed-rootcause` (closed;
+  gate-evaluator root-cause + fix) — whole arc merged to main at
+  `99752c7b`. Current follow-on arcs:
+  `receiver/20260704-l1c-scenario-profile-matrix` (scenario×profile
+  sweep), `fpga/20260704-l1c-pl-coordination` (PL block build-ups:
+  B1/B2+resampler/B3), `gps_iq_gen/20260704-impairment-bandwidth-audit`
+  (parked; multipath requirements HELD). Query `.threads/` for live
+  state, per this file's header rule.
 - ADRs: **ADR-023** (dual-rate), **ADR-024** (L1C cold-start aided
   acquisition is GPSReceiver policy), ADR-007 (substrate rates; L1C at
   native 20.48 MSPS RX).

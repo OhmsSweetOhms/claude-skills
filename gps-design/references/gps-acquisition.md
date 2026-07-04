@@ -105,7 +105,7 @@ contract level before the DDR soak engine is sized. Full analysis:
 
 | Session | Content |
 |---------|---------|
-| `.research/session-20260322-142449` | Leclere comparison, PCPS vs serial |
+| `.research/session-20260704-080759` | Leclere FFT-acquisition corpus (re-banked; original session-20260322-142449 missing on disk) + L1C 204800-pt PCPS architecture trade |
 | `.research/session-20260405-160000` | PCPS params, peak detection thresholds |
 | `.research/session-20260608-191014` | Authored fixed-point FFT engine basis (R2²SDF, He & Torkelson, mixed-radix-5 for L1C) |
 

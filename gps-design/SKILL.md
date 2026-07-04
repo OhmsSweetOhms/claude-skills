@@ -306,7 +306,7 @@ Key sessions:
 | session-20260405-160000 (PL) | PL.B1-B3 | Quantization, PCPS, correlator architecture |
 | session-20260405-170000 (C) | All | Cross-implementation synthesis |
 | session-20260414-132039 | Anchor timing | SoftGNSS preamble-position anchor; IS-GPS-200 TOW convention |
-| session-20260322-142449 | Acquisition | Leclere comparison, PCPS vs serial |
+| session-20260704-080759 | Acquisition | Leclere FFT-acquisition corpus (re-banked; the original session-20260322-142449 is missing on disk) + the 204800-pt L1C PCPS architecture trade (x8/25 -> 2^16, BOC(1,1)-only replica) |
 
 Per CLAUDE.md preference: **scan local `.research/` directories before
 external queries.** Many questions have already been investigated; the
