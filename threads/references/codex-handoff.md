@@ -504,10 +504,16 @@ repo-relative (fingerprint discipline).
    boundary is load-bearing:
    - **`answered`** — only when the resolution is derivable from
      already-pinned authority (ADR text, golden source, committed
-     vectors, plan prose). Write `## Resolution` citing the
-     authority, set `status: answered`, correct the plan/ADR in the
-     same pass if the question exposed a drafting error (cite the
-     commit in the resolution).
+     vectors, plan prose). Write the `## Resolution` **body FIRST**
+     citing the authority, **then flip `status: open → answered`
+     LAST** — the two edits are not atomic and the Codex-side
+     `await_codex_answer.sh` keys on `status`, so a status-first edit
+     can be read as an "answered" question with an empty Resolution
+     body (observed twice, each burning a duplicate q-NN round trip;
+     the await script now also requires a non-empty body as a
+     backstop, but the write order is the real fix). Correct the
+     plan/ADR in the same pass if the question exposed a drafting
+     error (cite the commit in the resolution).
    - **`escalated`** — the question requires a NEW decision
      (ADR-grade choice, scope change). Set `status: escalated`,
      surface it to the user, and write the resolution + `answered`
