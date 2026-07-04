@@ -158,6 +158,7 @@ section in `references/workflows.md`:
 | "Run the full handback lifecycle" / "process this handback end-to-end" / "close the hop and launch the next" / "self-healing handback cycle" | **Self-healing handback lifecycle** (`references/self-healing-handback-cycle.md`) |
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 | "Reconcile threads pulled from another machine" / "thread state diverged across clones" / "threads.json merge conflict after pull" | **Cross-machine reconciliation** (`references/cross-machine-reconciliation.md`) |
+| "Orchestrate several live threads" / "coordination thread" / "charter thread" / "orchestrator cache" / "write a note into another session's thread" / concurrent sessions on one repo | **Multi-session orchestration** (`references/orchestration.md`) |
 
 If the user's ask doesn't match cleanly, ask which operation they
 want before acting. Don't invent new operations.

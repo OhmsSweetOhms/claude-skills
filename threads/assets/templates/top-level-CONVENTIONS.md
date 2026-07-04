@@ -100,6 +100,15 @@ the destructive kind rather than relying only on `git blame` + review.
 why) in the Current-truth block — deletion loses the "don't re-run this" signal that
 git history won't surface unless someone goes looking.
 
+**Cross-session writes — the ORCHESTRATOR NOTE (ownership rule).** One session owns a
+thread's Current-truth at a time. A supervising/other session must never overwrite a
+thread's Current-truth, plans, findings, or `thread.json` it doesn't own; its single
+sanctioned write is an **append-only, clearly attributed Session-log entry**
+(`### <date> — ORCHESTRATOR NOTE: <topic>`) carrying directives/context decided above
+the thread — never a restatement of the thread's own status. Committed by explicit
+path only (concurrent sessions). Full pattern (coordinator/charter threads,
+orchestrator cache, concurrency hygiene): threads skill `references/orchestration.md`.
+
 ---
 
 ## JSON schemas

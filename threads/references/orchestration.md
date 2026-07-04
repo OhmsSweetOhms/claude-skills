@@ -1,0 +1,98 @@
+# Multi-session orchestration — coordinator threads, cross-thread notes, the orchestrator cache
+
+Patterns for running SEVERAL live thread sessions concurrently under
+one supervising ("orchestrator") session. Distilled from the gps_design
+L1C arc (2026-07-03/04): one top-level session + a scenario-matrix
+session + an audit session + a coordinator session + Codex hops, all
+against one checkout, without stepping on each other.
+
+## Roles
+
+- **Worker session** — owns exactly the thread(s) it was launched for.
+  Full authority over those threads' files per the normal lifecycle.
+- **Coordinator session** — owns a *coordination thread* whose plan is
+  a CHARTER for spawning and driving child threads (see below). A
+  coordinator is a worker whose deliverable is other threads.
+- **Orchestrator session** — supervises the program. Owns no worker
+  thread. Reads everywhere; writes only (a) its own artifacts (cache,
+  session-handoff records), (b) ORCHESTRATOR NOTES (below).
+
+## The ownership rule (extends Record discipline)
+
+**One session owns a thread's Current-truth block at a time.** A
+non-owner session must NEVER overwrite another thread's Current-truth,
+plan files, findings, or thread.json state. The single sanctioned
+cross-session write is the **ORCHESTRATOR NOTE**:
+
+- an **append-only Session-log entry** in the target thread's
+  `handoff.md`, newest-on-top like any entry;
+- **clearly attributed** in its heading
+  (`### <date> — ORCHESTRATOR NOTE: <topic>`), so the owner and any
+  cold reader can distinguish supervision from the owner's own record;
+- **directive or context only** — decisions made above the thread,
+  gate changes, cross-thread dependencies, cautions. It never restates
+  the thread's own status back at it;
+- committed with **explicit-path staging** (concurrent sessions mean
+  `git add -A` sweeps someone else's in-flight work).
+
+The existing pre-commit record-discipline guard already permits this
+(prepending Session-log entries is allowed); the ownership rule is
+what makes it safe.
+
+## Coordination (charter) threads
+
+A coordination thread's plan-01 is a **charter**, not a hypothesis:
+who the coordinator is, which child threads it spawns (names, scopes,
+one-line deliverables), the settled sequencing it must execute rather
+than reopen, the hard constraints it enforces on every child, and an
+explicit **escalation contract** (which decision classes go UP to the
+user/orchestrator instead of being made locally — e.g. cross-subsystem
+ADR amendments, freeze/release calls, hardware time). Two contracts
+make it work:
+
+- **Upward reporting:** the coordination thread's handoff
+  Current-truth block IS the status surface the orchestrator polls —
+  bounded, current at every hop transition, never a transcript.
+- **Banked verdicts are verify-and-adopt:** research/recon results the
+  charter cites are inputs, re-litigated only with new evidence.
+
+## The orchestrator cache
+
+A single durable file at the threads root (e.g.
+`<threads-path>/ORCHESTRATOR-CACHE.md`) that lets a cold orchestrator
+session boot on ~2k tokens instead of re-reading the program. Hard
+rules, in tension order:
+
+1. **Pointers + decisions ONLY — never live status.** Cached status
+   ("X is running/paused/at step 3") rots in days and poisons cold
+   readers. Live state stays in the registry + each thread's
+   Current-truth block, polled fresh every session.
+2. Contents: (a) a **resume protocol** (read this file → poll registry
+   + the listed handoff Current-truth blocks → delegate deeper reads);
+   (b) a **knowledge index** — artifact paths with one-line
+   what's-inside/when-to-read; (c) **decisions in force** — stable
+   until explicitly changed, each traceable to a thread/commit;
+   (d) the update rule itself.
+3. **Lazy reads behind cheap agents:** the protocol instructs the
+   orchestrator to dispatch a low-cost subagent (e.g. Sonnet Explore)
+   with a *specific question* against an indexed artifact, consuming
+   conclusions — never bulk-reading kickoffs/findings/reports inline.
+4. **Updated in place, same commit as the change it reflects** (a
+   decision lands → its cache line lands with it). History in git.
+   Dated `SESSION-HANDOFF-*.md` files remain immutable per-session
+   records; the cache supersedes them as the resume surface and each
+   handoff gets a superseded-as-resume-surface banner.
+
+## Concurrency hygiene (all sessions, all the time)
+
+- Explicit-path `git add` only; never `-A`/`.` (rule mirrored from the
+  machine CLAUDE.md — it is load-bearing here, not stylistic).
+- One writer per handoff file at a time; orchestrator notes are small
+  and quick precisely to shrink the collision window.
+- Shared mutable machine resources (RAM-heavy replays, board time) are
+  arbitrated by the orchestrator as explicit named rules in the cache
+  ("one heavy replay machine-wide"), not discovered via OOM.
+- The auto-generated registry is regenerated by whichever session
+  changed thread state, in that same commit; a session may deliberately
+  defer the registry when it would aggregate another session's
+  in-flight state — note it, and let the next regen self-heal.
