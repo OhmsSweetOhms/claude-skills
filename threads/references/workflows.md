@@ -253,6 +253,12 @@ deserves its own plan rather than appending to the current one.
    handoff that still names the closed plan as active is a
    cold-start trap.
 
+   While the hop transition is fresh, flush any skill friction the
+   closed hop surfaced into the session skill tracker (SKILL.md
+   §"Session-skill tracker" — init one if none exists). Hop
+   boundaries are the standing trigger; the evidence to cite is
+   still concrete here.
+
 **Verification:**
 - `thread.json` parses.
 - `thread.json.plan_hops[]` is in `num` order with one and only
@@ -521,6 +527,10 @@ thread, or blocked indefinitely).
      rationale, what the thread established, what was ruled out,
      where follow-up work (if any) lives. Include the closure
      commit hash. Preserve older session-log entries as history.
+   - Flush any skill friction this thread surfaced into the session
+     skill tracker (SKILL.md §"Session-skill tracker"), and check
+     whether the thread produced durable domain knowledge a project
+     skill reference should now cover — update it or log the gap.
 7. Don't delete the thread directory in this workflow — Close
    leaves the directory in place as the live record. Working-tree
    deletion is a separate, audited operation; see **Retire thread**

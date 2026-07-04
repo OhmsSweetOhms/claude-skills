@@ -107,7 +107,7 @@ Not applied in the Python golden model. When iono/tropo are needed:
 
 - **Iono:** Klobuchar α/β from SF4 page 18. Currently `nav_gen`
   writes zeros; tracked in
-  `gps_receiver/threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`.
+  `.threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`.
   GNSS-SDR on our canonical IQ only reaches 174 m after
   `PVT.iono_model=OFF` for this reason.
 - **Tropo:** Saastamoinen model from met-data or standard atmosphere.

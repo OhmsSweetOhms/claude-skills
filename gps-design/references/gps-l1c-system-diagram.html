@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L1C + C/A — Scenario-Driven System &amp; Loop Diagram</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#1a1f2b; --muted:#5a6472;
+    --line:#c7ccd6; --box:#eef1f6; --boxb:#b7c0cf;
+    --code:#e8730c;      /* code loop / DLL  */
+    --pll:#2563eb;       /* carrier phase loop / PLL */
+    --fll:#0d9488;       /* carrier freq loop / FLL  */
+    --aid:#7c3aed;       /* carrier aiding  */
+    --rep:#16a34a;       /* NCO replicas (feedback) */
+    --ctl:#8a94a6;       /* state-machine control */
+    --scn:#b45309;       /* scenario front-end */
+    --l1c:#be185d;       /* L1C-specific */
+    --mono:"SF Mono",ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1116; --panel:#161b22; --ink:#e6e9ef; --muted:#9aa4b2;
+      --line:#39414f; --box:#1c2230; --boxb:#39445a;
+      --code:#f59e42; --pll:#60a5fa; --fll:#2dd4bf; --aid:#a78bfa;
+      --rep:#4ade80; --ctl:#6b7484; --scn:#d99a3a; --l1c:#f472b6;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1220px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:20px;margin:44px 0 6px;padding-top:14px;border-top:1px solid var(--line)}
+  h2 .id{font:600 12px var(--mono);color:var(--muted);margin-left:8px}
+  .lede{color:var(--muted);max-width:78ch;margin:6px 0 8px}
+  .intuition{background:var(--box);border:1px solid var(--boxb);border-left:4px solid var(--fll);
+    border-radius:8px;padding:12px 16px;margin:14px 0 18px;max-width:90ch}
+  .intuition b{color:var(--ink)}
+  code,.k{font-family:var(--mono);font-size:.9em}
+  .k{background:var(--box);border:1px solid var(--boxb);border-radius:4px;padding:0 5px}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:10px;margin:8px 0;overflow-x:auto}
+  svg{display:block;min-width:640px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0;font-size:13px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .sw{width:22px;height:0;border-top-width:3px;border-top-style:solid;display:inline-block}
+  .sw.dash{border-top-style:dashed}
+  /* CSS box-flow rows */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;margin:10px 0}
+  .node{background:var(--box);border:1px solid var(--boxb);border-radius:9px;padding:10px 12px;
+    min-width:150px;flex:1 1 150px}
+  .node .t{font-weight:600;font-size:13.5px}
+  .node .s{font-size:12px;color:var(--muted);margin-top:3px}
+  .node .bid{font:600 10.5px var(--mono);color:var(--muted);letter-spacing:.02em}
+  .node.scn{border-color:var(--scn);border-left:4px solid var(--scn)}
+  .node.l1c{border-color:var(--l1c);border-left:4px solid var(--l1c)}
+  .node.ca{border-color:var(--code);border-left:4px solid var(--code)}
+  .arrowdiv{align-self:center;color:var(--muted);font-size:20px;padding:0 2px}
+  .col2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:720px){.col2{grid-template-columns:1fr}}
+  .lane{border:1px dashed var(--boxb);border-radius:10px;padding:8px 10px 12px}
+  .lane .h{font:600 12px var(--mono);color:var(--muted);margin:0 0 8px}
+  .lane.ca .h{color:var(--code)} .lane.l1c .h{color:var(--l1c)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:var(--box);font-size:12.5px}
+  td.c,th.c{text-align:center}
+  .tag{display:inline-block;font:600 11px var(--mono);border-radius:4px;padding:1px 6px;color:#fff}
+  .tag.code{background:var(--code)} .tag.pll{background:var(--pll)}
+  .tag.fll{background:var(--fll)} .tag.aid{background:var(--aid)}
+  .callout{background:var(--box);border:1px solid var(--boxb);border-radius:8px;padding:10px 14px;margin:8px 0}
+  .callout .h{font-weight:600;margin-bottom:2px}
+  .note{font-size:12.5px;color:var(--muted)}
+  .foot{margin-top:40px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+  a{color:var(--pll)}
+  tbody tr:nth-child(even) td{background:var(--panel)}
+  .toc{font-size:13px;color:var(--muted);margin:2px 0 10px}
+  .toc a{text-decoration:none;margin-right:14px;white-space:nowrap}
+  .toc a:hover{text-decoration:underline}
+  .svglabel{font:600 12px var(--mono)}
+  text{fill:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>L1C + C/A — Scenario-Driven System &amp; Loop Diagram</h1>
+<p class="lede">A map of the joint GPS III&nbsp;L1C&nbsp;+&nbsp;L1&nbsp;C/A receiver as it actually runs in this
+project: from a scenario <span class="k">.v2.json</span> through synthesis, the dual-rate split, the
+three interlocked tracking loops, and back out to pseudoranges. Block IDs are the canonical ones from
+<span class="k">shared-interfaces.json</span>. Companion to <span class="k">references/gps-l1c.md</span>
+and <span class="k">references/gps-tracking.md</span>.</p>
+
+<p class="toc">Jump to:
+<a href="#s1">§1 system context</a>
+<a href="#s2">§2 the three loops</a>
+<a href="#s3">§3 C/A → L1C wiring</a>
+<a href="#s4">§4 state-machine scheduler</a></p>
+
+<div class="legend">
+  <span><i class="sw" style="border-color:var(--code)"></i> code loop / DLL</span>
+  <span><i class="sw" style="border-color:var(--pll)"></i> carrier <b>phase</b> loop / PLL</span>
+  <span><i class="sw" style="border-color:var(--fll)"></i> carrier <b>freq</b> loop / FLL</span>
+  <span><i class="sw" style="border-color:var(--aid)"></i> carrier aiding</span>
+  <span><i class="sw" style="border-color:var(--rep)"></i> NCO replica (feedback)</span>
+  <span><i class="sw dash" style="border-color:var(--ctl)"></i> state-machine control</span>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="s1">1 · System context <span class="id">scenario → IQ → dual-rate → chains → Δρ / PVT</span></h2>
+<p class="lede">One scenario file drives everything. The engine turns orbits + a receiver trajectory into
+per-SV Doppler / code-phase / C/N0 profiles; the generator bakes them into <em>one</em> 20.48&nbsp;MSPS
+baseband carrying C/A + L1C together; the receiver splits that stream by rate and runs two block families.</p>
+
+<div class="flow">
+  <div class="node scn"><div class="bid">scenario_engine</div><div class="t">Scenario <span class="k">.v2.json</span></div><div class="s">root of truth: platform trajectory, entities, environment, <span class="k">iq_gen</span></div></div>
+  <div class="arrowdiv">→</div>
+  <div class="node scn"><div class="bid">propagate_sv</div><div class="t">Engine profiles</div><div class="s">time-varying Doppler, code-phase, C/N0, visibility (light-time consistent)</div></div>
+  <div class="arrowdiv">→</div>
+  <div class="node scn"><div class="bid">gps_iq_gen</div><div class="t">Joint synthesis</div><div class="s"><span class="k">signals=["L1CA","L1CD","L1CP"]</span> on one carrier @ 20.48 MSPS</div></div>
+</div>
+
+<div class="callout" style="border-color:var(--aid)">
+  <div class="h">Dual-rate split &nbsp;<span class="note">(ADR-023 — mirrors the ADR-007 hardware ladder)</span></div>
+  The single 20.48&nbsp;MSPS joint stream fans into two rails. <b>L1C runs at native rate</b> (its 10&nbsp;ms /
+  10230-chip codes need the bandwidth); <b>C/A is decimated ÷5 to 4.096&nbsp;MSPS</b> through the
+  <span class="k">PL.DECIMATOR</span> golden (<span class="k">F_DECINT_5</span>, 301 taps). That FIR's
+  <b>150-input-sample group delay = 2195.7&nbsp;m</b> is compensated as a named constant in
+  <span class="k">PS.B13</span> — see §3.
+</div>
+
+<div class="col2">
+  <div class="lane ca">
+    <div class="h">C/A rail — 4.096 MSPS</div>
+    <div class="flow">
+      <div class="node ca"><div class="bid">PL.B1</div><div class="t">Bit-select 12→4</div></div>
+      <div class="node ca"><div class="bid">PL.B2</div><div class="t">PCPS acq</div><div class="s">FFT, peak1/peak2</div></div>
+      <div class="node ca"><div class="bid">PL.B3</div><div class="t">Correlator</div><div class="s">E/P/L, 1 kHz dump</div></div>
+      <div class="node ca"><div class="bid">PS.B4–B9</div><div class="t">Tracking loops</div><div class="s">DLL·PLL·FLL (§2)</div></div>
+      <div class="node ca"><div class="bid">PS.TLM</div><div class="t">Nav decode</div><div class="s">bit-sync→SF1/2/3, TOW</div></div>
+      <div class="node ca"><div class="bid">PS.B13</div><div class="t">Observables</div></div>
+    </div>
+  </div>
+  <div class="lane l1c">
+    <div class="h">L1C rail — 20.48 MSPS (native passthrough)</div>
+    <div class="flow">
+      <div class="node l1c"><div class="bid">PL.B2_L1C</div><div class="t">C/A-aided acq</div><div class="s">±500 Hz @ 50 Hz</div></div>
+      <div class="node l1c"><div class="bid">PL.B3_L1C</div><div class="t">Dual-lane corr</div><div class="s">pilot TMBOC+overlay / data BOC(1,1)</div></div>
+      <div class="node l1c"><div class="bid">PS.B4_L1C–B9_L1C</div><div class="t">Tracking loops</div><div class="s">FGI 3-state (§2, §4)</div></div>
+      <div class="node l1c"><div class="bid">PS.B13_L1C</div><div class="t">Observables</div><div class="s">10 ms cadence</div></div>
+    </div>
+    <div class="note">No CNAV-2 decode yet — the integer TOW epoch is <b>seeded from C/A</b> (§3).</div>
+  </div>
+</div>
+
+<div class="flow" style="margin-top:12px">
+  <div class="node"><div class="t">Δρ = ρ<sub>L1C</sub> − ρ<sub>C/A</sub></div><div class="s">at common 100 ms strobes, collected <b>live</b> (§3) · floor ±7.32 m (½ × 14.64 m sample) · judge the mean, attribute the std</div></div>
+  <div class="arrowdiv">·</div>
+  <div class="node ca"><div class="bid">PS.B12 / B12a</div><div class="t">PVT + RAIM</div><div class="s">WLS + Cholesky (C/A observables)</div></div>
+  <div class="arrowdiv">→</div>
+  <div class="node"><div class="bid">outputs.results</div><div class="t">results.json</div><div class="s">dashboard + Cesium viewer</div></div>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="s2">2 · The three loops around one correlator <span class="id">PL.B3 · PS.B4–B9</span></h2>
+
+<div class="intuition">
+<b>In plain terms.</b> There is <b>one sensor</b> — the correlator — and <b>three steering wheels</b>.
+The correlator slides a local replica of the satellite's code+carrier against the incoming signal and
+reports how well they line up (Early / Prompt / Late taps, each with I and Q). Each loop reads a
+<em>different feature</em> of that one report and turns a <em>different knob</em>:
+<span class="tag fll">FLL</span> reads how fast the prompt vector is <em>spinning</em> (frequency) →
+steers the carrier NCO coarsely; <span class="tag pll">PLL</span> reads its <em>angle</em> (phase) →
+steers the carrier NCO finely; <span class="tag code">DLL</span> reads Early-vs-Late <em>balance</em>
+(code alignment) → steers the code NCO. The magic that makes it stable is the purple wire:
+the carrier loop's speed estimate is <b>handed to</b> the code loop (<b>carrier aiding</b>), so the code
+loop barely has to chase dynamics — it only cleans up the residual. Remove that wire and the DLL has to
+track the full Doppler on its own and falls apart. This is the same topology for both rails; only the
+block IDs, the rates, and the discriminator details differ.</div>
+
+<div class="diagram">
+<svg viewBox="0 0 1160 760" role="img" aria-label="Single tracking channel: DLL, PLL, FLL loops around the correlator with carrier aiding and state-machine control">
+  <defs>
+    <marker id="aCode" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--code)"/></marker>
+    <marker id="aPll"  markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--pll)"/></marker>
+    <marker id="aFll"  markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--fll)"/></marker>
+    <marker id="aAid"  markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--aid)"/></marker>
+    <marker id="aRep"  markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--rep)"/></marker>
+    <marker id="aCtl"  markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--ctl)"/></marker>
+    <marker id="aInk"  markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--muted)"/></marker>
+  </defs>
+
+  <!-- ===== boxes ===== -->
+  <!-- input -->
+  <text x="12" y="357" class="svglabel" font-size="11" fill="var(--muted)">carrier-wiped</text>
+  <text x="12" y="371" class="svglabel" font-size="11" fill="var(--muted)">IQ in</text>
+  <line x1="10" y1="378" x2="55" y2="378" stroke="var(--muted)" stroke-width="2" marker-end="url(#aInk)"/>
+
+  <!-- correlator -->
+  <rect x="55" y="250" width="185" height="235" rx="8" fill="var(--box)" stroke="var(--boxb)" stroke-width="2"/>
+  <text x="147" y="278" text-anchor="middle" class="svglabel" font-size="13">CORRELATOR</text>
+  <text x="147" y="296" text-anchor="middle" font-size="11" fill="var(--muted)">PL.B3 / PL.B3_L1C</text>
+  <text x="147" y="330" text-anchor="middle" font-size="12">E &nbsp; P &nbsp; L</text>
+  <text x="147" y="346" text-anchor="middle" font-size="11" fill="var(--muted)">(I,Q each)</text>
+  <text x="147" y="372" text-anchor="middle" font-size="10.5" fill="var(--l1c)">L1C: pilot lane</text>
+  <text x="147" y="386" text-anchor="middle" font-size="10.5" fill="var(--l1c)">TMBOC + overlay-wipe</text>
+  <text x="147" y="400" text-anchor="middle" font-size="10.5" fill="var(--l1c)">data lane BOC(1,1)</text>
+  <text x="147" y="470" text-anchor="middle" font-size="10.5" fill="var(--muted)">1 kHz (C/A) · 10 ms (L1C)</text>
+
+  <!-- B9 lock -->
+  <rect x="325" y="42" width="175" height="62" rx="7" fill="var(--box)" stroke="var(--boxb)"/>
+  <text x="412" y="66" text-anchor="middle" class="svglabel" font-size="12">PS.B9</text>
+  <text x="412" y="82" text-anchor="middle" font-size="10.5" fill="var(--muted)">C/N0 (M2M4)</text>
+  <text x="412" y="95" text-anchor="middle" font-size="10.5" fill="var(--muted)">lock: PLI · NBPW</text>
+
+  <!-- state machine -->
+  <rect x="545" y="30" width="450" height="90" rx="7" fill="var(--box)" stroke="var(--ctl)" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="770" y="54" text-anchor="middle" class="svglabel" font-size="13">STATE MACHINE &nbsp;·&nbsp; PS.B7</text>
+  <text x="770" y="72" text-anchor="middle" font-size="11">PULL_IN → COARSE/TRACKING → FINE/LOCKED</text>
+  <text x="770" y="90" text-anchor="middle" font-size="10.5" fill="var(--muted)">reprograms: PLL BW · FLL BW &amp; enable · DLL BW · <tspan fill="var(--code)">E-L spacing</tspan></text>
+  <text x="770" y="106" text-anchor="middle" font-size="10.5" fill="var(--muted)">gated by the PS.B9 indicators (see §4)</text>
+
+  <!-- FLL disc -->
+  <rect x="330" y="176" width="180" height="58" rx="7" fill="var(--box)" stroke="var(--fll)" stroke-width="2"/>
+  <text x="420" y="198" text-anchor="middle" class="svglabel" font-size="12" fill="var(--fll)">PS.B8 · FLL disc</text>
+  <text x="420" y="213" text-anchor="middle" font-size="10.5" fill="var(--muted)">cross-dot atan2 (BPSK²)</text>
+  <text x="420" y="227" text-anchor="middle" font-size="9.5" fill="var(--muted)">L1C: err clipped ±40 Hz (alias reject)</text>
+
+  <!-- PLL disc -->
+  <rect x="330" y="326" width="180" height="58" rx="7" fill="var(--box)" stroke="var(--pll)" stroke-width="2"/>
+  <text x="420" y="350" text-anchor="middle" class="svglabel" font-size="12" fill="var(--pll)">PS.B6 · PLL disc</text>
+  <text x="420" y="368" text-anchor="middle" font-size="10.5" fill="var(--muted)">Costas atan(Q/I)</text>
+
+  <!-- DLL disc -->
+  <rect x="330" y="520" width="180" height="60" rx="7" fill="var(--box)" stroke="var(--code)" stroke-width="2"/>
+  <text x="420" y="544" text-anchor="middle" class="svglabel" font-size="12" fill="var(--code)">PS.B4 · DLL disc</text>
+  <text x="420" y="562" text-anchor="middle" font-size="10.5" fill="var(--muted)">norm (|E|−|L|)/(|E|+|L|)</text>
+
+  <!-- carrier loop filter -->
+  <rect x="560" y="250" width="185" height="120" rx="7" fill="var(--box)" stroke="var(--pll)" stroke-width="2"/>
+  <text x="652" y="288" text-anchor="middle" class="svglabel" font-size="12" fill="var(--pll)">CARRIER LOOP FILTER</text>
+  <text x="652" y="305" text-anchor="middle" font-size="11" fill="var(--muted)">PS.B7 · 3rd-order PLL</text>
+  <text x="652" y="321" text-anchor="middle" font-size="11" fill="var(--fll)">+ FLL assist</text>
+  <text x="652" y="345" text-anchor="middle" font-size="10.5" fill="var(--muted)">PULL_IN: FLL only,</text>
+  <text x="652" y="358" text-anchor="middle" font-size="10.5" fill="var(--muted)">PLL output zeroed</text>
+
+  <!-- code loop filter -->
+  <rect x="560" y="520" width="185" height="60" rx="7" fill="var(--box)" stroke="var(--code)" stroke-width="2"/>
+  <text x="652" y="544" text-anchor="middle" class="svglabel" font-size="12" fill="var(--code)">CODE LOOP FILTER</text>
+  <text x="652" y="562" text-anchor="middle" font-size="10.5" fill="var(--muted)">PS.B5 · 2nd-order, ζ=0.707</text>
+
+  <!-- carrier NCO -->
+  <rect x="805" y="280" width="150" height="70" rx="7" fill="var(--box)" stroke="var(--pll)" stroke-width="2"/>
+  <text x="880" y="308" text-anchor="middle" class="svglabel" font-size="12">CARRIER NCO</text>
+  <text x="880" y="326" text-anchor="middle" font-size="10.5" fill="var(--muted)">freq = base + adj</text>
+  <text x="880" y="340" text-anchor="middle" font-size="10" fill="var(--muted)">(total-correction, not current+adj)</text>
+
+  <!-- code NCO -->
+  <rect x="805" y="515" width="150" height="70" rx="7" fill="var(--box)" stroke="var(--code)" stroke-width="2"/>
+  <text x="880" y="540" text-anchor="middle" class="svglabel" font-size="12">CODE NCO</text>
+  <text x="880" y="558" text-anchor="middle" font-size="9.5" fill="var(--muted)">freq = R_c + carrier·SF − adj</text>
+  <text x="880" y="571" text-anchor="middle" font-size="9.5" fill="var(--muted)">(DLL correction subtracted)</text>
+
+  <!-- ===== signal arrows: correlator outputs ===== -->
+  <!-- P -> B9 -->
+  <polyline points="240,300 300,300 300,73 325,73" fill="none" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#aInk)"/>
+  <text x="248" y="293" font-size="10.5" fill="var(--muted)">P</text>
+  <!-- P(k,k-1) -> FLL -->
+  <polyline points="240,315 296,315 296,205 330,205" fill="none" stroke="var(--fll)" stroke-width="1.8" marker-end="url(#aFll)"/>
+  <text x="248" y="309" font-size="10.5" fill="var(--fll)">Pₖ,Pₖ₋₁</text>
+  <!-- P -> PLL -->
+  <polyline points="240,355 330,355" fill="none" stroke="var(--pll)" stroke-width="1.8" marker-end="url(#aPll)"/>
+  <text x="255" y="348" font-size="10.5" fill="var(--pll)">P (I,Q)</text>
+  <!-- E,L -> DLL -->
+  <polyline points="240,430 292,430 292,550 330,550" fill="none" stroke="var(--code)" stroke-width="1.8" marker-end="url(#aCode)"/>
+  <text x="248" y="424" font-size="10.5" fill="var(--code)">E, L</text>
+
+  <!-- disc -> filter -->
+  <polyline points="510,205 535,205 535,300 560,300" fill="none" stroke="var(--fll)" stroke-width="1.8" marker-end="url(#aFll)"/>
+  <text x="516" y="198" font-size="10.5" fill="var(--fll)">freq err</text>
+  <polyline points="510,355 535,355 535,330 560,330" fill="none" stroke="var(--pll)" stroke-width="1.8" marker-end="url(#aPll)"/>
+  <text x="516" y="372" font-size="10.5" fill="var(--pll)">phase err</text>
+  <polyline points="510,550 560,550" fill="none" stroke="var(--code)" stroke-width="1.8" marker-end="url(#aCode)"/>
+  <text x="516" y="543" font-size="10.5" fill="var(--code)">code err</text>
+
+  <!-- filter -> NCO -->
+  <polyline points="745,310 805,312" fill="none" stroke="var(--pll)" stroke-width="1.8" marker-end="url(#aPll)"/>
+  <polyline points="745,550 805,550" fill="none" stroke="var(--code)" stroke-width="1.8" marker-end="url(#aCode)"/>
+
+  <!-- NCO -> observables (out) -->
+  <line x1="955" y1="315" x2="1010" y2="315" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#aInk)"/>
+  <text x="962" y="308" font-size="10" fill="var(--muted)">carrier φ,f</text>
+  <line x1="955" y1="550" x2="1010" y2="550" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#aInk)"/>
+  <text x="962" y="543" font-size="10" fill="var(--muted)">code φ</text>
+  <text x="1012" y="435" font-size="10.5" fill="var(--muted)" transform="rotate(90 1012 435)">→ PS.B13 observables</text>
+
+  <!-- ===== CARRIER AIDING (the key coupling) ===== -->
+  <polyline points="880,350 880,515" fill="none" stroke="var(--aid)" stroke-width="3" stroke-dasharray="7 4" marker-end="url(#aAid)"/>
+  <text x="893" y="410" font-size="11.5" fill="var(--aid)" font-weight="700">CARRIER AIDING</text>
+  <text x="893" y="426" font-size="10.5" fill="var(--aid)">carrier Doppler × SF</text>
+  <text x="893" y="440" font-size="10.5" fill="var(--aid)">SF = R_c/f_L = 6.493e-4</text>
+  <text x="893" y="454" font-size="10" fill="var(--muted)">(code loop inherits the</text>
+  <text x="893" y="467" font-size="10" fill="var(--muted)">dynamics — tracks only residual)</text>
+
+  <!-- ===== replicas (feedback) ===== -->
+  <!-- carrier replica: from carrier NCO down/left to correlator left @315 -->
+  <polyline points="825,350 825,672 34,672 34,315 55,315" fill="none" stroke="var(--rep)" stroke-width="1.8" marker-end="url(#aRep)"/>
+  <text x="360" y="666" font-size="10.5" fill="var(--rep)">carrier replica (base+adj) → de-rotate / wipeoff</text>
+  <!-- code replica: from code NCO down/left to correlator left @410 -->
+  <polyline points="835,585 835,712 22,712 22,410 55,410" fill="none" stroke="var(--rep)" stroke-width="1.8" marker-end="url(#aRep)"/>
+  <text x="360" y="706" font-size="10.5" fill="var(--rep)">code replica → shifts the E / P / L taps</text>
+
+  <!-- ===== control (state machine) ===== -->
+  <!-- B9 -> state machine -->
+  <polyline points="500,73 545,73" fill="none" stroke="var(--ctl)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aCtl)"/>
+  <text x="503" y="66" font-size="10" fill="var(--ctl)">C/N0,LI,PLI</text>
+  <!-- SM -> carrier LF (BW) -->
+  <polyline points="640,120 640,250" fill="none" stroke="var(--ctl)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aCtl)"/>
+  <text x="646" y="150" font-size="10" fill="var(--ctl)">PLL/FLL BW</text>
+  <!-- SM -> code LF (BW) -->
+  <polyline points="720,120 720,470 700,470 700,520" fill="none" stroke="var(--ctl)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aCtl)"/>
+  <text x="726" y="150" font-size="10" fill="var(--ctl)">DLL BW</text>
+  <!-- SM -> correlator (E-L spacing) -->
+  <polyline points="545,100 150,100 150,250" fill="none" stroke="var(--code)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aCode)"/>
+  <text x="156" y="150" font-size="10.5" fill="var(--code)">E-L spacing</text>
+  <text x="156" y="164" font-size="9.5" fill="var(--muted)">(per-state values — §4)</text>
+
+</svg>
+</div>
+
+<p class="note">Read it as three feedback rings sharing the correlator: <span class="tag fll">FLL</span> and
+<span class="tag pll">PLL</span> both steer the <b>carrier NCO</b> (green replica returns to de-rotate the
+input); <span class="tag code">DLL</span> steers the <b>code NCO</b> (green replica shifts the E/P/L taps).
+The purple <span class="tag aid">aiding</span> wire is the only link <em>between</em> the carrier and code
+rings — it is what lets the DLL run at 0.5–2 Hz while the signal Dopplers by kHz. The gray dashed wires
+are not signal: they are the state machine <em>reprogramming</em> loop bandwidths and the E-L spacing as
+lock is gained.</p>
+
+<div class="callout" style="border-color:var(--pll)">
+  <div class="h">Two conventions that have each cost a day <span class="note">(see gps-l1c.md §3, gps-tracking.md)</span></div>
+  <b>Carrier NCO is total-correction:</b> <span class="k">freq = base + adj</span>, never
+  <span class="k">current + adj</span> — the incremental form is a type-IV divergence (symptom:
+  COARSE↔PULL_IN oscillation, PLI stuck ≈0.5). &nbsp;·&nbsp;
+  <b>DLL sign is negated:</b> code behind signal ⇒ L&gt;E ⇒ discriminator&lt;0 ⇒ the rate correction is
+  <em>subtracted</em> to speed the code up.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="s3">3 · How the two rails are wired together <span class="id">C/A → L1C seeding · dual-rate · Δρ</span></h2>
+<div class="intuition">
+<b>In plain terms.</b> L1C doesn't cold-start on its own here — <b>C/A does the hard part first</b>, then
+hands L1C a warm start. C/A's tracked Doppler tells L1C's FLL where to point (its pull-in window is only
+±25 Hz); C/A's decoded time-of-week tells L1C which overlay chip and which 10 ms epoch it's looking at
+(L1C has no CNAV-2 decode yet). The two rails live on different clocks, so the C/A decimator's fixed delay
+must be booked back before their pseudoranges are compared.</div>
+
+<table>
+  <tr><th style="width:20%">Link</th><th style="width:34%">What crosses C/A → L1C</th><th>Why it exists / the failure it prevents</th></tr>
+  <tr>
+    <td><span class="tag fll">carrier seed</span></td>
+    <td>C/A <b>tracked</b> Doppler (sub-Hz within ~2 s) seeds the L1C FLL — <em>not</em> an acquisition-grid value.</td>
+    <td>L1C FLL pull-in ≈ <b>±25 Hz</b>. The C/A acq grid (500 Hz) + L1C aided grid (50 Hz) can hand it 73 Hz of error → permanent COARSE/PULL_IN cycling.</td>
+  </tr>
+  <tr>
+    <td><span class="tag" style="background:var(--l1c)">overlay seed</span></td>
+    <td><span class="k">overlay_index = round(tow_ca(t₀)/10ms) mod 1800</span></td>
+    <td>The acquisition default (overlay hypothesis 0) is correct only at stream start; wrong everywhere else → corrupted pilot wipeoff.</td>
+  </tr>
+  <tr>
+    <td><span class="tag" style="background:var(--l1c)">time anchor</span></td>
+    <td>integer epoch <span class="k">k = round((tow_ca − sub)/10ms)</span>; sub-epoch <span class="k">sub = (code_phase mod 10230)/1.023e6</span> stays <b>L1C-measured</b>.</td>
+    <td>C/A supplies only the coarse integer 10 ms; the fine part is L1C's own code phase. Cloning the whole label makes Δρ ≡ 0 by construction (a real trap hit twice this thread).</td>
+  </tr>
+  <tr>
+    <td><span class="tag aid">dual-rate delay</span></td>
+    <td>C/A t_rx label gets the <span class="k">PL.DECIMATOR</span> group delay subtracted: <b>150 in-samples = 2195.7 m</b>, a named constant in PS.B13.</td>
+    <td>A wrong/missing compensation shows in Δρ as a fixed ~73 m·k ramp — that <em>is</em> the ADR-023 acceptance gate.</td>
+  </tr>
+  <tr>
+    <td><span class="tag code">Δρ readout</span></td>
+    <td>ρ<sub>L1C</sub> − ρ<sub>C/A</sub> at common 100 ms strobes, <b>collected live during the run</b>.</td>
+    <td>Floor is <b>±7.32 m</b> = ½ × 14.64 m (one 20.48 MSPS sample) — a <em>label-quantization</em> floor. Judge the mean; attribute the std, never tune it. <b>Never strobe post-hoc:</b> <span class="k">interp_tow_at</span> rate-extrapolates from the newest two TOW labels, so querying after the run back-extrapolates every strobe from the end-of-run label pair — Δρ becomes a linear ramp vanishing at t_end (~0.7 ns of final-pair label jitter → ~220 m at a 22 s lever arm). This artifact was the entire "failing" F6 gate (see §4 note).</td>
+  </tr>
+</table>
+
+<!-- ============================================================= -->
+<h2 id="s4">4 · The state machine as loop-parameter scheduler <span class="id">what each phase programs</span></h2>
+<div class="intuition">
+<b>In plain terms.</b> The three loops don't use fixed settings — a supervisor widens everything to grab
+the signal, then tightens it for precision once locked. This table <em>is</em> the coupling between the
+loops and the lock detector: PS.B9's indicators decide the phase; the phase sets every loop's bandwidth
+and the correlator's E-L spacing. The two rails schedule differently: C/A uses the hard-switch heritage
+machine, L1C ports the FGI-GSRx 3-state machine (indicator-thresholded, no dwell timers) — which is why
+L1C passes through PULL_IN/COARSE in tens of milliseconds.</div>
+
+<table>
+  <tr>
+    <th>Phase</th>
+    <th class="c">Carrier loop</th>
+    <th class="c">Code loop (DLL)</th>
+    <th class="c">E-L half-spacing<br>(open_sky)</th>
+    <th>Enters when (PS.B9)</th>
+  </tr>
+  <tr>
+    <td><b>PULL_IN</b><br><span class="note">C/A &amp; L1C</span></td>
+    <td class="c"><span class="tag fll">FLL only</span> — PLL output zeroed<br><span class="note">C/A 15 Hz · L1C 5 Hz (err clip ±40 Hz)</span></td>
+    <td class="c">DLL 2 Hz (C/A)<br>1 Hz (L1C)</td>
+    <td class="c">C/A <b>0.5</b><br>L1C <b>0.5</b>†</td>
+    <td>start / re-entry on lock loss</td>
+  </tr>
+  <tr>
+    <td><b>COARSE / TRACKING</b></td>
+    <td class="c"><span class="tag pll">3rd-order PLL</span> + <span class="tag fll">FLL assist</span><br><span class="note">C/A 18 + 2 Hz · L1C 5 + 2 Hz</span></td>
+    <td class="c">DLL 2 Hz (C/A)<br>1 Hz (L1C)</td>
+    <td class="c">C/A <b>0.5</b><br>L1C <b>0.12</b>†</td>
+    <td>C/A: FLL locked + P/max(E,L) &gt; 1.3<br><span class="note">L1C: fll_lock ≥ 0.5 (wide)</span></td>
+  </tr>
+  <tr>
+    <td><b>FINE / LOCKED</b></td>
+    <td class="c"><span class="tag pll">PLL</span> 5 Hz<br><span class="note">C/A: FLL off · L1C: FLL 1 Hz</span></td>
+    <td class="c">DLL 0.5 Hz (C/A)<br>1 Hz (L1C)</td>
+    <td class="c">C/A <b>0.5</b><br>L1C <b>0.04</b></td>
+    <td>C/A: CN0≥25 &amp; LI≥0.6 &amp; PLI≥0.85 for 100 ms<br><span class="note">L1C: fll_lock ≥ 0.7 &amp; pll_lock ≥ 0.8 (80 ms avg)</span></td>
+  </tr>
+</table>
+
+<div class="callout" style="border-color:var(--code)">
+  <div class="h">† The L1C per-state spacing schedule is a dead man walking — and the "failing" gate it was
+  meant to fix was never a tracking problem</div>
+  <p style="margin:6px 0"><b>Resolution (2026-07-03, thread receiver/20260703-l1c-code-seed-rootcause):</b>
+  the closing Δρ gate that drove the whole spacing hunt was measuring its own <em>evaluator</em>, not the
+  receiver. Instrumented replays show the tracker holding physical code error within <b>~±1 m for the entire
+  60 s run</b> and the acquisition seeding within <b>0.040 chips worst-case</b> (232/232 probes, zero
+  side-peak captures) — while the post-hoc gate read +116/+15/+1.5/+67 m. The gate queried
+  <span class="k">interp_tow_at</span> after the run and silently back-extrapolated every strobe from the
+  end-of-run label pair (§3, Δρ row). Strobed live, the same runs sit inside the ±7.32 m floor. The earlier
+  seed-side-peak hypothesis (and fixes A/B/C: C/A code-phase seed · bump-jumping · BOC-robust
+  discriminator) is <b>refuted</b>; the routed fix is a backward-extrapolation guard in PS.B13 plus a
+  live-strobe gate evaluator (plan-02 of that thread).</p>
+  <p style="margin:6px 0"><b>The TMBOC spacing geometry itself is still real physics</b> (real-Weil-code
+  S-curves, receiver's own replica): the pilot ACF's main-peak capture region is <b>±0.336 chip</b> (first
+  zero ±0.352, vs C/A ±1.0), with stable false-lock equilibria near <b>±0.56 / ±0.71 chip (≈164 / 208 m)</b>.
+  The normalized envelope discriminator slope is only weakly spacing-dependent where the geometry is sane
+  (0.75× as half-spacing doubles 0.04→0.08) — but it <em>collapses ~40×</em> at <b>d = 0.12</b> (an ACF
+  shoulder: D′(0) ≈ −0.16) and <em>inverts</em> at <b>d = 0.5</b> (D′(0) ≈ +2.09 — the origin is unstable and
+  the DLL parks at ±0.269 chip). So the schedule above (0.5 → 0.12 → 0.04) is geometrically unsound in its
+  first two states; it survives in practice only because the FGI state machine passes them in ~30 ms. The
+  oracle (FGI-GSRx <span class="k">corrFingers,[-2 -0.04 0 0.04]</span>) runs <b>fixed ±0.04 in all states</b>,
+  and the acquisition's 0.040-chip worst-case seed gives that an <b>8.4× capture margin</b> — the pending
+  revert restores fixed 0.04. C/A needs none of this: its single-peaked triangle ACF makes 0.5 valid
+  everywhere (open_sky pins pull_in = locked = 0.5; only <em>urban</em> narrows, 0.5→0.25).</p>
+  <span class="note">History: q-04→q-06 of thread cross-cutting/20260701-l1c-scenario-integration (closed
+  gate-incomplete) chased spacing; the follow-on root-cause thread refuted the premise. Findings:
+  <span class="k">.threads/receiver/20260703-l1c-code-seed-rootcause/findings-2026-07-03-*.md</span>.</span>
+</div>
+
+<p class="foot">
+Block IDs and topology are canonical from <span class="k">shared-interfaces.json</span>,
+<span class="k">receiver-block-profiles.json</span>, and the gps-design skill chapters
+<span class="k">gps-l1c.md</span> / <span class="k">gps-tracking.md</span>. Discriminator/filter choices are the
+6-implementation consensus recorded in <span class="k">.research/session-20260405-*</span>. Numbers
+(bandwidths, spacings, ±25 Hz pull-in, ±40 Hz clip, 2195.7 m group delay, ±7.32 m Δρ floor) are the
+open_sky / gpsl1c_open_sky / ADR-023 values, verified against
+<span class="k">receiver-block-profiles.json</span> on 2026-07-03 (branch
+<span class="k">l1c-scenario-integration</span>; the L1C spacing schedule shown carries the pending
+fixed-0.04 revert flagged in §4) — verify against the JSON stack before quoting, as tuning values drift.
+This is a hand-authored teaching view, not a generated artifact.
+</p>
+
+</div>
+</body>
+</html>

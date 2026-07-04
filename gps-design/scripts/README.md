@@ -9,7 +9,7 @@ parallel copy — the project is the source of truth.
 Path pattern:
 
 ```
-gps_receiver/threads/<subsystem>/<slug>/diagnostics/
+.threads/<subsystem>/<slug>/diagnostics/
 ```
 
 Highest-value examples as of 2026-04-24:
@@ -35,7 +35,7 @@ Highest-value examples as of 2026-04-24:
 
 ## When you need to write a new diagnostic
 
-1. Open a thread under `gps_receiver/threads/<subsystem>/<slug>/`
+1. Open a thread under `.threads/<subsystem>/<slug>/`
    via the `threads` skill if one doesn't already exist for your
    investigation.
 2. Put the script under that thread's `diagnostics/`.

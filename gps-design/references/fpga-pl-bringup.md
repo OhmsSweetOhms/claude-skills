@@ -1,172 +1,175 @@
 # FPGA PL bring-up
 
 This chapter covers the FPGA fabric (PL) side of the GPS receiver
-pipeline — hardware targets, decimation chain, verification framework,
-HIL substrate, and the per-PL-block thread structure that drives
-implementation.
+pipeline — the active hardware substrate, the rate-conversion ladder,
+the verification gate stack, the HIL substrate pattern, and the
+per-PL-block structure that drives implementation.
 
 The PL side translates the Python golden models in
-`gps_receiver/blocks/pl_*.py` into VHDL, validates against xsim
-testbenches that consume Python-model expected outputs, exercises the
-RTL via a hardware streaming substrate, and graduates each block to a
-SOCKS module for reuse.
+`gps_receiver/blocks/pl_*.py` into VHDL, gates each block **bit-exact
+(`max_abs_lsb=0`) against its Python fixed-point golden**, exercises
+the RTL on the ZCU102 streaming HIL substrate, and graduates each
+block to a SOCKS module for reuse. Live thread/phase status is NOT
+here — query `.threads/threads.json`; the durable per-block design
+record is `docs/architecture/zynq-pl/<block>/` (schema authority:
+`docs/architecture/README.md`).
 
-## Hardware target matrix
+## Hardware target matrix (ADR-007 era)
 
-The receiver supports three hardware platforms; PL block VHDL must
-remain portable across all three.
+| Role | Platform | RX path | C/A boundary |
+|------|----------|---------|--------------|
+| **Active substrate** | ZCU102 + AD9986-FMCA, profile `2048-quad-band-jesd204b-rxm8l2-txm8l4` | 1.96608 GHz ADC clock, exact GPS L1 NCO, **RX 20.48 MSPS native** over JESD204B (mode 4 M=8/L=2); TX 81.92 MSPS (mode 9 M=8/L=4); both ports on a GTH4 CPLL static family @ 204.8 MHz refclk | 4.096 MSPS via the **/5** decimator tap; **L1C consumes the 20.48 MSPS rail as passthrough** (no decimation) |
+| Divergent small-fabric target | MicroZed Zynq-7020 + AD9361 (the original concept; survives in the target matrix, not the active path) | 61.44 MSPS LVDS | /15 = /3 × /5 cascade |
 
-| Platform | OSC | PL sample rate | Decimation chain | PL.DECIMATOR? | PL fabric clock |
-|----------|-----|----------------|------------------|---------------|-----------------|
-| **ZCU102** + AD9986-FMC (Zynq UltraScale+ MPSoC, xczu9eg) | **122.88 MHz** | 4.096 MSPS GPS app boundary; JESD rate is profile-dependent | AD9986 CDDC/FDDC plus PL-side rate conversion; clean L1 profiles use RX `/15` + TX `x30` at 61.44/122.88 MSPS, or `/60` + `x60` at 245.76 MSPS | **Instantiated as profile requires** around the GPS app boundary | Profile-dependent: 61.44/122.88/245.76 MHz boundaries |
-| **Zynq-7030** + FMCOMMS-5 (xc7z030, dual AD9361) | **61.44 MHz** | 61.44 MSPS (LVDS DDR via `axi_ad9361`) | PL.DECIMATOR: **/15 = /3 × /5** | **Instantiated** | MMCM-synth (typ. 100-122.88 MHz) |
-| **Zedboard** + FMCOMMS-5 (xc7z020, dual AD9361) | **61.44 MHz** | 61.44 MSPS (LVDS DDR via `axi_ad9361`) | PL.DECIMATOR: **/15 = /3 × /5** | **Instantiated** | MMCM-synth (typ. 100-122.88 MHz) |
+Authority: **ADR-001/ADR-007** in `docs/decision-log.md` (ADR-007
+supersedes the ADR-005 clean-6144 ladder). Do not trust rate figures
+from memory or older docs — the whole 61.44 MSPS substrate family
+(×30//15, ×6//3, ×2/passthrough) is preserved archaeology, not the
+active path. The 122.88 MSPS TX sibling profile (txm8l8) is **dropped,
+not deferred** — it failed hardware on RX/JTX CGS via the ADI
+`util_mxfe_xcvr` global-static-parameter pitfall (see ADR-007). For
+converter-clock / NCO / JESD math read
+`references/ad9986-gps-nco-frequency-planning.md`.
 
-Why 122.88 MHz specifically: it is the **only** LTE-family clock rate
-that gives integer-exact /30 decimation to 4.096 MSPS with a clean
-prime factorization (2 × 3 × 5). 100 MHz, 120 MHz, and 125 MHz all
-produce non-integer ratios, which would require fractional decimation
-or fractional NCO error tolerance throughout the chain.
+## Rate conversion: the parametric (×N, /M) ladder
 
-The 3 x 5 = 15 core is shared between the AD9361 and the verified
-61.44 MSPS AD9986 clean-L1 RX path. AD9986 TX and higher-rate profiles
-need different PL-side factors. Use
-`references/ad9986-gps-nco-frequency-planning.md` for the current
-AD9986 converter-clock, JESD, CDDC/FDDC, CDUC/FDUC, and PL rate-change
-rules before authoring or validating a ZCU102 profile.
+PL.INTERPOLATOR / PL.DECIMATOR are one parametric block family, not
+per-rate one-offs. Active instances: **/5** (RX 20.48 → 4.096 MSPS,
+filter **F_DECINT_5**: 301 taps, Kaiser β 5.653, group delay 150
+input samples) and **×20** TX-side; the /3 prototype (F_DEC_3, 101
+taps) is the first stage of the archaeological /15 cascade and the
+20.48 MSPS single-stage tap.
 
-## PL block list (post-2026-04-24)
+- **FIR design authority:** `.threads/fpga/20260424-pl-decimator/`
+  (`pl-decimator-fir-design.md` + `pl-fir-coeffs-f_decint_5.csv` /
+  `pl-fir-coeffs-f_dec_3.csv`) co-designed with
+  `.threads/fpga/20260507-pl-interpolator/` (shared reproducer
+  `pl-fir-design.py`). **Never re-derive these coefficients** — every
+  consumer (RTL FIR Compiler config, the Python decimator golden of
+  ADR-023, tests) loads from this single authority.
+- The /5 group delay (150 input samples = 30 output samples ≈
+  2195.7 m) is a REAL receiver timing term compensated as a named
+  constant in PS.B13 labeling — see `references/gps-l1c.md` §6 and
+  ADR-023. One 4.096 MSPS sample = 73.19 m; hard requirement #2
+  (nanoseconds matter) applies.
 
-| Block | Python golden model | Notes |
-|-------|---------------------|-------|
-| PL.B1 — Dynamic Bit Select | `gps_receiver/blocks/pl_b1_bit_select.py` | 12 → 4/2 bit power-window quantizer. Simplest PL block. |
-| PL.DECIMATOR | *(no Python model — RF layer)* | Multi-tap FIR /15 (AD9361 platforms only). Vendor-IP-first via Xilinx FIR Compiler. |
-| PL.B2 — PCPS FFT acquisition | `gps_receiver/blocks/pl_b2_acquisition.py` | 4096-pt FFT, non-coherent dwell accumulation. Vendor-IP-first via Xilinx FFT IP. |
-| PL.B3 — Time-shared 12-channel correlator | `gps_receiver/blocks/pl_b3_correlator.py` | E/P/L correlator, sample-serial channel-serial scheduling. Most architecturally complex. |
-| PL.B3a — Bit-sync histogram | `gps_receiver/blocks/pl_b3a_bit_sync_histogram.py` | Faithful port of GNSS-SDR `bit_synchronizer.cc`. Sub-block of PL.B3. |
-| ~~PL.RF_IF~~ | n/a | RETIRED. ADI HDL reference designs (`ad9986_fmca/zcu102` for AD9986; FMCOMMS-5 reference for AD9361) own the RF ingest path. We tap into ADI streaming pipelines at the FIFO boundary, not the LVDS/JESD boundary. |
+## PL block inventory
 
-PL.B3 compute budget on ZCU102: 122.88 MHz fabric / 4.096 MSPS sample
-= 30 fabric cycles per sample. 12 channels × 3 taps × 2 IQ = 72 MAC
-slots per sample → 2.4 ops/cycle. Trivial for a pipelined MAC. Same
-budget appears at the 4.096 MSPS boundary on AD9361 platforms (where
-fabric is MMCM-synthesized; PL.DECIMATOR converts 61.44 MSPS → 4.096
-MSPS upstream).
+| Block | Python golden | Durable home | Notes |
+|-------|---------------|--------------|-------|
+| PL.B1 — dynamic bit select | `gps_receiver/blocks/pl_b1_bit_select.py` | `docs/architecture/zynq-pl/pl-b1-bit-select/` | 12 → 4/2-bit power-window quantizer; also owns `PreQuantizedIQSource`/cursor infrastructure the receiver driver loop uses. The worked per-block doc template. |
+| PL.B2 — PCPS acquisition | `gps_receiver/blocks/pl_b2_acquisition.py` (`backend="fixed_point"` is the RTL vector authority) | `docs/architecture/zynq-pl/pl-b2-acquisition/` | 4096-pt **authored R2²SDF FFT** (ADR-PL-B2-003 — NOT the Xilinx FFT IP; the vendor-IP-first assumption was superseded). r2/r22 fixed-point schedules: one golden per RTL config — see `references/gps-acquisition.md`. |
+| PL.B3 — time-shared 12-ch correlator | `gps_receiver/blocks/pl_b3_correlator.py` (`accel_backend="fixed_point"` = vector authority) | `docs/architecture/zynq-pl/pl-b3-correlator/` | E/P/L I/Q, 1 kHz dump; R5_1 is the sole dump drainer (ADR-011). |
+| PL.B3a — bit-sync histogram | `gps_receiver/blocks/pl_b3a_bit_sync_histogram.py` | (sub-block of PL.B3) | GNSS-SDR `bit_synchronizer.cc` port. |
+| PL.INTERPOLATOR / PL.DECIMATOR | ADR-023 adds the Python /5 decimator golden (dual-use: scenario receiver + RTL reference) | `.threads/fpga/20260424-pl-decimator/`, `20260507-pl-interpolator/` | Parametric ladder, above. |
+| PL.PPS | — | `docs/architecture/zynq-pl/pl-pps/` | Timing/PPS block; see its block.json/spec.md. |
+| Future L1C lanes | see `references/gps-l1c.md` | — | PL.B3_L1C is a distinct LANE_COUNT=2 instantiation (pilot TMBOC + data BOC11), NOT a parameterized PL.B3. |
+| ~~PL.RF_IF~~ | n/a | — | RETIRED — ADI HDL reference designs own RF ingest; we tap ADI streaming pipelines at the FIFO boundary. |
 
-## Verification framework: xsim, not cocotb
+Fixed-point backends are instantiated **directly** by tests and
+vector generators, never through `GPSReceiver` (the receiver-level
+sim path stays floating-point).
 
-The project standardizes on **Vivado xsim with SystemVerilog
-testbenches** across all SOCKS modules (usart, can, i2c, spi, sdlc,
-dpll_v5 — and now the GPS PL blocks). Cocotb was considered and
-rejected on consistency grounds: introducing a second simulator +
-Python cosim runtime would split the toolchain across the project.
+## Verification gate stack (in order; each is load-bearing)
 
-The replacement pattern preserves Python-golden-model verification
-without cocotb:
+1. **Bit-exact sim:** Vivado **xsim + SystemVerilog testbenches**
+   consuming Python-golden expected-output files; pass =
+   `max_abs_lsb=0` over the full stimulus. Cocotb was considered and
+   rejected (second simulator + cosim runtime splits the toolchain);
+   the file-I/O pattern preserves the same guarantee.
+2. **IP-Boundary Handshake Equivalence Gate** — required whenever a
+   block instantiates 3rd-party or custom IP into the BD. Bit-exact
+   sim is NOT sufficient: the IP's boundary handshakes must match on
+   hardware (`dbg_hub` + ILA at the boundary; HW `tvalid`/`tready`
+   cadence vs the SV-TB VCD over ≥512 samples). Gate definition:
+   socks skill `references/hil.md`. Rationale: the txm8l4 slow-path
+   FIR ran at ÷2 throughput because of a `tready` the TB never
+   modelled — found only by sim-vs-ILA compare.
+3. **Static interface-integrity gate** — required post-route for any
+   packet touching RTL/BD or inserting an ILA:
+   `assert_intf_integrity.py --checkpoint <routed.dcp>` against the
+   project's critical-interfaces allowlist. A `connect_bd_net` on an
+   AXIS interface MEMBER pin (the `BD 41-1306` class — the ordinary
+   way debug taps get wired) silently severs the source→sink
+   interface net while synthesis, routing, and the bit-exact sim all
+   still pass. Not hypothetical: it severed the txm8l4
+   `data_offload`→DMAC path (0 MiB ring), found only by
+   routed-netlist trace. See `docs/codex-packet-launch-contract.md`.
+4. **HIL:** drive the block on the ZCU102 streaming substrate and
+   match the Python expectation end-to-end.
 
-1. Python golden model runs offline, generates expected-output files
-   (per-sample register values, dump arrays, decision events, etc.).
-2. xsim SV testbench reads the expected-output files, drives the RTL
-   stimulus, asserts bit-identical RTL output against the file.
-3. Test pass = bit-identical match across the full stimulus length.
-
-Same correctness guarantee as cocotb cosim; one simulator; standard
-file-I/O instead of Python-RTL bridge.
+Operational: Vivado synth/impl (and anything opening a `.dcp`) is
+license-gated and must run OUTSIDE any sandboxed agent environment —
+a standing rule in every synthesis packet
+(`docs/codex-packet-launch-contract.md`).
 
 ## HIL is the system
 
-The architectural pattern for FPGA bring-up: **the streaming HIL
-substrate IS the system in which PL blocks get tested**. Substrate
-lands first; PL blocks plug in second.
+The streaming HIL substrate IS the system PL blocks get tested in —
+substrate lands first, blocks plug in second, and transport is
+validated with a no-block pattern (e.g. sawtooth → CRC via
+JTAG-to-AXI) before any block exercises it. PS-side ownership follows
+**ADR-011/012**: 4-core static bare-metal AMP (A53_0 ADI no-OS RF,
+A53_1 nav + PS.RX policy plane, R5_0 ethernet/TM, R5_1 the 1 kHz
+tracking loop and sole PL.B3 drainer), single-writer non-cacheable
+OCM channels, no OpenAMP.
 
-The substrate (per `fpga/20260424-zcu102-streaming-system` thread):
+Substrate + pipeline threads (query the registry for status):
+`fpga/20260424-zcu102-streaming-system`,
+`fpga/20260523-gps-streaming-hil-pl-pipeline`,
+`fpga/20260630-txm8l4-rx-pipeline-contract`,
+`fpga/20260701-txm8l4-tx-replay-contract`,
+`cross-cutting/20260617-zcu102-ad9986-socks-durable`, and the SOCKS
+HIL streaming mode (`socks/20260424-hil-streaming-mode`; invoked via
+a block's `socks/hil.json`). The medium-term arc these serve (close
+the Python ↔ FPGA ↔ real-RF validation loop; "one results contract,
+two producers") is `docs/roadmap-hil-validation-loop.md`.
 
-```
-PC (Python iq_gen client)
-  ↓ TCP port 5001 (IQ ingress, 32-byte header + payload)
-ZCU102 R5_0 (lwIP + AXI DMA + regmap drivers)
-  ↓ AXI-Lite control register / AXI-Stream data
-PL streaming subsystem (axi_dma + axis_fifo + streaming_ctrl_0 IP @ 0xA000_0000)
-  ↓ AXI-Stream
-PL.B1 → PL.DECIMATOR (AD9361 platforms only) → PL.B2 / PL.B3 / PL.B3a
-  ↓ dump output FIFO
-PL → R5 → PC (TCP port 5002 telemetry)
-```
+## Per-PL-block structure
 
-PL blocks integrate into this substrate at the AXI-Stream + AXI-Lite
-boundaries. The substrate's first-test pattern (sawtooth(1024) → CRC32
-= `0x255203CF` via JTAG-to-AXI, NO PL block involvement) validates the
-transport before any PL block exercises it.
-
-The SOCKS skill gains a new HIL streaming mode (per
-`socks/20260424-hil-streaming-mode` thread) that runs after JTAG
-connect + bitstream/ELF push, opens TCP control + data, runs the
-test, tears down. PL blocks invoke this mode via their `socks/hil.json`
-config.
-
-## Per-PL-block thread structure
-
-Each PL block has its own thread with a 4-plan progression:
-
-| Plan | Scope | Gates on |
-|------|-------|----------|
-| **plan-01 — Spec + architecture** | I/O JSON, AXI register map JSON, RTL architecture sketch, dual-target compatibility annotations, resource estimate | nothing — actionable now |
-| **plan-02 — VHDL + xsim TB** | `<core>_axi` AXI-Lite wrapper, RTL implementation, SV TB consuming Python-model expected-output files, synthesis audit on both 7-series and UltraScale+ | own plan-01 + streaming substrate plan-01 closed |
-| **plan-03 — HIL test** | Drive the block via the streaming substrate (PC → R5 → DMA → block → output → JTAG-AXI verification matches Python expectation) | streaming substrate plan-07 (substrate alive) |
-| **plan-04 — SOCKS module graduation** | Module lands at `<workspace-root>/socks/modules/<block-name>/`, peer to `socks/modules/usart` etc. | own plan-03 |
-
-Cross-block coordination (AXI address allocation, doc errata, dual-
-target constraint enforcement) lives in the coordinator thread
-`fpga/20260424-zynq-pl-bringup`. Per-block threads consume the
-coordinator's outputs but own their own VHDL + tests + module.
+Each PL block owns: a thread under `.threads/fpga/` (plans, findings,
+handbacks), a durable home under `docs/architecture/zynq-pl/<block>/`
+(`block.json`, `spec.md`, `decisions.md` with `ADR-PL-<BLOCK>-NNN`
+records, generated `architecture.html` — never hand-edit it;
+`tools/build_block_arch.py`), and on graduation a SOCKS module at
+`socks/modules/<block-name>/`. The historical 4-plan progression
+(spec → VHDL+TB → HIL → SOCKS graduation) still describes the shape,
+but real threads deviate — read the thread's `handoff.md`, not this
+file, for where a block actually is. Cross-block coordination
+(ADR-PL-NNN, workstream ownership) lives in
+`fpga/20260424-zynq-pl-bringup`, `fpga/20260610-pl-rtl-single-source`,
+and `fpga/20260611-pl-workstream-ownership`; the generated topology
+dashboard is `docs/architecture/index.html`
+(`tools/build_thread_topology.py`).
 
 ## SOCKS conventions
 
-PL blocks follow the existing 6-module SOCKS pattern:
-
-- **AXI-Lite wrapper entity name:** `<core>_axi` (e.g., `pl_b1_axi`).
-- **Standard register layout:** status @ 0x00, control @ 0x04, version
-  @ 0x08, block-specific from 0x10.
-- **Module structure:** `socks.json` metadata, `src/` VHDL, `sw/` C
-  drivers, `tb/` Python model + SV testbench, `constraints/` XDC,
-  `build/` synthesis artefacts.
-- **AXI base:** `0x43C00000` for SOCKS modules (existing convention).
-  Streaming subsystem regmap at `0xA000_0000` is separate (its own
-  AXI base; PL blocks under it via the streaming control plane).
-
-## Threads infrastructure pointer
-
-The PL-side work spans 8+ threads under `gps_receiver/threads/`:
-
-- `socks/20260424-hil-streaming-mode` — new HIL mode in SOCKS skill
-- `fpga/20260424-zcu102-streaming-system` — substrate ingestion + graduation
-- `fpga/20260424-zynq-pl-bringup` — cross-block coordinator
-- 5 × `fpga/20260424-pl-*` — per-block specs
-
-For overall sequencing across all 16 active project threads, see
-`gps_receiver/threads/tiered-execution-flow.md` (the PL-block work
-spans Tiers 2-5; substrate is Tier 3; per-block VHDL gates on Tier 3
-landing).
+PL blocks follow the established SOCKS module pattern: AXI-Lite
+wrapper entity `<core>_axi`; standard register layout (status @ 0x00,
+control @ 0x04, version @ 0x08, block-specific from 0x10); module
+structure `socks.json` + `src/` + `sw/` + `tb/` + `constraints/` +
+`build/`. Address allocation and the streaming-plane regmap are
+project data — read them from the block's regmap JSON /
+`shared-interfaces.json`, don't quote from memory.
 
 ## When to consult this chapter
 
-- Touching any file under `gps_receiver/blocks/pl_*.py` with intent to
-  port to VHDL.
-- Authoring `socks/modules/<pl_block>/` content.
-- Discussing FPGA hardware targets (ZCU102 vs Zynq-7030 vs Zedboard).
-- Resolving decimation chain math (the /15 vs /30 prime-factor
-  cascade story).
-- Making cross-block AXI register allocation decisions.
-- Adding a HIL test to any PL block.
-- Asking why we use xsim instead of cocotb.
+- Porting any `gps_receiver/blocks/pl_*.py` golden to VHDL, or
+  authoring `socks/modules/<pl_block>/` content.
+- Rate-conversion math (the parametric ×N//M ladder, the /5 group
+  delay, why 20.48 MSPS is the L1C rail).
+- Choosing/verifying against a hardware target; anything JESD/NCO →
+  `references/ad9986-gps-nco-frequency-planning.md`.
+- Wiring a debug tap or instantiating IP into the BD (gates 2-3
+  above — read BEFORE wiring, they exist because sims lied twice).
+- Adding a HIL test; asking why xsim instead of cocotb.
 
 ## When NOT to consult this chapter
 
-- PS-side firmware port work — see `references/gps-tracking.md`,
+- PS-side firmware port work — `references/gps-tracking.md`,
   `references/gps-pvt.md`, `references/gps-nav-decode.md`.
-- Pure Python golden-model debugging — see
-  `references/pseudorange-anchoring.md` for the three-way pattern;
-  the Python models themselves are at `gps_receiver/blocks/`.
-- Scenario engine / IQ generator work — those are upstream of the
-  PL chain and have their own threads in `scenario_engine/` and
-  `gps_iq_gen/` namespaces.
+- Pure Python golden-model debugging —
+  `references/pseudorange-anchoring.md` (three-way pattern).
+- L1C signal/receiver semantics — `references/gps-l1c.md`.
+- Scenario engine / IQ generator work — upstream of the PL chain
+  (`references/adding-a-scenario.md`).

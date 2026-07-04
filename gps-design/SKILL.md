@@ -1,6 +1,6 @@
 ---
 name: gps-design
-description: "GPS L1 C/A receiver design, debug, and test for the gps_design project (Python block-level golden model -> bare-metal PS firmware -> Zynq PL VHDL). Use this skill whenever the user is working on the GPS receiver pipeline: acquisition (PCPS FFT), tracking loops (DLL/PLL/FLL with Kaplan coefficients), nav-bit extraction and subframe decode (LNAV), pseudorange anchoring and SV-transmit-time recovery, PVT solver (WLS + Cholesky), antenna geometry and link budget, AD9986/AD9081 front-end NCO/JESD profile planning, or weak-signal cislunar extensions. Also triggers on debugging anchor drift, first-fix position error, sf_end_sample_idx attribution, preamble sync, dump_end_sample_idx timing, scenario_engine IQ generation, tx_time_offset_profiles, ZCU102 AD9986 profile work, regenerating the docs/json-structure spec-stack HTML atlas (tools/build_json_atlas.py) or the docs/results-dashboard run-results dashboard (tools/build_results.py), creating and running a scenario (scenario_engine/scenarios/*.v2.json) and capturing its outcome to the dashboard (outputs.results sink, gps_scenario.py --stream-replay), or the .research session directories for GPS receiver topology. The skill consolidates project-specific knowledge organized by receiver pipeline chapter -- each chapter is a reference file you load on demand. Apply this skill even when the user doesn't explicitly invoke 'GPS' by name, if they're touching any file under gps_receiver/, gps_iq_gen/, scenario_engine/, or the AD9986/ZCU102 GPS streaming profiles."
+description: "GPS L1 C/A receiver design, debug, and test for the gps_design project (Python block-level golden model -> bare-metal PS firmware -> Zynq PL VHDL). Use this skill whenever the user is working on the GPS receiver pipeline: acquisition (PCPS FFT), tracking loops (DLL/PLL/FLL with Kaplan coefficients), nav-bit extraction and subframe decode (LNAV), pseudorange anchoring and SV-transmit-time recovery, PVT solver (WLS + Cholesky), antenna geometry and link budget, AD9986/AD9081 front-end NCO/JESD profile planning, L1C / GPS III signal work (TMBOC, L1C-D/L1C-P/L1C-O overlay, IS-GPS-800, compose_l1_joint, delta-rho experiments, the dual-rate decimator joint chain), or weak-signal cislunar extensions. Also triggers on debugging anchor drift, first-fix position error, sf_end_sample_idx attribution, preamble sync, dump_end_sample_idx timing, scenario_engine IQ generation, tx_time_offset_profiles, ZCU102 AD9986 profile work, regenerating the docs/json-structure spec-stack HTML atlas (tools/build_json_atlas.py) or the docs/results-dashboard run-results dashboard (tools/build_results.py), creating and running a scenario (scenario_engine/scenarios/*.v2.json) and capturing its outcome to the dashboard (outputs.results sink, gps_scenario.py --stream-replay), or the .research session directories for GPS receiver topology. The skill consolidates project-specific knowledge organized by receiver pipeline chapter -- each chapter is a reference file you load on demand. Apply this skill even when the user doesn't explicitly invoke 'GPS' by name, if they're touching any file under gps_receiver/, gps_iq_gen/, scenario_engine/, or the AD9986/ZCU102 GPS streaming profiles."
 ---
 
 # GPS Design -- L1 C/A Receiver for the gps_design Project
@@ -14,9 +14,10 @@ three-tier pipeline:
 2. **Bare-metal C firmware** (`gps_receiver/firmware/`, planned) --
    ports the PS blocks (B4-B9, TLM, B12-B13) to the Zynq PS (no-OS,
    deterministic 1 ms ISR).
-3. **VHDL on Zynq PL** (via the SOCKS skill, planned) -- AD9361
-   front-end, decimation, dynamic bit select, correlator engine +
-   bit-sync histogram, PCPS acquisition.
+3. **VHDL on Zynq PL** (via the SOCKS skill) -- front-end (active:
+   ZCU102 + AD9986 JESD204B per ADR-007; AD9361 survives as the
+   divergent small-fabric target), rate conversion, dynamic bit
+   select, correlator engine + bit-sync histogram, PCPS acquisition.
 
 This skill covers the design, debug, and test of those three tiers as a
 single coherent pipeline. The receiver is intentionally split by
@@ -26,7 +27,11 @@ single coherent pipeline. The receiver is intentionally split by
   (correlator), PL.B3a (bit-sync histogram).
 - **PS blocks:** PS.B4–B9 (DLL / PLL / FLL / C-N0 / lock), PS.TLM
   (telemetry decoder — bit-sync + preamble + TLM/HOW + parity +
-  SF1/2/3 ephemeris decode), PS.B12 (PVT), PS.B13 (Observables).
+  SF1/2/3 ephemeris decode), PS.B12 (PVT), PS.B12a (RAIM), PS.B13
+  (Observables).
+- **L1C block family** (separate 20.48 MSPS family, NOT parameterized
+  C/A variants): PL.B2_L1C, PL.B3_L1C, PS.B4_L1C–B9_L1C, PS.B13_L1C
+  — see `references/gps-l1c.md`.
 
 See `gps_receiver/CLAUDE.md`, `shared-interfaces.json`, and
 `blocks_map.json` for the authoritative current block inventory.
@@ -52,24 +57,29 @@ in the order the data flows through.
 | Pseudorange anchoring | `references/pseudorange-anchoring.md` | Current | IS-GPS-200 TOW convention, three-way debug methodology, PS.TLM → PS.B13 chain pointers |
 | Acquisition | `references/gps-acquisition.md` | Current | PCPS pipeline, same-row peak1/peak2 semantics, r2/r22 fixed-point schedules (one golden per RTL config), vector-authority rules, B2→PS→B3 rational seed handoff, Doppler ceiling / code-Doppler smear |
 | Nav decode | `references/gps-nav-decode.md` | Current | PS.TLM LNAV semantics, TOW forward-projection, TOW continuity gate |
+| L1C (GPS III) | `references/gps-l1c.md` | Current | L1C-D/P/O structure + code port, TV-profile generator semantics (C/A authority mapping), Phase-A receive chain, mid-stream bring-up recipe (carrier/overlay seeding, epoch alignment), Δρ methodology + measurement floors, ADR-023 dual-rate joint chain (decimator /5 + group-delay constant + cursor-path L1C) |
 | PVT solver | `references/gps-pvt.md` | Current | PS.B12 WLS + Cholesky, PVTFix contract, firmware-port notes |
 | Antenna geometry | `references/gps-antenna-geometry.md` | Stub | Link budget, off-boresight angle, occultation, cislunar dynamics |
-| FPGA PL bring-up | `references/fpga-pl-bringup.md` | Current | Hardware target matrix (ZCU102/AD9986 + Zynq-7030/Zedboard/AD9361), decimation chain (/30 vs /15 prime cascades), xsim verification convention, HIL-as-system substrate pattern, per-PL-block thread structure, SOCKS conventions |
+| FPGA PL bring-up | `references/fpga-pl-bringup.md` | Current | ADR-007 substrate (ZCU102/AD9986 txm8l4: RX 20.48 MSPS native, C/A via /5, L1C passthrough; AD9361 divergent target), parametric (×N, /M) rate-conversion ladder + F_DECINT_5 authority, PL block inventory (R2²SDF PL.B2, fixed-point vector authorities), the 4-stage verification gate stack (bit-exact xsim → IP-boundary handshake gate → interface-integrity gate → HIL), HIL-as-system substrate pattern, per-block durable homes + SOCKS conventions |
 | AD9986 GPS NCO planning | `references/ad9986-gps-nco-frequency-planning.md` | Current | 3.93216 GHz clean converter-clock math, L1/L2/L5/Iridium NCO plans, RX CDDC/FDDC vs TX CDUC/FDUC placement, JESD/profile validation checklist |
 | Adding a scenario **& running it** | `references/adding-a-scenario.md` | Current | Author a `scenario_engine/scenarios/*.v2.json` root (`signal_source` branches, platform/entity/`receiver_profile`/iq_gen/outputs blocks), validate, register a mode, regen the atlas — **then run it and capture results to the dashboard** (`outputs.results` sink, `--stream-replay` for heavy runs, `tools/build_results.py`). Read this whenever the user asks to create/run a scenario or see its results. |
 | Using the Cesium viewer | `references/using-the-cesium-viewer.md` | Current | The viewer's **payload-field → render contract** (`window.RESULTS.runs[]` schema v2; every optional block is feature-detected, absence = silent no-op), `?run=<run_id>` stable addressing, the `resolvePlatform()` name-resolution chain (`run.mode` → mode registry → scenario `.v2` → platform name/antennas; failure = generic "rx" label), taxonomy-axis → viewer-control mapping (`docs/scenario-taxonomy.md`), and the off-pipeline-payload anti-pattern (always emit via `gps_scenario._build_results_payload` / `_build_interference_geometry`). Read when a run renders wrong/differently in the viewer or when authoring a scenario that must render in both dashboard and viewer. |
 | Ingesting a foreign capture | `references/ingesting-foreign-iq.md` | Current | Rare one-off: land an **outside-source** raw IQ capture (foreign rate / bits / layout / center) on our 4.096 (or 49.152) rail and run the receiver/analysis on it. `read_iq_raw` → `to_receiver_rail` (exact-rational `resample_poly`, optional `f_shift_hz`) → cold-start `GPSReceiver` → C/N0 / `compare_rails` / `detect_interference`. Uncalibrated-amplitude + onset-detector + don't-commit-raw-IQ caveats. NOT for our own captures (those choose a clean rate → on-rail `.iq16`). |
 
-For project-wide thread sequencing across all active work (not just
-PL), see `gps_receiver/threads/tiered-execution-flow.md` — strategic
-overview of 16 active threads grouped into 7 tiers by dependency
-chain. Updated weekly; `gps_receiver/threads/threads.json` is the
-source of truth for current status.
+For project-wide thread state across all active work, the
+auto-generated registry `.threads/threads.json` is the source of
+truth (regenerate/summarize with
+`python3 ~/.claude/skills/threads/scripts/index_threads_research.py --print`);
+the threads skill's **Status review** workflow produces the triage
+snapshot. (The old `gps_receiver/threads/` layout and its weekly
+`tiered-execution-flow.md` are retired — threads live at the repo
+root under `.threads/`.)
 
 ### Diagnostic scripts
 
 **Current-architecture diagnostics live in the project**, under
-`gps_receiver/threads/<subsystem>/<slug>/diagnostics/`. See
+`diagnostics/` at the repo root and
+`.threads/<subsystem>/<slug>/diagnostics/`. See
 `scripts/README.md` for pointers to the highest-value examples
 (`diagnose_tow_label_timing.py`, `attribute_step6_observables_residual.py`,
 `gen_baseline_lnav.py`, etc.).
@@ -105,7 +115,7 @@ Concretely, for timing work:
    Sagnac rotation + SV clock bias via `scenario_engine.propagate_sv`.
    See `references/pseudorange-anchoring.md` §3 for the snippet and
    the live diagnostics under
-   `gps_receiver/threads/receiver/*/diagnostics/` for concrete use.
+   `.threads/receiver/*/diagnostics/` for concrete use.
 
 If `oracle_sv == iqgen_sv`, then the IQ gen's model is already
 physics-correct for this scenario class (static ground RX, idealised
@@ -309,11 +319,16 @@ answers are in those directories, not elsewhere.
 These are the project-level constants. Changing them requires
 architectural review, not a block-level tweak.
 
-- **Sample rate:** GPS app boundary is 4.096 MSPS (4096 samples per
-  1 ms code period = 2^12, natural FFT size). AD9361 paths use
-  61.44 MSPS -> /15. AD9986 paths are profile-dependent: clean 61.44
-  L1 uses RX /15 and TX x30 around the PL boundary; clean 245.76 L1
-  uses /60 and x60. See `references/ad9986-gps-nco-frequency-planning.md`.
+- **Sample rate:** GPS C/A app boundary is 4.096 MSPS (4096 samples
+  per 1 ms code period = 2^12, natural FFT size). Active substrate
+  (ADR-007, `2048-quad-band-txm8l4`): RX 20.48 MSPS native — L1C
+  consumes it as passthrough, C/A via the /5 decimator tap; TX via
+  the parametric (×N, /M) PL.INTERPOLATOR/PL.DECIMATOR ladder. The
+  historical clean-6144 ladder (61.44 MSPS, /15//30 cascades) is
+  archaeology, not the active path — check `docs/decision-log.md`
+  ADR-007 before trusting any rate figure. AD9361 (61.44 → /15)
+  survives as the divergent small-fabric target. See
+  `references/ad9986-gps-nco-frequency-planning.md`.
 - **Data format:** 12-bit I/Q sign-extended to 16-bit (int16 containers).
 - **Quantization:** Dynamic bit-select 12 -> 4 bit (literal bit-slice,
   NOT Lloyd-Max).
@@ -362,7 +377,7 @@ Follow this ordering before making changes:
 1. **Read the relevant chapter reference** (`references/gps-*.md`).
 2. **Scan `.research/` for prior investigation.**
 3. **Run an existing diagnostic from the project**
-   (`gps_receiver/threads/receiver/*/diagnostics/`) before writing a
+   (`.threads/receiver/*/diagnostics/`) before writing a
    new one. The three-way methodology is embodied in several of them.
    See `scripts/README.md` for the current-architecture pointers.
 4. **Check the JSON spec stack** -- is the parameter actually wired from
@@ -376,6 +391,69 @@ Follow this ordering before making changes:
 
 See `references/pseudorange-anchoring.md` for a case study where this
 ordering saved a costly wrong fix.
+
+---
+
+## Verification Rules of Thumb (hard-won)
+
+Cross-cutting principles distilled from this project's gate failures.
+Each has a concrete incident behind it; none is hypothetical.
+
+1. **A gate that passes on the first try should make you suspicious —
+   pick gate parameters adversarially against the implementation's
+   structure.** Every latent defect found in the L1C TV-profile hop
+   was invisible to the gate that nominally covered it, because the
+   driver sat in a structural blind spot: 100 ms chunks masked a
+   per-chunk code restart (a mod-10230 identity), tx_offset=0 masked
+   a TOW-anchor assumption, stream-start masked an overlay-hypothesis
+   default. Choose the chunk size that is NOT a multiple of the code
+   period, the offset that is NOT zero, the start that is NOT sample
+   zero. "Green on the natural configuration" and "correct" are
+   different claims.
+
+2. **For coherence-class experiments, the measurement chain is the
+   project, not the device under test.** Expect most of the debug
+   budget to go to the harness (all five defects behind the
+   moving-profile Δρ gate were measurement-chain; zero were in the
+   code under test). Harness fixes compound: moving the Δρ driver
+   onto the cursor path cut the C/A floor from ~10 m to 1.5 m for
+   every future experiment.
+
+3. **Constants are artifacts; slopes are physics.** Before touching
+   code, run the gate at two operating points and fit the residual's
+   dependence on the parameter. A residual identical across operating
+   points (−6.13 m at 0 m/s vs −6.14 m at 300 m/s) is driver
+   construction; an error slope that equals a physical rate by
+   construction (exactly −range-rate) names the mechanism outright
+   (rate-blind labels). See also the three-way pattern above — this
+   is its cheap two-point cousin.
+
+4. **Designate a semantics authority and match it exactly — including
+   at its limits.** When extending a path that mirrors an existing
+   one (L1C mirroring C/A, RTL mirroring a golden), read the
+   authority first, replicate its op chain verbatim, and where the
+   authority itself is imperfect (e.g. ±1 LSB streaming parity on
+   integrated-Doppler ramps), match-and-document rather than silently
+   exceed — an "improvement" on one side is a divergence someone else
+   debugs later. Close-reading the authority is also how its own
+   latent bugs get found.
+
+5. **Byte-parity has a mathematical boundary — classify quantities
+   before writing parity gates.** Pointwise-interpolated quantities
+   (pure functions of absolute time: tx offsets, C/N0 envelopes, code
+   offsets) survive chunked re-entry bit-exactly. Integrated
+   quantities (phase from a Doppler profile) cannot, because chunk
+   re-entry re-derives the origin with a different summation order.
+   Demand bit-exact only where the math supports it; document a
+   quantified tolerance where it doesn't.
+
+6. **Never trust the first green — re-verify independently.** Treat a
+   handback's (or your own) passing gates as claims to re-derive from
+   the artifacts, not results to relay. Every gate that later failed
+   under an adversarial parameter had already "passed". Operator
+   priors about likely failure modes ("each hop hid one real defect")
+   are calibration data — write them into kickoff prompts as standing
+   instructions.
 
 ---
 

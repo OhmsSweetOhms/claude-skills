@@ -68,10 +68,10 @@ Split cleanly by layer so the fix lands in the right place:
   factor CN0 loss (0.3–10 dB range) **is implemented** in
   `scenario_engine/link_budget.py`. Verified by the head-to-head
   atmospheric ablation in
-  `gps_receiver/threads/receiver/20260421-gnss-sdr-comparative-pipeline/`.
+  `.threads/receiver/20260421-gnss-sdr-comparative-pipeline/`.
 - **IQ-generator side (nav message content):** `nav_gen` does NOT
   yet populate SF4 page-18 Klobuchar α/β or `tgd`. Tracked in
-  `gps_receiver/threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`.
+  `.threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`.
   Accounts for the final ~25 m gap between our post-cursor-path
   PVT (200 m) and GNSS-SDR's oracle (174 m).
 - **Receiver / PVT side (iono / tropo corrections):** PS.B12 does

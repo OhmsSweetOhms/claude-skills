@@ -71,7 +71,7 @@ matching IODE. `try_build_ephemeris(prn, reference_wn, sf_cache)` in
 ionospheric model, UTC parameters). Parity is checked but fields are
 discarded. Relevant gap: `nav_gen` doesn't populate SF4 page-18
 Klobuchar α/β coefficients — tracked in
-`gps_receiver/threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`.
+`.threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`.
 
 ---
 

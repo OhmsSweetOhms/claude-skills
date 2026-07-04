@@ -54,7 +54,7 @@ PS.B12 PVT solver
 The architectural predecessor (fixed-block correlator discarding
 per-PRN acquired fractional chip phase) is documented with closure
 evidence in
-`gps_receiver/threads/receiver/20260419-arch1-migration/findings-2026-04-24.md`.
+`.threads/receiver/20260419-arch1-migration/findings-2026-04-24.md`.
 Read that first if you are debugging per-PRN pseudorange bias
 signatures.
 
@@ -140,7 +140,7 @@ These cancel to sub-µs. A per-PRN oracle-vs-iqgen spread of 0.4 µs
 across 6 SVs is normal for this scenario class. **Don't treat that as
 a bug** — it's the oracle adding physics the IQ generator doesn't
 need. The residuals tracked in
-`gps_receiver/threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`
+`.threads/gps_iq_gen/20260419-iq-gen-tau-convention-fidelity/`
 are the current project-level gaps (missing `tgd`, zero Klobuchar).
 
 ---
@@ -157,8 +157,8 @@ are the current project-level gaps (missing `tgd`, zero Klobuchar).
 
 For concrete examples of each symptom producing a finding, see:
 
-- `gps_receiver/threads/receiver/20260419-arch1-migration/findings-2026-04-24.md` — dump-alignment (the row-1 symptom).
-- `gps_receiver/threads/receiver/20260421-gnss-sdr-comparative-pipeline/findings-2026-04-22.md` — the H3a IQ-generator sign fix (row-5 symptom).
+- `.threads/receiver/20260419-arch1-migration/findings-2026-04-24.md` — dump-alignment (the row-1 symptom).
+- `.threads/receiver/20260421-gnss-sdr-comparative-pipeline/findings-2026-04-22.md` — the H3a IQ-generator sign fix (row-5 symptom).
 
 ---
 
@@ -172,7 +172,7 @@ Before making changes:
 2. Scan `.research/session-*/` for the relevant topic. Many answers
    are already investigated.
 3. Run an existing live diagnostic under
-   `gps_receiver/threads/receiver/*/diagnostics/` before writing a
+   `.threads/receiver/*/diagnostics/` before writing a
    new one. The three-way pattern is embodied in several of them.
 4. Check `blocks_map.json`'s `timing_metadata_chain` for the current
    formulas and per-hop file:line pointers.

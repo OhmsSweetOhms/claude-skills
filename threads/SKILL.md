@@ -314,6 +314,17 @@ When to bother: long sessions, fresh-skill shakedown runs, or
 hand-offs where the next session might benefit from the skill being
 sharper. Skip for one-shot tasks where there's nothing to learn.
 
+**Thread handoff points are the standing trigger.** Whenever a
+workflow updates `handoff.md` (New plan hop, Close thread, hop
+closure after a Codex handback), pause and flush any skill friction
+the hop surfaced into the tracker before it fades — a workflow step
+that needed a workaround, a script that fought the situation, a
+reference that was stale for what the code actually looked like.
+Hop transitions are where that context is still concrete and citable
+(the findings/commit to quote as evidence already exist), and it is
+exactly the knowledge the next session loses. If no tracker exists
+yet, one friction observation is reason enough to init one.
+
 ## Templates
 
 `assets/templates/` holds the file skeletons this skill copies
