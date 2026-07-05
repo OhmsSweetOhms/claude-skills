@@ -1,6 +1,6 @@
 ---
 name: orchestrator-handoff
-description: Durable succession discipline for top-level orchestrator sessions supervising multiple concurrent worker sessions. Use this skill whenever a session acts as an orchestrator/coordinator over other sessions and needs to boot cold, resume, or hand off — creating or updating a resume cache (pointers + decisions, never status), auditing a worker session's handoff or wrap-up entry, repairing a dead session's stale boot surface (succession rewrite), writing cold-launch prompts for worker or successor sessions, or answering "is my handoff durable for a new session?". Also trigger on mentions of an ORCHESTRATOR-CACHE, SESSION-HANDOFF files, "context-full" wrap-ups, session succession, "check the handoff", multi-session coordination state, or when a supervised session dies mid-arc and the next one must resume without the transcript. Do NOT use for single-session task tracking or sprint boards — this is specifically for state that must survive across sessions.
+description: Durable succession discipline for multi-session programs — both the orchestrator supervising concurrent worker sessions AND any session (worker, coordinator, orchestrator) that must wrap up and hand off to a successor. Use this skill whenever a session needs to boot cold, resume, wrap, or hand off — creating or updating a resume cache (pointers + decisions, never status), wrapping a session that is near its context limit (the ordered wrap protocol: boot surface first, narrative second), auditing a worker session's handoff or wrap-up entry, repairing a dead session's stale boot surface (succession rewrite), writing cold-launch prompts for worker or successor sessions, or answering "is my handoff durable for a new session?". Also trigger on mentions of an ORCHESTRATOR-CACHE, SESSION-HANDOFF files, "context-full"/"running out of context" wrap-ups, session succession, "check the handoff", multi-session coordination state, or when a supervised session dies mid-arc and the next one must resume without the transcript. Do NOT use for single-session task tracking or sprint boards — this is specifically for state that must survive across sessions.
 ---
 
 # Orchestrator Handoff
@@ -117,6 +117,17 @@ because successors may run from different checkouts.
    evidence, and say so when you do.
 
 ## Succession events (the moments this skill exists for)
+
+### You (any session) are running out of context
+
+Follow the ordered wrap protocol in `references/wrap-protocol.md`:
+**overwrite your boot surface FIRST, narrative second**, capture
+in-flight work, state uncommitted state, leave the successor pointer,
+commit. The order is survival-ranked — if you die mid-wrap, the boot
+surface is right and only the narrative is missing, which is the
+recoverable failure. This applies to workers and coordinators as much as
+orchestrators; it is the other half of the audit below, and doing it
+means the audit finds nothing.
 
 ### A worker session wraps or dies
 
