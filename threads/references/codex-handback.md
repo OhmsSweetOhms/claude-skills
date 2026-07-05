@@ -94,12 +94,23 @@ Gate entries must carry:
 - `name`
 - `verdict`: `pass | fail | unmeasured | retired |
   deferred-to-firmware`
+- `evidence_path` — **for every verdict, including `pass`**: the
+  saved output artifact of the gate run (a log, result file, or
+  report written to the inbox), not the config the gate consumed.
+  A `pass` with no archived output is unverifiable and forces the
+  main session to re-run the gate before trusting it — which for
+  license-gated gates (e.g. the IP-boundary integrity check opening
+  a routed `.dcp`) costs a full tool cycle. (Origin: txm8l4 TX
+  plan-02, 2026-07-02 — an integrity-gate `pass` cited a nonexistent
+  tool path and saved no log; the claim was true but had to be
+  independently re-proven.) The JSON schema enforces `evidence_path`
+  only for non-pass verdicts (v2 tolerance for old handbacks); this
+  emission discipline requires it for all new handbacks regardless.
 
 Gate entries may also carry:
 
 - `target_ref` or `target_lines`
 - `observed` / `measured_value`
-- `evidence_path`
 - `summary`
 - `caveats[]`: portability, reproducibility, validity, coverage,
   scope, or other caveats affecting interpretation or future reruns.

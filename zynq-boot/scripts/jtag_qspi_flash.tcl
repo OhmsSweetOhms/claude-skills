@@ -2,10 +2,14 @@
 # over JTAG (no UART). Run via xsct; see scripts/jtag_qspi_flash.sh for the wrapper
 # that resolves paths and sources the toolchain.
 #
-# STATUS: authored, NOT yet hardware-verified. The reset/halt timing vs the BootROM
-# (ZB_* below) and whether the cfgmem helper presents an interactive DCC prompt are
-# the two spots to confirm on a real bring-up — see references/jtag-flash-bootmode-
-# independent.md.
+# STATUS: PS bring-up HARDWARE-VERIFIED on a hardwired-QSPI xc7z020 (2026-06-30): the
+# AR 76051 halt, the DDR/IO PLL power-up (PLL_PWRDWN clear), ps7_init, the rst -processor
+# MMU drop, and DRAM read/write all confirmed (PLL_STATUS 0x39->0x3F, DDRC_mode->1). Still
+# UNVERIFIED downstream: whether the cfgmem helper presents an interactive DCC prompt, and
+# the full sf erase/write/verify. See references/jtag-flash-bootmode-independent.md and the
+# work/uboot thread (.threads/zynq-boot/20260629-hardwired-qspi-jtag-flash).
+# NOTE: an incompatible ps7_init.tcl (wrong board) can WEDGE the debug DAP/TAP and require a
+# physical power-cycle — use the .xsa/ps7_init that matches the board.
 #
 # WHY THIS EXISTS: program_flash regressed in 2020.x+ (AMD AR 76051) and fails on a
 # board hardwired to QSPI/NAND boot mode. But the JTAG/DAP is always alive regardless
@@ -76,6 +80,22 @@ puts "== rst -system ; stop  (halt BootROM) =="
 rst -system
 stop
 
+# --- Zynq-7000 PLL power-up (precondition for PS init) ---
+# Some boot states leave the DDR/IO PLLs POWERED DOWN (slcr.{DDR,IO}_PLL_CTRL[PLL_PWRDWN]=1).
+# Stock ps7_init — and an FSBL's internal ps7_init — only write the FDIV / BYPASS_FORCE /
+# RESET fields; they NEVER clear PWRDWN. So they pulse RESET on a powered-down PLL, which can
+# never lock: slcr.PLL_STATUS (0xF800010C) sticks at 0x39 (ARM locks, DDR/IO don't) and DDR
+# never initializes. Power the two PLLs up first, per UG585 "Exit Sleep" (set PLL_PWRDWN=0
+# before the lock sequence). Verified on a hardwired-QSPI xc7z020: PLL_STATUS 0x39 -> 0x3F,
+# DDRC_mode -> 1, DRAM read/write OK. ZynqMP uses a different clock subsystem (psu_init owns
+# its PLLs) — skip there.
+if {$ARCH eq "zynq"} {
+    puts "== power up DDR/IO PLLs (clear slcr.PLL_PWRDWN) before PS init =="
+    mwr -force 0xF8000008 0x0000DF0D                                ;# SLCR unlock
+    mwr -force 0xF8000104 [expr {[mrd -value 0xF8000104] & ~0x2}]   ;# DDR_PLL_CTRL[PLL_PWRDWN]=0
+    mwr -force 0xF8000108 [expr {[mrd -value 0xF8000108] & ~0x2}]   ;# IO_PLL_CTRL [PLL_PWRDWN]=0
+}
+
 if {$ARCH eq "zynqmp"} {
     # Fake JTAG boot mode regardless of strap pins (ZynqMP only): BOOT_MODE_USER.
     # NOTE: the 0x100 bit value is UNVERIFIED against UG1085's BOOT_MODE_USER bitfield —
@@ -121,6 +141,34 @@ if {$PSINIT ne ""} {
     } else {
         puts "== WARNING: DDR not confirmed up within 5 s of FSBL run — proceeding cautiously =="
     }
+}
+
+# --- Zynq-7000 MMU drop (so debugger DRAM access works) ---
+# A halted boot image usually leaves the APU MMU enabled, so debugger reads/writes to DRAM
+# — loading U-Boot below, and staging the payload via 'dow -data' — fault with "MMU section
+# translation fault" even though DDR is up. rst -processor resets ONLY the core (PC->0, MMU
+# off) and leaves the PS/PLLs/DDR intact. Verified on xc7z020: DRAM read/write succeeds after
+# this; harmless if the MMU was already off. ZynqMP A53 reset semantics differ — skip.
+if {$ARCH eq "zynq"} {
+    puts "== rst -processor (drop stale APU MMU; PS/PLL/DDR survive) =="
+    rst -processor
+    catch { stop }   ;# rst -processor leaves the core halted — ignore "Already stopped"
+}
+
+# --- Zynq-7000 OCM remap (so the cfgmem U-Boot helper loads at 0xFFFC0000) ---
+# The Vitis cfgmem helper (zynq_qspi_x1_single.bin etc.) is linked/entered at 0xFFFC0000
+# (high OCM). slcr.OCM_CFG[RAM_HI] resets to 0 → all four 64K OCM blocks map LOW, so
+# 0xFFFC0000 is unbacked and `dow` fails "OCM is not enabled at 0xFFFC0000". RAM_HI=1111
+# maps OCM0..3 contiguous high (UG585 Table 29-4); also enable SCU address filtering so the
+# A9 routes DDR (0x100000..0xFFE00000) for U-Boot relocation. Verified on xc7z020: the
+# helper then runs and gives an interactive `Zynq>` DCC console. ZynqMP differs — skip.
+if {$ARCH eq "zynq"} {
+    puts "== map OCM high to 0xFFFC0000 (OCM_CFG.RAM_HI=1111) + SCU addr filtering =="
+    mwr -force 0xF8000008 0x0000DF0D                                  ;# SLCR unlock
+    mwr -force 0xF8000910 0x0000000F                                  ;# OCM_CFG RAM_HI=1111
+    mwr 0xF8F00040 0x00100000                                         ;# SCU filter start
+    mwr 0xF8F00044 0xFFE00000                                         ;# SCU filter end
+    mwr 0xF8F00000 [expr {[mrd -value 0xF8F00000] | 0x2}]             ;# SCU addr-filter enable
 }
 
 # --- load the DCC-console U-Boot and run it (dow sets PC to the ELF entry) ---
