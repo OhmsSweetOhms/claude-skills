@@ -320,7 +320,10 @@ handback.json + handback.md + scripts/ + temp/ + artifacts/ per
    `thread_id`, `session_date`, `status`, `worktree` (with `branch`,
    `base_at_hop_start`, `head_at_handback`, `diff_stat`), `commits[]`,
    `gates[]` (each with `name` + `verdict` ∈ {{pass, fail, unmeasured,
-   retired, deferred-to-firmware}}; non-pass requires `evidence_path`),
+   retired, deferred-to-firmware}}; EVERY verdict — including pass —
+   cites an `evidence_path` naming the gate run's saved output
+   artifact in the inbox, not the config it consumed; a pass with no
+   archived output gets independently re-run before it is trusted),
    `discoveries[]` (each with `id` matching `^discovery-`, `claim`,
    `evidence`), `investigations[]` (each with `id` matching
    `^investigation-`, `triggered_by`, `question`, `answer`, `evidence`),

@@ -259,6 +259,34 @@ deserves its own plan rather than appending to the current one.
    boundaries are the standing trigger; the evidence to cite is
    still concrete here.
 
+10. **Authoring self-consistency check (Codex hops, before emitting
+    the packet).** The plan file IS the contract Codex executes
+    against, and a contradiction inside it costs a mailbox
+    round-trip at best or an inferred-through error at worst. Before
+    `emit_codex_launch_packet.py`, verify:
+    - **The staging/scope list is derivable from the steps.** Every
+      file a step's deliverables touch appears in the hard-constraint
+      staging allowlist, and nothing in the allowlist lacks a step
+      that produces it. (Origin: txm8l4 TX plan-02 q-01 — the
+      guidance section directed a `system_project.tcl` hook edit the
+      staging list excluded; Codex correctly blocked on the
+      contradiction.)
+    - **Every operational claim is verified against the source it
+      describes.** Claims like "runtime-configurable", "already
+      committed", "probed by the existing ILA", or "reusable from
+      <path>" get checked against the actual file/register/inventory
+      before the plan asserts them — a plan that asserts a knob that
+      doesn't exist sends Codex hunting for it. (Origin: txm8l4
+      plan-17 q-01 — the plan called `block_bytes` "runtime ring
+      geometry"; it was a compile-time make variable.)
+    - **Referenced artifacts are reachable from the worktree/branch
+      the packet names** — if a reused file lives on another branch
+      or worktree, the plan supplies the retrieval (`git show
+      <branch>:<path>` or an explicit read-only path), not just the
+      location.
+    A failed check is fixed in the plan before launch, not patched
+    in the mailbox after.
+
 **Verification:**
 - `thread.json` parses.
 - `thread.json.plan_hops[]` is in `num` order with one and only
