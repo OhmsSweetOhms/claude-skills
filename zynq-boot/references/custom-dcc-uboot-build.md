@@ -1,7 +1,56 @@
 # Custom DCC-console U-Boot for JTAG flashing — build reference
 
-**STATUS: drafted from `xlnx_rebase_v2023.01_2023.2` source, NOT yet built or
-hardware-verified.** Validate per `references/jtag-flash-validation-plan.md`.
+**STATUS: HW-VERIFIED 2026-07-06** on a Zynq-7000 (xc7z020, single s25fl128s 16 MiB,
+JTAG-HS3), built from **`xlnx_rebase_v2022.01_2022.2`** (this machine has no 2023.2).
+The generic-SFDP JEDEC bypass is proven end-to-end: an unknown chip (removed from the ID
+table) probes via the generic fallback at correct geometry with byte-exact reads. The
+2022.01 port of the patch is `patches/0002-spi_nor-generic-any-jedec-fallback-2022.01.patch`;
+the full reproducible recipe (all three variants below) is the thread data script
+`build-dcc-uboot-2022.01.sh`. The 2023.01 draft below still applies structurally; read the
+**HW-verified port notes** first.
+
+## HW-verified port notes (2026-07-06) — READ FIRST
+
+Built DDR-resident (`xilinx_zynq_virt_defconfig`, entry `0x04000000`, **no OCM remap** on
+`dow`). Beyond the patch + `CONFIG_ARM_DCC`, three things were load-bearing and only surfaced
+on hardware:
+
+1. **Disable `SPI_FLASH_BAR`.** `SPI_FLASH_SFDP_SUPPORT depends on !SPI_FLASH_BAR`, and
+   `ZYNQ_QSPI` weakly `imply`s BAR, so the defconfig delta MUST carry
+   `# CONFIG_SPI_FLASH_BAR is not set` or SFDP (hence the bypass) cannot enable.
+2. **Device-tree topology — the big one.** `DEFAULT_DEVICE_TREE=zynq-zc706`, and
+   `zynq-zc706.dts` sets `&qspi { is-dual = <1>; }` because the *real* ZC706 has TWO chips in
+   parallel. On a SINGLE-chip board that doubles all geometry (16→32 MiB) and interleaves
+   reads across a phantom die → `0x55` garbage. **Force `is-dual = <0>`** (matches the stock
+   `zynq_qspi_x1_single` helper). Xilinx/AMD ships a cfgmem helper per topology combo for
+   exactly this reason.
+3. **Read lane width vs this chip's SFDP.** The s25fl128s SFDP reports a wrong quad
+   dummy-cycle count → reads come back shifted 3 bytes. Two verified fixes:
+   - **x1 single read** (`spi-rx/tx-bus-width = <1>`, opcode `0x03`, zero dummy) — correct via
+     SFDP *or* table, so it fixes both known and generic/unknown paths. Robust default.
+   - **x4 quad read** — correct only with the table's known-good params, i.e. mark the chip's
+     table entry `SPI_NOR_SKIP_SFDP`. High speed, known chips only.
+
+**dtsi gotcha:** U-Boot auto-includes only the FIRST matching `<name>-u-boot.dtsi`
+(`$(firstword …)`). A board file (`zynq-zc706-u-boot.dtsi`) WINS over the SoC-level
+`zynq-u-boot.dtsi`, so the board file must `#include "zynq-u-boot.dtsi"` or the DCC console
+binding is silently lost (console reverts to the unwired UART = 0-byte console).
+
+### Verified variant matrix (byte-exact `sf read` vs the flash backup)
+
+| Variant | `is-dual` | lanes | s25fl128s | probe / read | Use |
+|---|---|---|---|---|---|
+| **x4 (default)** | 0 | rx4 | `SKIP_SFDP` (table) | `s25fl128s` 16 MiB, byte-exact | High-speed flasher for this board |
+| x1 universal | 0 | rx1 | in table | `s25fl128s` 16 MiB, byte-exact | Any chip, known or unknown |
+| x1 generic proof | 0 | rx1 | removed | `spi-nor-generic` 16 MiB, byte-exact | Unknown-ID bypass proof |
+
+x4 **writes** (`spi-tx-bus-width = <4>`, quad page-program) are not yet HW-proven (needs a
+destructive round-trip). Generic bypass at x4 for an *unknown* chip depends on that chip's SFDP
+quad params being correct; a bad-SFDP chip must stay x1.
+
+---
+
+**Original 2023.01 draft (structural reference):**
 
 One U-Boot that folds the three things the boot-mode-independent JTAG flow needs:
 1. **DCC console** (`CONFIG_ARM_DCC`) → output visibility over JTAG, no UART

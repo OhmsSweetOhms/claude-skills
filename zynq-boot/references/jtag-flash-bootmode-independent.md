@@ -65,10 +65,19 @@ Host-side bridge: xsct's **`jtagterminal`** attaches a terminal to the target's 
 The cfgmem helper is an ELF despite the `.bin` name (entry `0xFFFC0000`, runs from OCM,
 no DDR needed), so `dow` loads it directly.
 
-**Building the custom DCC U-Boot** (folds DCC console + the JEDEC bypass + `loadx` into
-one image) is in `references/custom-dcc-uboot-build.md` with the defconfig delta and the
-patch `patches/0001-spi_nor-generic-any-jedec-fallback.patch`. Once built, point
-`--uboot` at its `u-boot.elf`.
+**Building the custom DCC U-Boot** (folds DCC console + the JEDEC bypass into one image) is
+in `references/custom-dcc-uboot-build.md`, **HW-verified 2026-07-06** from
+`xlnx_rebase_v2022.01_2022.2` (patch `patches/0002-...-2022.01.patch`; original 2023.01
+patch `0001-...` kept). Once built, point `--uboot` at its `u-boot.elf`.
+
+**Stock helper vs custom build — when to use which.** The stock `zynq_qspi_x1_single`
+cfgmem helper stays the DEFAULT (proven, zero build). The custom build is the FALLBACK for
+**a chip not in `spi_nor_ids[]`**: its generic-SFDP bypass is now proven on HW to probe an
+unknown chip at correct geometry with byte-exact reads. Two device-tree gotchas that cost a
+bench session and are baked into the build reference: force `&qspi is-dual = <0>` on a
+single-chip board (the zc706 default is dual-parallel → doubled geometry + `0x55` garbage),
+and pick the read lane width to match the chip's SFDP quality (x1 is universal; x4 needs the
+table's params via `SPI_NOR_SKIP_SFDP`).
 
 ## Usage
 
@@ -113,8 +122,9 @@ U-Boot built with `CONFIG_CMD_LOADX` **and** `CONFIG_ARM_DCC` is the only way to
 in-console transfer.)
 
 If `sf probe` rejects the chip with `unrecognized JEDEC id bytes`, that's the separate
-JEDEC issue — see research session finding A (patch `spi_nor_read_id` to fall back to a
-generic SFDP entry) and use a patched U-Boot here.
+JEDEC issue — build the generic-SFDP bypass U-Boot (`references/custom-dcc-uboot-build.md`,
+HW-verified 2026-07-06) and use it here. It probes any SFDP-compliant chip not in
+`spi_nor_ids[]`; a chip with no/bad SFDP still needs a real table entry.
 
 ## Verify on bring-up — RESOLVED on hardware (kept for the next board)
 
