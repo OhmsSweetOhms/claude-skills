@@ -2,10 +2,13 @@
 # over JTAG (no UART). Run via xsct; see scripts/jtag_qspi_flash.sh for the wrapper
 # that resolves paths and sources the toolchain.
 #
-# STATUS: authored, NOT yet hardware-verified. The reset/halt timing vs the BootROM
-# (ZB_* below) and whether the cfgmem helper presents an interactive DCC prompt are
-# the two spots to confirm on a real bring-up — see references/jtag-flash-bootmode-
-# independent.md.
+# STATUS: technique HW-verified on a hardwired-QSPI xc7z020 (2026-06-30..07-01). The
+# two author-flagged unknowns are RESOLVED: the halt race is won by an IMMEDIATE
+# `rst -system; stop` (any delay defeats it), and the cfgmem helper IS interactive
+# over DCC (`Zynq>` prompt; needs the OCM-high remap before dow — OCM-linked at
+# 0xFFFC0000). The PROVEN VEHICLE for the flow is the workbench dashboard
+# (references/zynq-jtag-flash-workbench.md); this standalone script has NOT been run
+# end-to-end as a whole — see references/jtag-flash-bootmode-independent.md.
 #
 # WHY THIS EXISTS: program_flash regressed in 2020.x+ (AMD AR 76051) and fails on a
 # board hardwired to QSPI/NAND boot mode. But the JTAG/DAP is always alive regardless

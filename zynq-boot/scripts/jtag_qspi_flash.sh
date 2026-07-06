@@ -5,7 +5,12 @@
 # CANNOT put into JTAG boot mode (e.g. hardwired-QSPI straps). See the companion
 # reference: references/jtag-flash-bootmode-independent.md.
 #
-# STATUS: authored, NOT yet hardware-verified.
+# STATUS: technique HW-verified on a hardwired-QSPI xc7z020 (halt race, PS bring-up
+# incl. the PLL_PWRDWN/MMU fixes, interactive DCC helper, sf probe/erase/write —
+# 2026-06-30..07-01), but the PROVEN VEHICLE is the workbench dashboard
+# (references/zynq-jtag-flash-workbench.md), which drives the same sequence via its
+# own driver. This one-shot wrapper has NOT been run end-to-end as a whole; treat it
+# as the scripted fallback and validate per references/jtag-flash-validation-plan.md.
 #
 # This wrapper exists to honor two zynq-boot rules: (1) source the Vitis toolchain so
 # xsct is on PATH, and (2) RESOLVE ALL PATHS TO ABSOLUTE here — xsct does NOT expand
