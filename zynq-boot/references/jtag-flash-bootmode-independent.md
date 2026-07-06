@@ -1,7 +1,9 @@
 # Boot-mode-independent QSPI flash over JTAG (no UART) — reference
 
-**STATUS: authored from primary-source forensics + AMD docs, NOT yet hardware-verified.**
-Promote to "verified" with a History entry after one real run (see "Verify on bring-up").
+**STATUS: HARDWARE-VERIFIED** on a hardwired-QSPI xc7z020 (Stages 1–3 incl. a full
+destructive erase → write-back → verify → power-cycle-boot round-trip, 2026-06-30 →
+2026-07-01; see History). The proven, packaged form of this flow is the browser
+workbench — `references/zynq-jtag-flash-workbench.md`.
 
 For a board you **cannot put into JTAG boot mode** — e.g. boot-mode straps hardwired
 to QSPI with resistors — and `program_flash` therefore fails. Generic technique, not
@@ -9,7 +11,8 @@ board-specific; the per-board paths (ps7_init, FSBL, U-Boot) are arguments.
 
 Driver: `scripts/jtag_qspi_flash.sh` → `scripts/jtag_qspi_flash.tcl`.
 Provenance for the findings below: research session
-`work/uboot/.research/session-20260629-093358/report.md` (findings A, C, E, F).
+`.research/session-20260629-093358/report.md` in the workbench repo
+(`OhmsSweetOhms/zynq-jtag-flash-workbench`) — findings A, C, E, F.
 
 ## Why program_flash fails on a hardwired-QSPI board
 
@@ -113,17 +116,19 @@ If `sf probe` rejects the chip with `unrecognized JEDEC id bytes`, that's the se
 JEDEC issue — see research session finding A (patch `spi_nor_read_id` to fall back to a
 generic SFDP entry) and use a patched U-Boot here.
 
-## Verify on bring-up (then promote STATUS + add History)
+## Verify on bring-up — RESOLVED on hardware (kept for the next board)
 
-Two spots are unverified and may need a board-specific tweak:
+The two author-flagged unknowns were both settled on the real board (2026-06-29/30):
 
-1. **Halt timing vs BootROM.** `rst -system; after 200; stop` should catch the core
-   before stale QSPI boots. If the old image boots too fast, try `rst -processor`, a
-   halt-on-reset, or erase the first flash sector first. Capture what worked.
-2. **Does the cfgmem helper give an interactive DCC prompt?** It is standard U-Boot, so
-   a boot-delay prompt is expected — but if `jtagterminal` shows no prompt (it may only
-   speak program_flash's scripted framing), load a custom `CONFIG_ARM_DCC=y` U-Boot
-   with `stdin/stdout/stderr=dcc` instead.
+1. **Halt timing vs BootROM: race WON with immediate `rst -system; stop` (NO delay).**
+   Confirmed twice independently (halted at PC `0x7a00` inside BootROM, DDR still
+   uninitialized). Any inserted delay (`after 200`) defeats the halt — it was removed
+   from the script. On another board, if the stale image still boots too fast: erase
+   sector 0 first, or `rst -processor` / halt-on-reset.
+2. **The cfgmem helper IS interactive over DCC.** Real `Zynq>` prompt via
+   `jtagterminal`; `version`, `sf probe`, `sf read` all work. No custom build needed
+   for a chip that's in the ID table. Caveat: the helper is OCM-linked at
+   `0xFFFC0000` — remap OCM high (SLCR-unlock → `OCM_CFG=0xF`) before `dow`.
 
 ## Symptom → cause
 
@@ -142,3 +147,14 @@ Two spots are unverified and may need a board-specific tweak:
 - Authored 2026-06-29 from research session 20260629-093358 (binary forensics of the
   2023.2 cfgmem helper + AR 76051 + u-boot-xlnx `xlnx_rebase_v2023.01_2023.2` source).
   Not yet run on hardware.
+- 2026-06-29/30: Stage 1 verified on a hardwired-QSPI xc7z020 — AR 76051 halt race won
+  with immediate `rst -system; stop`; PS/DDR up over JTAG after two board-specific root
+  causes (DDR/IO `PLL_PWRDWN=1` at cold boot → clear before ps7_init; stale A9 MMU →
+  `rst -processor`), both baked into `scripts/jtag_qspi_flash.tcl`.
+- 2026-06-30: Stage 2 verified — stock cfgmem helper interactive over DCC
+  (`jtagterminal`), `sf probe` = s25fl128s 16 MiB, full dump + `.mcs` + partition
+  extraction. OCM-high remap required before `dow` (helper linked at `0xFFFC0000`).
+- 2026-07-01: Stage 3 verified — destructive round-trip: full-chip `sf erase` (verified
+  0xFF) → write-back via `dow -data` + `sf write` → re-dump sha256 == source →
+  power-cycle boots. STATUS promoted. Full record: the workbench repo's
+  `.threads/zynq-boot/20260629-hardwired-qspi-jtag-flash/`.

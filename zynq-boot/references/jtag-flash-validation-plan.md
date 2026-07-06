@@ -17,7 +17,11 @@ gated: do not advance until the prior stage passes.
 > staging via `dow -data <img> 0x01000000` (script `--image`/`ZB_IMAGE`). So Stage-2
 > decision-tree A is now a *confirmation* that immediate `rst -system; stop` wins (not a
 > fix), and the Stage-2 "reviewer gap" path 1 (`dow -data`) is the built-in default.
-> STATUS remains: not yet hardware-verified.
+> STATUS: **Stages 1–3 PASSED on hardware** (hardwired-QSPI xc7z020; Stage 1–2
+> 2026-06-30, Stage 3 destructive round-trip 2026-07-01). This plan is kept as the
+> template for validating the flow on the *next* board; the executed record lives in
+> the workbench repo's `.threads/zynq-boot/20260629-hardwired-qspi-jtag-flash/` and in
+> `references/jtag-flash-bootmode-independent.md` History.
 
 ---
 

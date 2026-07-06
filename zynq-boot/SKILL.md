@@ -33,6 +33,7 @@ are a skeleton, and a board will not boot from guessed paths.
 |---|---|---|---|
 | AD9081 no-OS (bare-metal) | ZCU102 (ZynqMP) | QSPI | `references/ad9081-zcu102-noos.md` |
 | AD9986 + ADI Kuiper Linux | ZCU102 Rev1.0 + AD9986-FMCB | SD card | `references/ad9986-zcu102-kuiper-sdboot.md` |
+| JTAG flash workbench (browser dashboard) | custom Zynq-7000 xc7z020, **hardwired QSPI** | QSPI (flashed over JTAG/DCC, no UART) | `references/zynq-jtag-flash-workbench.md` |
 
 If the user's board/project isn't in this table, say so and ask whether to (a)
 proceed generically using the skeleton below, or (b) capture a new reference as
@@ -209,7 +210,10 @@ Use **`scripts/jtag_qspi_flash.sh`**: it halts the BootROM (`rst -system; stop`)
 re-inits the PS, loads a **DCC-console U-Boot** (the cfgmem helper, or a custom
 `CONFIG_ARM_DCC` build), and opens `jtagterminal` so you can run `sf probe/erase/write`
 over JTAG. Full rationale, the UART-vs-DCC table, and the bring-up verification steps
-live in **`references/jtag-flash-bootmode-independent.md`**. (Quicker alternative if
+live in **`references/jtag-flash-bootmode-independent.md`**. The flow is HW-proven and
+packaged as a **browser-dashboard workbench** (bring-up, DCC console, dump/erase/
+write-back, boot-image map) — for the board it was built on, prefer that tool:
+`references/zynq-jtag-flash-workbench.md`. (Quicker alternative if
 `program_flash` is otherwise fine: just prepend `rst -system; stop` before the
 `program_flash` call to apply the AR 76051 workaround without going fully manual.)
 
