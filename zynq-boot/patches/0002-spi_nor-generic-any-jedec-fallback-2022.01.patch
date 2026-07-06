@@ -1,0 +1,102 @@
+spi_nor: probe unknown JEDEC IDs via generic SFDP fallback (2022.01 port)
+
+When the read JEDEC RDID matches no entry in spi_nor_ids[], spi_nor_read_id()
+aborts with "unrecognized JEDEC id bytes" and probe fails. This adds an opt-in
+(CONFIG_SPI_FLASH_GENERIC_ANY_JEDEC) generic fallback: return a flash_info with
+id_len 0 and let geometry be discovered from the chip's SFDP tables, so
+program_flash / `sf probe` work with any SFDP-compliant SPI-NOR not in the table.
+
+The generic entry MUST set a DUAL/QUAD read flag: spi_nor_init_params() only
+parses SFDP when one of DUAL/QUAD/OCTAL_DTR_READ is set and SKIP_SFDP is clear
+(drivers/mtd/spi/spi-nor-core.c: the `info->flags & (... READ)` guard, at lines
+3020-3022 in this tree). It also requires CONFIG_SPI_FLASH_SFDP_SUPPORT; a
+non-SFDP chip yields size 0 (unusable, but it fails safe rather than writing
+with a wrong geometry).
+
+Tag: xlnx_rebase_v2022.01_2022.2 (U-Boot 2022.01). This is the port of
+patches/0001-spi_nor-generic-any-jedec-fallback.patch (written against
+xlnx_rebase_v2023.01_2023.2) to the 2022.01 branch, made because this machine
+has only Vitis 2021.1 + 2022.2 and the proven cfgmem helper here is the 2022.2
+one (U-Boot 2022.01). The code shapes are identical between the two branches;
+only the hunk line offsets differ. Verified against the 2022.01 checkout: the
+spi_nor_read_id() table-scan tail and the flash_info struct fields
+(name/id_len/page_size/flags) match, and the SFDP guard has the required
+DUAL|QUAD|OCTAL_DTR_READ && !SKIP_SFDP shape.
+
+PORT NOTE — defconfig (NOT in this patch; see references/custom-dcc-uboot-build.md):
+On xilinx_zynq_virt_defconfig the ZYNQ_QSPI driver weakly `imply`s
+SPI_FLASH_BAR, and SPI_FLASH_SFDP_SUPPORT `depends on !SPI_FLASH_BAR`. So the
+defconfig delta must ALSO carry `# CONFIG_SPI_FLASH_BAR is not set` or SFDP (and
+therefore this bypass) cannot be enabled. Safe for a <=16 MiB chip (3-byte
+addressing); >16 MiB parts that relied on BAR need SFDP-derived 4-byte
+addressing instead.
+
+STATUS: builds clean on 2022.01 (u-boot.elf, DDR-resident, entry 0x04000000).
+NOT yet hardware-verified — validate the unknown-ID probe per
+references/jtag-flash-validation-plan.md (plan-04 Steps 2-3) before relying on it.
+
+diff --git a/drivers/mtd/spi/Kconfig b/drivers/mtd/spi/Kconfig
+index 7c050d54..08f18cc8 100644
+--- a/drivers/mtd/spi/Kconfig
++++ b/drivers/mtd/spi/Kconfig
+@@ -88,6 +88,17 @@ config SPI_FLASH_SFDP_SUPPORT
+ 	 SPI NOR flashes using Serial Flash Discoverable Parameters (SFDP)
+ 	 tables as per JESD216 standard.
+
++config SPI_FLASH_GENERIC_ANY_JEDEC
++	bool "Probe unknown JEDEC IDs via a generic SFDP fallback"
++	depends on SPI_FLASH_SFDP_SUPPORT
++	help
++	 When the read JEDEC ID matches no entry in spi_nor_ids[], fall back to a
++	 generic flash_info and discover the geometry from the chip's SFDP tables
++	 instead of aborting with "unrecognized JEDEC id". Lets program_flash and
++	 `sf probe` work with any SFDP-compliant SPI-NOR that is not in the ID
++	 table. No effect on recognized chips. Useful for flashing custom boards
++	 whose QSPI part the tool's built-in table does not know.
++
+ config SPI_FLASH_SMART_HWCAPS
+ 	bool "Smart hardware capability detection based on SPI MEM supports_op() hook"
+ 	default y
+diff --git a/drivers/mtd/spi/spi-nor-core.c b/drivers/mtd/spi/spi-nor-core.c
+index b85073fe..29943e3c 100644
+--- a/drivers/mtd/spi/spi-nor-core.c
++++ b/drivers/mtd/spi/spi-nor-core.c
+@@ -1432,6 +1432,21 @@ static int stm_is_locked(struct spi_nor *nor, loff_t ofs, uint64_t len)
+ }
+ #endif /* CONFIG_SPI_FLASH_STMICRO */
+
++#if CONFIG_IS_ENABLED(SPI_FLASH_GENERIC_ANY_JEDEC)
++/*
++ * Returned by spi_nor_read_id() when the JEDEC ID is in no table entry.
++ * id_len 0 => never matches during the table scan; geometry comes from SFDP.
++ * The DUAL/QUAD_READ flags are REQUIRED to make spi_nor_init_params() parse
++ * SFDP (it gates SFDP on one of DUAL/QUAD/OCTAL_DTR_READ being set).
++ */
++static const struct flash_info spi_nor_generic_id = {
++	.name		= "spi-nor-generic",
++	.id_len		= 0,
++	.page_size	= 256,
++	.flags		= SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
++};
++#endif
++
+ static const struct flash_info *spi_nor_read_id(struct spi_nor *nor)
+ {
+ 	int			tmp;
+@@ -1455,9 +1470,16 @@ static const struct flash_info *spi_nor_read_id(struct spi_nor *nor)
+ 		}
+ 	}
+
++#if CONFIG_IS_ENABLED(SPI_FLASH_GENERIC_ANY_JEDEC)
++	dev_warn(nor->dev,
++		 "unrecognized JEDEC id %02x %02x %02x - using generic SFDP probe\n",
++		 id[0], id[1], id[2]);
++	return &spi_nor_generic_id;
++#else
+ 	dev_err(nor->dev, "unrecognized JEDEC id bytes: %02x, %02x, %02x\n",
+ 		id[0], id[1], id[2]);
+ 	return ERR_PTR(-ENODEV);
++#endif
+ }
+
+ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
