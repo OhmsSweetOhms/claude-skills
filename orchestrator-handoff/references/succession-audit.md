@@ -25,6 +25,14 @@ enumerate the options in different orders — common when an escalation is
 summarized twice — the label silently inverts. Rulings must be stated as
 the words of the choice; flag and fix any that aren't.
 
+**2b. Cross-surface copy drift.**
+For each cache decision entry that cites a live thread, diff it against
+that thread's current-truth block — copies drift, because the worker that
+re-rules a point updates only the surface it owns. Any divergence: the
+thread surface wins (it's the owner); repair the cache copy in the same
+pass, or demote it to a pointer if the thread is still churning the
+point.
+
 **3. Claim verification (spot-check, cheap, high hit-rate).**
 - "Tests pass" → re-run them, with the project's actual interpreter/venv
   (system python vs project venv is a classic false failure).

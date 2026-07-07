@@ -55,6 +55,19 @@ handoffs and registries that are POLLED at boot; the cache stores only
 what to poll. If you catch yourself writing "currently" into the cache,
 stop.
 
+**A decision still being litigated by a live worker is status, not a
+decision.** The "same commit" rule only protects surfaces the deciding
+session OWNS — when a worker re-rules something mid-exploration, it
+updates its own handoff and has no reason to know the cache holds a
+verbatim copy. So don't mirror a live thread's evolving rulings into the
+cache: cache the pointer to the owning surface until the thread stops
+churning them, then ink the settled version. If a ruling genuinely must
+be duplicated cross-surface while still live (the whole program depends
+on it), name the owning surface in the entry so auditors know what to
+diff it against. (Earned 2026-07-07: a cache kept a trade ruling its
+owning thread had refuted and re-ruled within hours — a cold orchestrator
+would have inherited the inverted ruling.)
+
 **Cite decisions by content, never by labels that can collide.** If two
 documents enumerate options (a)/(b)/(c) in different orders — and they
 will — a ruling recorded as "option (b)" silently inverts. Record rulings
