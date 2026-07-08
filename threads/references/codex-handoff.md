@@ -56,6 +56,26 @@ correspond to plan-hop closures. Keeping the branch isolated until
 thread close means `main` gets one (or a small number of) clean
 commits that map to the thread's PASS/FAIL outcome.
 
+- **The worktree has a host-local layer that does NOT travel with the
+  branch.** The `codex-handoff/` inboxes (handbacks, scripts, launch
+  packets, `env.sh`), staged build products, `.envrc`, and the venv
+  link exist only on the machine that created them. A worktree
+  re-instantiated on a second host (fresh `git worktree add` from a
+  pushed branch) silently lacks ALL of it — and uniform file mtimes
+  plus a clean `git status` make the gap easy to misread as data loss
+  or, worse, to not notice at all. When a thread changes executing
+  hosts: (a) emit launch packets and bootstrap the plan inbox ON the
+  executing host, never assume they traveled; (b) treat build
+  products as regenerate-on-host (a scripted cold regen doubles as a
+  profile/recipe durability test); (c) the thread's findings files —
+  not the inbox handbacks — are the durable record, so bank anything
+  load-bearing there before the hop ends. (Earned 2026-07-07,
+  native-rate-smoke thread: a cross-host pickup found the inboxes and
+  bitstream "missing"; nothing was lost — the mailbox is never
+  committed by design — but the launch checklist had no
+  executing-host step, and the recorded `codex_worktrees[].notes`
+  claimed inboxes that only existed on the other machine.)
+
 ## The thread ↔ worktree link
 
 A thread's `thread.json` carries a back-pointer to its worktree as
