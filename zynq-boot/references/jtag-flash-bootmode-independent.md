@@ -144,6 +144,56 @@ xsdb jtag_erase_reflash.tcl erase       --ps7 ps7_init.tcl
 xsdb jtag_erase_reflash.tcl erase+flash boot.mcs --ps7 ps7_init.tcl
 ```
 
+### Copy-paste quick start (novice-friendly, Linux)
+
+Each line is safe to paste as-is; adjust only the Vitis version and your own file names.
+Steps 4 and 5 are **DESTRUCTIVE** — they wipe the entire QSPI flash.
+
+```bash
+# 0) ONE-TIME: put the U-Boot helper next to the script (it is not shipped in this repo)
+cp /tools/Xilinx/Vitis/2022.2/data/xicom/cfgmem/uboot/zynq_qspi_x1_single.bin ~/.claude/skills/zynq-boot/scripts/
+
+# 1) EVERY NEW TERMINAL: put xsdb on PATH (match your installed Vitis version)
+source /tools/Xilinx/Vitis/2022.2/settings64.sh
+
+# 2) get ps7_init.tcl out of YOUR board's .xsa export (an .xsa is just a zip;
+#    if this says "caution: filename not matched", run `unzip -l system_wrapper.xsa`
+#    to see where ps7_init.tcl lives inside it)
+unzip -o system_wrapper.xsa ps7_init.tcl
+
+# 3) read the tool's built-in help (safe, touches nothing)
+xsdb ~/.claude/skills/zynq-boot/scripts/jtag_erase_reflash.tcl --help
+
+# 4) DESTRUCTIVE: wipe the whole flash and verify it reads back blank
+xsdb ~/.claude/skills/zynq-boot/scripts/jtag_erase_reflash.tcl erase --ps7 ./ps7_init.tcl
+
+# 5) DESTRUCTIVE: wipe, program boot.mcs, and verify byte-for-byte
+xsdb ~/.claude/skills/zynq-boot/scripts/jtag_erase_reflash.tcl erase+flash ./boot.mcs --ps7 ./ps7_init.tcl
+
+# 6) power-cycle the board — it boots the new image via its QSPI strap
+```
+
+Variations you may need:
+
+```bash
+# a Vivado GUI (or another xsdb) already owns the JTAG cable -> join ITS hw_server:
+xsdb ~/.claude/skills/zynq-boot/scripts/jtag_erase_reflash.tcl erase --ps7 ./ps7_init.tcl --url tcp:localhost:3121
+
+# shortcut that skips step 1 (the wrapper finds Vitis and sources it for you):
+~/.claude/skills/zynq-boot/scripts/jtag_erase_reflash.sh erase+flash ./boot.mcs --ps7 ./ps7_init.tcl
+
+# something failed? the run log holds every command + result (newest last):
+ls -t jtag_erase_reflash-*.log | head -1
+```
+
+Windows (Command Prompt) equivalents of steps 1/3/5 — same script, same arguments:
+
+```bat
+C:\Xilinx\Vitis\2022.2\settings64.bat
+xsdb %USERPROFILE%\.claude\skills\zynq-boot\scripts\jtag_erase_reflash.tcl --help
+xsdb %USERPROFILE%\.claude\skills\zynq-boot\scripts\jtag_erase_reflash.tcl erase+flash boot.mcs --ps7 ps7_init.tcl
+```
+
 Options: `--uboot <elf>` (default: the 2022.2 `zynq_qspi_x1_single.bin` carried next to
 the script — a Xilinx-EULA binary, so it is NOT in this public repo; copy it from
 `<Vitis-2022.2>/data/xicom/cfgmem/uboot/`), `--url <hw_server>` (default auto-starts a
