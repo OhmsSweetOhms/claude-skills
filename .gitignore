@@ -8,3 +8,9 @@ research/references/domains/_pending.json
 # These carry host-absolute paths / project bookkeeping and belong in the
 # project's .threads/ tracking, not in this shareable-skills repo.
 codex-handoff/
+# zynq-boot: the pinned Vitis 2022.2 cfgmem U-Boot helper lives NEXT TO the
+# erase/reflash script (self-contained default, plan-08 D6) but is a
+# Xilinx-EULA tool component — this repo is public, so it is not tracked.
+# Copy it from <Vitis-2022.2>/data/xicom/cfgmem/uboot/ (the script's
+# file-not-found hint says the same).
+zynq-boot/scripts/zynq_qspi_x1_single.bin
