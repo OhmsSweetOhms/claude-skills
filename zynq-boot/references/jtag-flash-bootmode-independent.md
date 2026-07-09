@@ -276,7 +276,8 @@ The two author-flagged unknowns were both settled on the real board (2026-06-29/
   `.threads/zynq-boot/20260629-hardwired-qspi-jtag-flash/`.
 - 2026-07-09: `jtag_erase_reflash.tcl` landed (workbench plan-08) — the one-shot
   automated erase / erase+flash, HW-verified end-to-end on the same board: erase (49 s),
-  erase+flash of a 4.2 MiB image with byte-identical readback (~1 m 25 s), and a
-  post-flash free-run `rst -system` boot check (PLL 0x3F, DDRC normal, app PC in DDR).
+  erase+flash of a 4.2 MiB image with byte-identical readback (~1 m 25 s), a post-flash
+  free-run `rst -system` boot check, AND a physical power-cycle boot (both A9s Running,
+  PLL 0x3F, DDRC normal, app PC in DDR, no debug-AP wedge).
   Carries the two 2026-07-09 driver fixes: halt-on-reset `rst -system -stop` (e2bf200)
   and `rst -dap` DAP self-recovery (b210080).
