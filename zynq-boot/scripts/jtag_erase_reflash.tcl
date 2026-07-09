@@ -232,6 +232,301 @@ logputs "hw_server: [expr {$URL ne "" ? $URL : "(auto-start local)"}]"
 logputs "chip size: [expr {$CHIPSIZE ne "" ? $CHIPSIZE : "(auto from sf probe)"}]"
 logputs "log:       $LOG"
 
+# --------------------------------------------------------------- event-loop-safe sleep
+# The jtagterminal DCC<->TCP bridge is pumped by xsdb's OWN Tcl event loop. A plain
+# `after <ms>` (or a blocking socket read) would freeze that loop and starve the bridge —
+# no DCC bytes would ever reach our socket. So every wait goes through vwait, which keeps
+# the event loop running while we sleep. (This differs from the dashboard, whose socket
+# client is a separate Python process; in-process is the price of a single-file tool.)
+set ::wake_seq 0
+proc sleep_ms {ms} {
+    set var ::wake[incr ::wake_seq]        ;# unique var per sleep: nested vwaits can't collide
+    after $ms [list set $var 1]            ;# schedule the wake-up event
+    vwait $var                             ;# process events (incl. the DCC bridge) until it fires
+    unset $var
+}
+
+# ------------------------------------------------------------------ target selection
+# Select the Zynq-7000's A9 core 0 — the UNIQUE name on a multi-device JTAG chain (an
+# "APU"/"DAP" filter would also match a co-resident ZynqMP and error out), and using it as
+# the `rst -system` target scopes the reset to THIS board. Ported from the dashboard's
+# _select_a9 (commit b210080), including the self-recovery:
+#
+# When the board's QSPI FSBL has run (a board that sat powered on its own image), it can
+# leave the A9's debug AHB-AP wedged (DAP status 0x30000021 "AHB AP transaction error");
+# the A9 falls off the debug bus and `targets -set` fails "no targets found" (only the DAP
+# + jtag device remain). `rst -system` can't clear that — it's a soft SLCR reset, not a
+# debug-logic reset. `rst -dap` (Arm DAP reset) does. The DAP filter is ambiguous on a
+# multi-device chain, so if `targets -set` reports >1 match we surface a power-cycle hint
+# rather than reset the WRONG board's DAP.
+proc select_a9 {} {
+    # Fast path: the A9 is on the bus (healthy board / already-recovered DAP).
+    if {![catch {targets -set -nocase -filter {name =~ "*Cortex-A9*#0"}} err]} { return }
+    if {[string first "no targets found" [string tolower $err]] < 0} {
+        # Some OTHER selection failure (chain unreadable, cable gone) — not the wedge.
+        die "cannot select the Cortex-A9 target: $err" \
+            "board off/unplugged, wrong cable, or another tool owns the JTAG — check the cable and close other xsdb/Vivado hardware sessions (or pass --url of the session that owns it)"
+    }
+    logputs "A9 off the debug bus (FSBL-wedged DAP?) — attempting rst -dap self-recovery"
+    # rst -dap needs a DAP-type target (the jtag-device 'xc7z020' target answers
+    # "Invalid reset type"). If the DAP name matches more than one device, targets -set
+    # errors — deep-wedged + ambiguous means only a power-cycle is safe.
+    if {[catch {targets -set -nocase -filter {name =~ "*DAP*"}} err2]} {
+        die "A9 debug target is wedged and the DAP filter is ambiguous/unavailable: $err2" \
+            "power-cycle the board, then re-run (a FSBL-wedged debug AP cannot be cleared over JTAG on a multi-device chain)"
+    }
+    if {[catch {rst -dap} err3]} {
+        die "rst -dap failed: $err3" "power-cycle the board, then re-run"
+    }
+    sleep_ms 500                            ;# give the DAP a moment to re-enumerate targets
+    # Retry once after the DAP reset; if the A9 is still absent, only power fixes it.
+    if {[catch {targets -set -nocase -filter {name =~ "*Cortex-A9*#0"}} err4]} {
+        die "A9 still absent after rst -dap: $err4" \
+            "power-cycle the board, then re-run (deep wedge — DAP status 0x30000021 class)"
+    }
+    logputs "rst -dap recovery OK — A9 back on the debug bus"
+}
+
+# ------------------------------------------------------------------------- PS bring-up
+# The HW-proven boot-mode-independent bring-up (thread findings 2026-06-30 .. 07-09; the
+# dashboard's bringup()/_ps_up_dow_uboot is the proven vehicle). Leaves the DCC-console
+# U-Boot RUNNING with DDR up and the QSPI controller initialized.
+proc bringup {} {
+    global PS7 UBOOT
+    # Discard any stale DCC terminal FIRST — before rst/dow/con. The ARM DCC is a single
+    # 1-word channel: a leftover bridge (e.g. from a prior failed run) holds buffered
+    # host->target bytes that would be fed into the NEXT U-Boot at `con`, corrupting its
+    # first probe (this exactly broke recovery after the 2021.1 dud helper).
+    logputs "+ jtagterminal -stop (discard any stale DCC bridge)"
+    catch {jtagterminal -stop}
+
+    # --- THE CRUX: halt-on-reset (AR 76051 + AR 68065) ---
+    # `rst -system -stop` makes the debugger suspend the cores AS PART OF the reset
+    # (vector catch), pinning the A9 at the reset vector BEFORE the BootROM can boot stale
+    # QSPI. The old form — `rst -system` then a separate `stop` — RESUMES the cores by
+    # default and races the FSBL; on a board whose flash holds a valid image the FSBL wins,
+    # reconfigures the PS, and ps7_init then dies with "AP transaction timeout" @0xE0001034
+    # (commit e2bf200; do NOT regress this).
+    run {rst -system -stop} \
+        "reset failed — if the error mentions 'Cannot reset APU'/'PLL lock', this ps7_init/XSA does not match the board (use the board's own .xsa export); otherwise power-cycle and re-run"
+    select_a9                               ;# reset can re-enumerate; re-pin the A9
+    catch {stop}                            ;# belt-and-braces; "already stopped" is fine
+
+    # --- power up the DDR/IO PLLs BEFORE ps7_init (UG585 "Exit Sleep") ---
+    # Some boot states leave slcr.{DDR,IO}_PLL_CTRL[PLL_PWRDWN]=1. Stock ps7_init only
+    # writes the FDIV/BYPASS/RESET fields and NEVER clears PWRDWN — so it pulses RESET on
+    # a powered-down PLL that can never lock: PLL_STATUS sticks at 0x39 (ARM locks, DDR/IO
+    # don't) and DDR never comes up. Clear PWRDWN first (verified: 0x39 -> 0x3F, DDRC up).
+    run {mwr -force 0xF8000008 0x0000DF0D} ;# SLCR unlock (write key, UG585)
+    run {mwr -force 0xF8000104 [expr {[mrd -value 0xF8000104] & ~0x2}]} ;# DDR_PLL_CTRL[PLL_PWRDWN]=0
+    run {mwr -force 0xF8000108 [expr {[mrd -value 0xF8000108] & ~0x2}]} ;# IO_PLL_CTRL [PLL_PWRDWN]=0
+
+    # --- PS init: direct register writes from the board-matching ps7_init.tcl ---
+    # Reconfigures clocks, DDR, and MIO (incl. the QSPI pins) without ever reading the
+    # boot-mode straps — this is what makes the whole flow boot-mode-independent.
+    logputs "+ source ps7_init.tcl; ps7_init"
+    if {[catch {
+        uplevel #0 [list source $PS7]       ;# defines ps7_init (+ post_config) globally
+        ps7_init
+    } err]} {
+        die "ps7_init failed: $err" \
+            "'AP transaction timeout @0xE0001034' means a FSBL seized the PS before the halt (should not happen after rst -system -stop; power-cycle if the board is deep-wedged). 'Cannot reset APU'/'PLL lock' means this ps7_init/.xsa is for a DIFFERENT board — use the board's own export."
+    }
+    catch {ps7_post_config}                 ;# PL/EMIO setup if the export defines it
+
+    # --- drop the stale APU MMU so debugger DRAM access works ---
+    # A halted boot image usually leaves the MMU enabled; debugger writes to DRAM (the
+    # `dow -data` staging below) would fault "MMU section translation fault" even with DDR
+    # up. `rst -processor` resets ONLY the core (PC->0, MMU off); PS/PLLs/DDR survive.
+    run {rst -processor} "processor reset failed — power-cycle and re-run"
+    catch {stop}                            ;# rst -processor leaves it halted; ignore "already"
+
+    # --- map OCM high so the cfgmem helper can load at its link address ---
+    # The helper is linked/entered at 0xFFFC0000 (high OCM). slcr.OCM_CFG[RAM_HI] resets
+    # to 0 -> all four 64K OCM blocks map LOW, 0xFFFC0000 is unbacked, and `dow` fails
+    # "OCM is not enabled at 0xFFFC0000". RAM_HI=1111 maps OCM0..3 contiguous high (UG585
+    # Table 29-4). Also enable SCU address filtering so the A9 routes 0x00100000..
+    # 0xFFE00000 to DDR — U-Boot relocates itself into DRAM and our staging lives there.
+    run {mwr -force 0xF8000008 0x0000DF0D}  ;# re-unlock SLCR (ps7_init locks it on exit)
+    run {mwr -force 0xF8000910 0x0000000F}  ;# OCM_CFG RAM_HI=1111: OCM0..3 -> 0xFFFC0000+
+    run {mwr 0xF8F00040 0x00100000}         ;# SCU filter start (DDR window base)
+    run {mwr 0xF8F00044 0xFFE00000}         ;# SCU filter end
+    run {mwr 0xF8F00000 [expr {[mrd -value 0xF8F00000] | 0x2}]} ;# SCU addr-filter enable
+
+    # --- load + run the DCC-console U-Boot (dow sets PC to the ELF entry) ---
+    # The cfgmem helper has NO UART driver — only drivers/serial/arm_dcc.c. Its console
+    # rides the same JTAG cable we're on; jtagterminal bridges it to a TCP socket below.
+    logputs "+ dow (load U-Boot helper into OCM)"
+    if {[catch {dow $UBOOT} err]} {
+        die "loading U-Boot failed: $err" \
+            "'OCM is not enabled at 0xFFFC0000' means the OCM-high remap didn't take — check the SLCR unlock + OCM_CFG writes above (did ps7_init re-lock the SLCR?)"
+    }
+    run {con} "resume (con) failed — power-cycle and re-run"
+    logputs "U-Boot helper running — bring-up complete"
+}
+
+# --------------------------------------------------------------------- DCC console I/O
+# Drive U-Boot over the jtagterminal TCP bridge. All reads are NON-BLOCKING + sleep_ms
+# (see above: a blocking read would starve the very event loop that feeds the socket).
+set ::DCC ""                               ;# the bridge socket, once open
+
+# Read whatever bytes are pending right now (may be ""). EOF means the bridge died.
+proc dcc_avail {} {
+    set d [read $::DCC]
+    if {[eof $::DCC]} { die "DCC bridge socket closed unexpectedly" \
+        "the jtagterminal bridge died — re-run; if it repeats, power-cycle the board" }
+    return $d
+}
+
+# Read until the console has been SILENT for `quiet` ms (drain pending output).
+proc dcc_drain {{quiet 500}} {
+    set buf ""
+    set last [clock milliseconds]
+    while {[clock milliseconds] - $last < $quiet} {
+        set d [dcc_avail]
+        if {[string length $d]} { append buf $d; set last [clock milliseconds] }
+        sleep_ms 50
+    }
+    return $buf
+}
+
+# Read until the console is QUIESCENT at a prompt: "Zynq> " seen AND no bytes for
+# `settle` ms, bounded by `overall`. This U-Boot flushes its pre-console buffer
+# asynchronously, so the banner (and even a stray prompt) can arrive out of order while
+# output still streams; probing mid-flush desyncs the whole session (dashboard lesson:
+# a fixed delay broke ~50% of bring-ups). A dud helper never prompts — bail early.
+proc dcc_sync_to_prompt {{settle 900} {overall 15000}} {
+    set buf ""
+    set deadline [expr {[clock milliseconds] + $overall}]
+    set last [clock milliseconds]
+    while {[clock milliseconds] < $deadline} {
+        set d [dcc_avail]
+        if {[string length $d]} { append buf $d; set last [clock milliseconds] }
+        # A helper that aborted during init says so and will never prompt — stop waiting.
+        if {[string first "Please RESET the board" $buf] >= 0} { break }
+        if {[string first "Zynq> " $buf] >= 0
+            && [clock milliseconds] - $last >= $settle} { break }
+        sleep_ms 50
+    }
+    return $buf
+}
+
+# Send one U-Boot command and read until the next "Zynq> " prompt (or timeout). U-Boot
+# echoes the command itself, so we never locally echo it (that garbles the transcript).
+proc dcc_drive {cmd {timeout 60000}} {
+    dcc_drain 300                           ;# clear any stragglers from the previous command
+    puts -nonewline $::DCC "$cmd\r"         ;# U-Boot wants CR line endings
+    flush $::DCC
+    set buf ""
+    set deadline [expr {[clock milliseconds] + $timeout}]
+    while {[clock milliseconds] < $deadline} {
+        set d [dcc_avail]
+        if {[string length $d]} { append buf $d }
+        if {[string first "Zynq> " $buf] >= 0} { break }
+        sleep_ms 50
+    }
+    return $buf
+}
+
+# Classify accumulated U-Boot console text (dashboard's _classify_uboot, proven ordering):
+# dud first (an aborted helper never prints 'Detected' anyway), then detection. Callers
+# must classify ALL text seen since the session opened, not just the latest response —
+# ghost bytes from a prior failed session can make the DETECTION fire in the boot banner
+# (single-word DCC FIFO), leaving the explicit probe a silent no-op.
+proc classify_uboot {text} {
+    foreach marker {"Please RESET the board" "initcall sequence"} {
+        if {[string first $marker $text] >= 0} { return "dud" }
+    }
+    if {[string first "Detected" $text] >= 0} { return "detected" }
+    return "no-detect"
+}
+
+# Parse the flash size from sf probe output "total N MiB/KiB/Bytes".
+proc parse_chip_size {text} {
+    if {[regexp {total\s+(\d+)\s+(MiB|KiB|Bytes)} $text -> n unit]} {
+        switch -exact -- $unit {
+            MiB   { return [expr {$n * 1024 * 1024}] }
+            KiB   { return [expr {$n * 1024}] }
+            Bytes { return $n }
+        }
+    }
+    return 0
+}
+
+# Open the DCC bridge socket and sync U-Boot to a usable prompt; then sf probe (with the
+# proven retry + whole-transcript classification). Sets ::DCC and returns the chip size.
+proc open_uboot_console {} {
+    global CHIPSIZE
+    # Exactly ONE terminal may own the DCC (single 1-word channel — two bridges steal
+    # each other's bytes and ~50% of bring-ups scramble). Stop any leftover, then open ours.
+    logputs "+ jtagterminal -stop; jtagterminal -socket (bridge DCC to a local TCP port)"
+    catch {jtagterminal -stop}
+    if {[catch {set port [string trim [jtagterminal -socket]]} err]} {
+        die "jtagterminal -socket failed: $err" \
+            "no DCC bridge — is the A9 target still selected and U-Boot running? Re-run; power-cycle if it repeats"
+    }
+    set ::DCC [socket 127.0.0.1 $port]
+    # Binary + non-blocking + unbuffered: raw console bytes, and reads that never stall
+    # the event loop pumping the bridge (see sleep_ms).
+    fconfigure $::DCC -translation binary -blocking 0 -buffering none
+    logputs "DCC console bridged on 127.0.0.1:$port"
+
+    # Wait for the banner to finish and the prompt to appear (quiescence, not a fixed delay).
+    set banner [dcc_sync_to_prompt]
+    logputs "--- U-Boot banner ---\n[string trim $banner]\n---------------------"
+    if {[classify_uboot $banner] eq "dud"} {
+        die "U-Boot helper aborted during init (dud cfgmem build — env_init/-ENODEV class)" \
+            "use the pinned Vitis 2022.2 zynq_qspi_x1_single.bin (the 2021.1 build is a known dud); pass it with --uboot or copy it next to this script"
+    }
+
+    # sf probe — retry loop (flaky DCC links drop lines). Classify against EVERYTHING seen
+    # since the socket opened, not the latest attempt (see classify_uboot).
+    set seen $banner
+    for {set attempt 1} {$attempt <= 4} {incr attempt} {
+        set resp [dcc_drive "sf probe 0 0 0" 20000]
+        append seen $resp
+        if {[classify_uboot $seen] eq "detected"} {
+            # Log the device line ("SF: Detected n25q128a11 ...") — it names the part and
+            # the sizes, which is what a post-mortem reader wants from this step.
+            logputs "sf probe attempt $attempt/4: DETECTED — [string trim $resp]"
+            break
+        }
+        logputs "sf probe attempt $attempt/4: no-detect — [string trim $resp]"
+        sleep_ms 500
+    }
+    if {[classify_uboot $seen] ne "detected"} {
+        die "sf probe failed after 4 tries" \
+            "no flash detected: wrong QSPI MIO in this ps7_init, a dud cfgmem helper, or a flaky DCC link (reseat the JTAG cable). Use the board's own .xsa and the pinned 2022.2 helper."
+    }
+
+    # Chip size: explicit --chip-size wins; else parse the probe/banner text.
+    if {$CHIPSIZE ne ""} {
+        set chip $CHIPSIZE
+        logputs "chip size: $chip bytes (from --chip-size)"
+    } else {
+        set chip [parse_chip_size $seen]
+        if {$chip == 0} {
+            die "could not parse the flash size from sf probe output" \
+                "pass --chip-size <bytes> explicitly (e.g. --chip-size 0x1000000 for 16 MiB)"
+        }
+        logputs "chip size: $chip bytes ([expr {$chip / 1048576}] MiB, from sf probe)"
+    }
+    return $chip
+}
+
 # ------------------------------------------------------------------------ mode dispatch
-# Step 1+ fills these in: bring-up, staging, erase, program, verify.
-die "not implemented yet: mode '$MODE' (plan-08 Step 1+)"
+# Connect to the hw_server. With --url we join an existing server (e.g. a Vivado GUI's);
+# without, plain `connect` auto-starts a local one — no tool paths needed (requirement 3).
+if {$URL ne ""} {
+    run [list connect -url $URL] \
+        "cannot reach hw_server at the given --url — is it running? (check the Vivado/xsdb session that owns the cable, or drop --url to auto-start a local server)"
+} else {
+    run {connect} \
+        "cannot start/reach a local hw_server — is the JTAG cable plugged in and the toolchain sourced?"
+}
+select_a9                                   ;# pin the A9 (with rst -dap self-recovery)
+bringup                                     ;# proven PS bring-up; leaves U-Boot running
+set CHIP [open_uboot_console]               ;# DCC bridge + sf probe; flash size in bytes
+
+# Step 2+ fills these in: staging, erase, program, verify.
+die "not implemented yet: mode '$MODE' beyond bring-up (plan-08 Step 2+)"
