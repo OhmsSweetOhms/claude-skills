@@ -700,12 +700,136 @@ select_a9                                   ;# pin the A9 (with rst -dap self-re
 bringup                                     ;# proven PS bring-up; leaves U-Boot running
 set CHIP [open_uboot_console]               ;# DCC bridge + sf probe; flash size in bytes
 
+# ------------------------------------------------------------- flash readback (verify)
+# Read a flash region back to a HOST file: U-Boot sf-reads it into DRAM, then the debugger
+# pulls it over the DAP with mrd -bin (the same two-hop path the dashboard's dump/verify
+# uses). The readback lands at a SEPARATE DRAM address from the staged write image —
+# unlike the dashboard (whose erase-verify never coexists with a staged image), this
+# script stages BEFORE erasing, so reusing 0x00100000 here would clobber the image.
+set READBACK_ADDR 0x02000000                ;# 32 MiB into DDR: clear of the <=16 MiB staged
+                                            ;# image at 0x00100000, inside the SCU DDR window
+proc read_flash_to_file {flash_off length outfile} {
+    global READBACK_ADDR
+    # U-Boot copies flash -> DRAM (on-chip, fast). "Read: OK" is its success marker.
+    set resp [dcc_drive [format "sf read 0x%x 0x%x 0x%x" $READBACK_ADDR $flash_off $length] 600000]
+    if {[string first "Read: OK" $resp] < 0} {
+        die "sf read @0x[format %x $flash_off] failed: [string trim $resp]" \
+            "flash readback failed — flaky DCC link (reseat the JTAG cable) or the QSPI dropped off; re-run"
+    }
+    # Debugger pulls DRAM -> host file. Core must be halted for JTAG memory access;
+    # resume after so the U-Boot console session stays alive.
+    catch {stop}
+    run [list mrd -bin -file $outfile $READBACK_ADDR [expr {$length / 4}]] \
+        "JTAG readback (mrd -bin) failed — re-run; power-cycle if it repeats"
+    run {con} "resume after readback failed — power-cycle and re-run"
+    # Hand the caller the bytes.
+    set f [open $outfile r]
+    fconfigure $f -translation binary
+    set bytes [read $f]
+    close $f
+    return $bytes
+}
+
+# ------------------------------------------------------------------------- erase (both)
+# Full-chip erase (requirement 8), then verify a spread of sampled regions read back all
+# 0xFF — a fast fail-fast on the erase itself (the program-verify later is authoritative
+# for the written span). Sample offsets: start, middle, last 64 KiB sector.
+proc do_erase {chip} {
+    global LOG
+    logputs "== ERASING the full [expr {$chip / 1048576}] MiB chip (destructive; typically 1-3 min) =="
+    set resp [dcc_drive [format "sf erase 0 0x%x" $chip] 900000]
+    # U-Boot's success line is "SF: <n> bytes @ 0x0 Erased: OK" — require it verbatim.
+    # (Matching a bare lowercase "erased" would false-positive on the command echo itself.)
+    if {[string first "Erased: OK" $resp] < 0} {
+        die "sf erase did not report success: [string trim $resp]" \
+            "erase failed — flash write-protected? flaky DCC? Check the sf output above; re-run, and use the board's own .xsa + the 2022.2 helper"
+    }
+    logputs "erase reported OK — verifying sampled regions read back 0xFF"
+    set sample_len 0x10000                  ;# one 64 KiB erase sector per sample
+    set all_ff [string repeat \xFF $sample_len]
+    set bad {}
+    foreach off [list 0 [expr {$chip / 2}] [expr {$chip - $sample_len}]] {
+        set got [read_flash_to_file $off $sample_len "[file rootname $LOG]-ffcheck.bin"]
+        if {![string equal $got $all_ff]} {
+            lappend bad [format 0x%x $off]
+            logputs "verify @[format 0x%x $off]: NOT erased (non-0xFF bytes present)"
+        } else {
+            logputs "verify @[format 0x%x $off]: all 0xFF OK"
+        }
+    }
+    file delete -force "[file rootname $LOG]-ffcheck.bin"
+    if {[llength $bad] > 0} {
+        die "post-erase verify failed at offset(s): [join $bad {, }]" \
+            "the chip did not erase clean — re-run; if it repeats, the flash may be write-protected or failing"
+    }
+    logputs "== erase verified: sampled regions all 0xFF =="
+}
+
+# --------------------------------------------------------------- program + verify (D5)
+# Write the staged image span to offset 0, then read the WHOLE span back and compare it
+# byte-for-byte against the staged bytes (plan-08 D5 allows re-reading the used region —
+# stronger than a spot-check, and the span readback costs well under a minute over JTAG).
+proc do_program {chip} {
+    global BIN STAGE_ADDR LOG
+    set used [string length $BIN]
+    logputs "== PROGRAMMING $used bytes ([format 0x%x $used]) at offset 0 =="
+    set resp [dcc_drive [format "sf write 0x%x 0 0x%x" $STAGE_ADDR $used] 600000]
+    # U-Boot's success line: "SF: <n> bytes @ 0x0 Written: OK" — require it verbatim.
+    if {[string first "Written: OK" $resp] < 0} {
+        die "sf write did not report success: [string trim $resp]" \
+            "write failed mid-image — the chip is now erased+partially written: fix the link (reseat cable), then re-run erase+flash"
+    }
+    logputs "write reported OK — reading the full span back for byte-for-byte verify"
+    set rbfile "[file rootname $LOG]-readback.bin"
+    set got [read_flash_to_file 0 $used $rbfile]
+    if {![string equal $got $BIN]} {
+        # Name the first differing offset — that's the datum a bench debug needs.
+        set n [string length $got]
+        set first -1
+        for {set i 0} {$i < $used} {incr i 4096} {
+            set end [expr {min($i + 4095, $used - 1)}]
+            if {![string equal [string range $got $i $end] [string range $BIN $i $end]]} {
+                for {set j $i} {$j <= $end} {incr j} {
+                    if {[string index $got $j] ne [string index $BIN $j]} { set first $j; break }
+                }
+                break
+            }
+        }
+        file delete -force $rbfile          ;# keep nothing stale; the log names the offset
+        die "readback mismatch: flash differs from the staged image (readback $n bytes, first diff @ byte [format 0x%x $first])" \
+            "the write verified bad — re-run erase+flash; if it repeats at the same offset, suspect a failing flash sector"
+    }
+    file delete -force $rbfile
+    logputs "== program verified: $used bytes read back byte-identical =="
+}
+
 # Stage BEFORE erasing: if the JTAG load or its spot-check fails, the flash is untouched.
 # (sf erase never touches DRAM — the cfgmem helper runs entirely in OCM, so the staged
 # bytes survive the erase that follows.)
 if {$MODE eq "erase+flash"} {
+    # The image has to fit the chip we just probed — refuse before erasing anything.
+    if {[string length $BIN] > $CHIP} {
+        die "image span ([string length $BIN] bytes) exceeds the flash size ($CHIP bytes)" \
+            "wrong .mcs for this board, or sf probe read the wrong chip — check --chip-size"
+    }
     stage_to_dram $STAGEBIN $BIN
 }
 
-# Step 3+ fills these in: erase, program, verify.
-die "not implemented yet: mode '$MODE' beyond staging (plan-08 Step 3+)"
+do_erase $CHIP                              ;# both modes: full-chip erase + 0xFF verify
+if {$MODE eq "erase+flash"} {
+    do_program $CHIP                        ;# write the image span + byte-for-byte verify
+    file delete -force $STAGEBIN            ;# staged temp no longer needed (success path)
+}
+
+# --------------------------------------------------------------------------- wrap up
+# Leave the board halted at the cfgmem U-Boot (harmless); a power-cycle boots the new
+# image via the QSPI strap. Stop our DCC bridge so the next tool gets a clean channel.
+catch {jtagterminal -stop}
+if {$MODE eq "erase+flash"} {
+    logputs "== SUCCESS: chip erased and reprogrammed+verified — power-cycle the board to boot the new image =="
+} else {
+    logputs "== SUCCESS: chip erased and verified blank (sampled) =="
+}
+logputs "== run OK — log: $LOGPATH =="
+close $::LOGFH
+exit 0
