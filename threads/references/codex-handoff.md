@@ -278,11 +278,61 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    - **Handback inbox** — `<worktree>/codex-handoff/<plan-id>/` (the
      contract `references/codex-handback.md` defines).
    - **Thread + plan IDs.**
+   - **Environment file** — the emitter also stages
+     `<worktree>/codex-handoff/<plan-id>/env.sh` and the packet's launch
+     command becomes `cd <worktree> && source codex-handoff/<plan-id>/env.sh
+     && codex`, so the hop's toolchain environment (license files, version
+     pins, vendor settings scripts) is set in the terminal BEFORE Codex
+     launches and is inherited by every command Codex runs. Priority:
+     `--env-file <path>` copies verbatim (explicit replace); an existing
+     inbox `env.sh` is kept untouched; otherwise a skeleton is written that
+     chains the worktree `.envrc` and has a marked per-hop section the main
+     session MUST fill from the plan's toolchain block before launch.
+     (Origin: two hops of the native-rate-smoke thread failed on Vivado
+     license env the build shell never inherited.) Env cannot fix sandbox
+     isolation — hardware/NIC-dependent commands (JTAG, UART, FlexLM
+     node-locked checkout) still need unsandboxed runs; document those as
+     comments in `env.sh` so the constraint travels with the packet.
+
+   > **RULE — the kickoff-prompt / plan-file path handed to Codex is ALWAYS
+   > absolute, never repo-relative.** Codex launches with its cwd inside the
+   > *worktree* (or a separate build clone), which is a **different directory
+   > tree** from the repo that holds the prompt/plan — so a repo-relative path
+   > (`.threads/…`, `docs/…`) does not resolve from Codex's cwd and the launcher
+   > cannot open it. This binds **every** hand-off surface, not just the
+   > `emit_codex_launch_packet.py` output: the GO card / launch packet you hand
+   > the user, the **"Prompt" row of any launch-contract chart**, and any mailbox
+   > answer that cites the prompt. Give the absolute path (the emitter already does
+   > via `os.path.abspath`; hand-authored GO cards must match).
+   >
+   > **Displaying the real absolute path in the terminal is fine — required, even.**
+   > The GO card, chat output, and the `codex`-paste block are **ephemeral terminal
+   > output the user reads and pastes, NOT a tracked artifact**, so the
+   > fingerprint/no-absolute-paths discipline does **not** apply to them — print the
+   > real path. The placeholder discipline is *only* for content written **into a
+   > tracked file or commit message**: there, use a placeholder
+   > (`$WORKBASE/<repo>/.threads/<thread-id>/<plan>.md` or `<absolute-prompt-path>`)
+   > — never a literal machine path or username. Same path, two forms: **real in the
+   > terminal, placeholder in the repo.** Never suppress or repo-relativize the
+   > terminal path out of misplaced fingerprint caution — that is the exact failure
+   > this rule exists to prevent.
+
+   > **RULE — Codex has no skill registry: never write slash-command syntax
+   > (`/socks`, `/threads`, …) into a Codex-facing plan or packet.** That syntax
+   > resolves only inside Claude Code. When a packet wants Codex to read a skill's
+   > docs, spell the **filesystem path**: `$HOME/.claude/skills/<name>/SKILL.md`
+   > (+ the specific `references/*.md` files), and say it is "a directory of
+   > markdown docs", so Codex reads files instead of hunting for a command.
+   > `$HOME` is the right form in tracked plan files (fingerprint-safe) and
+   > expands fine when Codex shells out. (Origin: 2026-07-07 B2-engine relaunch —
+   > "read `/socks` up front" sent Codex looking for a root-level path; the user
+   > had to redirect it to the skills folder by hand.)
 
    The emitted packet opens with a **"Copy-paste — Codex turn 1 (short
    prompt)"** fenced block. The **first thing in that block is a "WORKING
    CONTEXT" header**: (1) where Codex is launched from — the worktree cwd
-   (`cd <worktree> && source .envrc && codex`) — and (2) where this
+   (`cd <worktree> && source codex-handoff/<plan-id>/env.sh && codex`) —
+   and (2) where this
    thread's bookkeeping (the "main thread": plan, ADRs, findings, handback
    inbox) lives, stated both as an absolute path and **relative to that
    cwd**, with the read-there (`.threads/`, read-only) / write-here
