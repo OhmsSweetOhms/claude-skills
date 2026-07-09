@@ -21,7 +21,13 @@ sha256-verify → power-cycle-boot round-trip (2026-07-01). Prefer it over drivi
   OCM-high remap for OCM-linked helpers, `jtagterminal` DCC↔TCP↔WS.
 - **Flash ops**: `sf probe` + boot-image partition map (grouped by shared image-header =
   one multi-segment ELF), full 16 MiB dump → `.mcs` + per-partition extraction,
-  content-addressed backups, confirm-gated **erase** and **write-back** driven over DCC.
+  content-addressed backups, confirm-gated **erase** and **Write QSPI** driven over DCC.
+  **Write QSPI** flashes the boot image loaded in "Boot image to flash" and is disabled
+  until that image parses to a valid Zynq header with a **good header checksum**; the driver
+  (`write_flash`) independently refuses a blank/garbled image, so an erased-then-dumped
+  (all-`0xFF`) backup can never be written over good firmware. (This replaced a "Write back
+  dump" button that flashed the *last dump* — a footgun that wrote a blank image after an
+  erase→dump cycle. 2026-07-09.)
 - **Boot-image parser** `dashboard/backend/bootimg.py` — offset conventions verified
   against this board and pinned by unit tests (`test_bootimg.py`).
 - **Validation harness** `validate_dashboard.py` (mock + `--live` non-destructive).
@@ -50,6 +56,8 @@ board's `.xsa` and the cfgmem helper. See the repo's README/dashboard docs.
 | `mrd -value` returns **decimal** over xsdbserver | parse decimal, not hex (workbench `_reg()` handles it) |
 | JTAG-HS3 drops off USB under load | reseat / own port; start a **fresh hw_server** (stale DCC stream state causes empty `sf probe`) |
 | OCM-linked helper `dow` fails "OCM is not enabled at 0xFFFC0000" | SLCR-unlock → `OCM_CFG=0xF` remap first (skip for DDR-linked ELFs) |
+| Dashboard stuck on "loading…" (helper dropdown blank, JTAG chain won't auto-populate) | Orphaned `hw_server`/`xsdb`/`jtagterminal`/`uvicorn` from killed dashboards contend the one FTDI cable (a 2nd `uvicorn` can even steal `:8088`) — the browser hits a wedged instance while the endpoints look healthy to `curl`. Kill them all, then `dashboard/run.sh --fresh` for one clean JTAG stack. **Own the server in a real terminal** — a reaped/background launch dies mid-session and orphans the DCC bridge, which is the usual cause. |
+| `pkill -f hw_server` kills your own shell | With `-f`, pkill matches its own invoking shell's command line (which contains the string). Use the bracket trick — `pkill -f '[h]w_server'` — or match by process name without `-f`. |
 
 ## Where the full history lives
 
@@ -64,3 +72,9 @@ bypass). The custom JEDEC-ID-agnostic U-Boot build for this flow is
 
 - 2026-07-06: reference created. Flow HW-proven Stages 1–3 (2026-06-30 → 2026-07-01);
   workbench repo published; JEDEC-bypass U-Boot built (bench proof pending).
+- 2026-07-09: flash UI reworked — a single header-checksum-gated **Write QSPI** button
+  replaces "Write back dump" + "Flash uploaded image"; `write_flash` now refuses
+  blank/invalid images (after a write-back-the-erased-dump scare that briefly left the
+  chip blank). Full destructive Write-QSPI round-trip re-proven on HW — recovered the
+  board from the erased state with the verified backup. Also merged the parallel-machine
+  work (recover-from-dud DCC fix, session logging, launch preflight, reconstruct-project).

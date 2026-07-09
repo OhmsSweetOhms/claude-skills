@@ -212,7 +212,7 @@ re-inits the PS, loads a **DCC-console U-Boot** (the cfgmem helper, or a custom
 over JTAG. Full rationale, the UART-vs-DCC table, and the bring-up verification steps
 live in **`references/jtag-flash-bootmode-independent.md`**. The flow is HW-proven and
 packaged as a **browser-dashboard workbench** (bring-up, DCC console, dump/erase/
-write-back, boot-image map) — for the board it was built on, prefer that tool:
+Write-QSPI, boot-image map) — for the board it was built on, prefer that tool:
 `references/zynq-jtag-flash-workbench.md`. (Quicker alternative if
 `program_flash` is otherwise fine: just prepend `rst -system; stop` before the
 `program_flash` call to apply the AR 76051 workaround without going fully manual.)
