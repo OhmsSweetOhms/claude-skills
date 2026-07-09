@@ -206,15 +206,19 @@ DDR, QSPI MIO) by writing registers directly, independent of the boot mode. And
 `program_flash` already talks to its helper over the **ARM DCC (JTAG), not a UART** —
 so the whole flash can run with no serial port.
 
-Use **`scripts/jtag_qspi_flash.sh`**: it halts the BootROM (`rst -system; stop`),
-re-inits the PS, loads a **DCC-console U-Boot** (the cfgmem helper, or a custom
-`CONFIG_ARM_DCC` build), and opens `jtagterminal` so you can run `sf probe/erase/write`
-over JTAG. Full rationale, the UART-vs-DCC table, and the bring-up verification steps
-live in **`references/jtag-flash-bootmode-independent.md`**. The flow is HW-proven and
+Use **`scripts/jtag_erase_reflash.tcl`** — the one-shot, cross-platform automation
+(HW-verified 2026-07-09): `xsdb jtag_erase_reflash.tcl erase+flash boot.mcs --ps7
+ps7_init.tcl` does halt-on-reset (`rst -system -stop`, so the stale FSBL can never win
+the race), PS re-init, DCC U-Boot load, full-chip erase, program, and byte-for-byte
+verify, with a run log and a hint on every failure. For a hands-on `Zynq>` prompt
+instead, `scripts/jtag_qspi_flash.sh` stops after bring-up and opens `jtagterminal`
+so you drive `sf probe/erase/write` yourself. Full rationale, the UART-vs-DCC table,
+and the failure→hint catalog live in
+**`references/jtag-flash-bootmode-independent.md`**. The flow is HW-proven and
 packaged as a **browser-dashboard workbench** (bring-up, DCC console, dump/erase/
 write-back, boot-image map) — for the board it was built on, prefer that tool:
 `references/zynq-jtag-flash-workbench.md`. (Quicker alternative if
-`program_flash` is otherwise fine: just prepend `rst -system; stop` before the
+`program_flash` is otherwise fine: just prepend `rst -system -stop` before the
 `program_flash` call to apply the AR 76051 workaround without going fully manual.)
 
 ## Common failure → cause
@@ -228,7 +232,7 @@ write-back, boot-image map) — for the board it was built on, prefer that tool:
 | `make`/`bootgen`/`xsct`: command not found | Forgot to `source .settings64-Vitis.sh` in this shell |
 | `program_flash` ran but no log printed, `xsct` exited 0 | Bare `exec program_flash` swallowed stdout — wrap in `puts [exec ...]` to see the `Flash Operation Successful` confirmation |
 | `program_flash` can't find fsbl/mcs path that "looks right" | `$USER`/shell var left unexpanded in the Tcl script — xsct doesn't expand it; resolve to a literal absolute path before calling xsct |
-| `program_flash` fails on a board hardwired to QSPI/NAND boot mode | AMD AR 76051 regression — BootROM boots stale flash and seizes the PS. Prepend `rst -system; stop`, or use `scripts/jtag_qspi_flash.sh` (boot-mode-independent JTAG flash, no UART) |
+| `program_flash` fails on a board hardwired to QSPI/NAND boot mode | AMD AR 76051 regression — BootROM boots stale flash and seizes the PS. Prepend `rst -system -stop` (halt-on-reset; a separate `stop` races the FSBL and loses), or use `scripts/jtag_erase_reflash.tcl` (one-shot boot-mode-independent JTAG erase/flash, no UART) |
 
 ## Adding a new project
 

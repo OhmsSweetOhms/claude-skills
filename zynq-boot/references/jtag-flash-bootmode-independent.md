@@ -9,7 +9,10 @@ For a board you **cannot put into JTAG boot mode** — e.g. boot-mode straps har
 to QSPI with resistors — and `program_flash` therefore fails. Generic technique, not
 board-specific; the per-board paths (ps7_init, FSBL, U-Boot) are arguments.
 
-Driver: `scripts/jtag_qspi_flash.sh` → `scripts/jtag_qspi_flash.tcl`.
+Drivers: **`scripts/jtag_erase_reflash.tcl`** (one-shot, fully automated erase /
+erase+flash — start here; see its section below) and
+`scripts/jtag_qspi_flash.sh` → `scripts/jtag_qspi_flash.tcl` (interactive: brings up
+the PS + DCC console and leaves you at the `Zynq>` prompt to drive `sf` by hand).
 Provenance for the findings below: research session
 `.research/session-20260629-093358/report.md` in the workbench repo
 (`OhmsSweetOhms/zynq-jtag-flash-workbench`) — findings A, C, E, F.
@@ -126,6 +129,59 @@ JEDEC issue — build the generic-SFDP bypass U-Boot (`references/custom-dcc-ubo
 HW-verified 2026-07-06) and use it here. It probes any SFDP-compliant chip not in
 `spi_nor_ids[]`; a chip with no/bad SFDP still needs a real table entry.
 
+## One-shot erase / reprogram — `scripts/jtag_erase_reflash.tcl` (HW-verified 2026-07-09)
+
+The fully automated form of this whole flow: one `xsdb` invocation does bring-up →
+(parse `.mcs` → stage) → full-chip erase → program → byte-for-byte verify, with a
+timestamped run log and an actionable hint on every failure. Pure TCL — the same
+command line on Windows and Linux, no wrapper, no env vars; the only tool assumed is
+`xsdb` on PATH.
+
+```
+# Linux                                          # Windows
+source <Vitis>/settings64.sh                     <Vitis>\settings64.bat
+xsdb jtag_erase_reflash.tcl erase       --ps7 ps7_init.tcl
+xsdb jtag_erase_reflash.tcl erase+flash boot.mcs --ps7 ps7_init.tcl
+```
+
+Options: `--uboot <elf>` (default: the 2022.2 `zynq_qspi_x1_single.bin` carried next to
+the script — a Xilinx-EULA binary, so it is NOT in this public repo; copy it from
+`<Vitis-2022.2>/data/xicom/cfgmem/uboot/`), `--url <hw_server>` (default auto-starts a
+local one; point it at a Vivado GUI's server if that owns the cable), `--chip-size <n>`,
+`--log <path>`. Exit codes: 0 ok / 1 runtime failure / 2 usage.
+
+What it bakes in beyond the interactive script (all HW-proven on the workbench board):
+
+- **`rst -system -stop`** halt-on-reset (AR 68065) — the debugger suspends the cores AS
+  PART OF the reset, so the QSPI FSBL can never win the race. (The interactive script's
+  older `rst -system; stop` pair loses that race on a board whose flash holds a valid
+  image — the FSBL boots, and `ps7_init` then dies with `AP transaction timeout
+  @0xE0001034`.)
+- **`rst -dap` self-recovery** — a board that sat FSBL-booted can wedge its A9 debug AP
+  (DAP status `0x30000021`, A9 gone from `targets`); the script detects it and resets
+  the DAP before giving up with a power-cycle hint.
+- **`.mcs` decoded in TCL** (Intel-HEX types 00/01/04, per-line checksums) because
+  U-Boot `sf write` needs raw bytes in DRAM; a Zynq boot-header guard refuses non-boot
+  images before anything is erased.
+- **Fail-fast ordering** — parse+validate before connecting, stage+DRAM-spot-check
+  before erasing: a bad image or a failed JTAG load can never leave the chip blank.
+- **In-process DCC** — the U-Boot console socket (`jtagterminal -socket`) is driven from
+  xsdb's own Tcl, with non-blocking reads + `vwait` sleeps so the event loop that pumps
+  the DCC bridge never starves. Erase-verify readback stages at `0x02000000` to keep
+  clear of the write image staged at `0x00100000`.
+
+Failure → hint catalog (each printed by the script itself on that failure):
+
+| Failure | Hint printed |
+|---|---|
+| `no targets found … Cortex-A9` | auto-tries `rst -dap`; if still absent → power-cycle the board |
+| `AP transaction timeout @0xE0001034` during ps7_init | FSBL seized the debug bus — should not happen after `rst -system -stop`; power-cycle if deep-wedged |
+| `Cannot reset APU` / PLL-lock errors | ps7_init/.xsa is for a different board — use the board's own export |
+| `OCM is not enabled at 0xFFFC0000` on `dow` | OCM-high remap didn't take — check SLCR unlock + `OCM_CFG` write |
+| U-Boot banner ends `Please RESET the board` | dud cfgmem helper (the 2021.1 env_init/-ENODEV bug) — use the pinned 2022.2 build |
+| `sf probe` no-detect after 4 tries | wrong QSPI MIO in ps7_init, dud helper, or flaky DCC link (reseat cable) |
+| bad Intel-HEX record/checksum at line N | corrupted/truncated image — regenerate the `.mcs` with bootgen |
+
 ## Verify on bring-up — RESOLVED on hardware (kept for the next board)
 
 The two author-flagged unknowns were both settled on the real board (2026-06-29/30):
@@ -168,3 +224,9 @@ The two author-flagged unknowns were both settled on the real board (2026-06-29/
   0xFF) → write-back via `dow -data` + `sf write` → re-dump sha256 == source →
   power-cycle boots. STATUS promoted. Full record: the workbench repo's
   `.threads/zynq-boot/20260629-hardwired-qspi-jtag-flash/`.
+- 2026-07-09: `jtag_erase_reflash.tcl` landed (workbench plan-08) — the one-shot
+  automated erase / erase+flash, HW-verified end-to-end on the same board: erase (49 s),
+  erase+flash of a 4.2 MiB image with byte-identical readback (~1 m 25 s), and a
+  post-flash free-run `rst -system` boot check (PLL 0x3F, DDRC normal, app PC in DDR).
+  Carries the two 2026-07-09 driver fixes: halt-on-reset `rst -system -stop` (e2bf200)
+  and `rst -dap` DAP self-recovery (b210080).
