@@ -514,7 +514,179 @@ proc open_uboot_console {} {
     return $chip
 }
 
+# ----------------------------------------------------------------- Intel-HEX (.mcs) parse
+# U-Boot `sf write` copies RAW BYTES from a DRAM address — it cannot read Intel HEX. So the
+# .mcs is decoded host-side, in pure TCL, to a temp .bin that `dow -data` stages into DRAM
+# (plan-08 D1; `mwr` per word was rejected — far too slow over JTAG). This is a port of the
+# workbench dashboard's bootimg.mcs_to_bin (the proven parser): record types 00 (data),
+# 04 (Extended Linear Address = upper 16 address bits), 01 (EOF); every line's checksum is
+# verified (all record bytes incl. the checksum byte sum to 0 mod 256), so a truncated or
+# garbled .mcs fails LOUDLY with a line number — never a silently-wrong image mid-flash.
+proc parse_mcs {path} {
+    set f [open $path r]                    ;# text mode, -translation auto: CRLF-safe on
+    fconfigure $f -translation auto         ;# a .mcs written by Windows tools (req. 2)
+    set text [read $f]
+    close $f
+    set out ""                              ;# the decoded raw image (binary string)
+    set upper 0                             ;# ELA base: upper 16 bits of the byte address
+    set lineno 0
+    set eof_seen 0
+    foreach raw [split $text \n] {
+        incr lineno
+        set line [string trim $raw]
+        if {$line eq ""} { continue }       ;# tolerate blank lines (trailing newline etc.)
+        if {[string index $line 0] ne ":"} {
+            die "malformed .mcs at line $lineno: record does not start with ':'" \
+                "not Intel-HEX / corrupted image — regenerate the .mcs with bootgen (-format MCS)"
+        }
+        set hex [string range $line 1 end]
+        if {[string length $hex] % 2 != 0 || ![regexp {^[0-9A-Fa-f]+$} $hex]} {
+            die "malformed .mcs at line $lineno: bad hex characters" \
+                "corrupted image — regenerate the .mcs with bootgen (-format MCS)"
+        }
+        set rec [binary format H* $hex]     ;# hex text -> raw bytes (C-speed, Tcl 8.0+)
+        binary scan $rec c* sbytes          ;# raw bytes -> list of SIGNED bytes
+        set ub {}                           ;# unsigned copy + running checksum in one pass
+        set sum 0
+        foreach b $sbytes {
+            set u [expr {$b & 0xFF}]
+            lappend ub $u
+            incr sum $u
+        }
+        if {[llength $ub] < 5} {
+            die "malformed .mcs at line $lineno: record too short" \
+                "corrupted image — regenerate the .mcs with bootgen (-format MCS)"
+        }
+        if {($sum & 0xFF) != 0} {           ;# count+addr+type+data+checksum sums to 0
+            die "bad Intel-HEX checksum at line $lineno" \
+                "corrupted/truncated image — regenerate the .mcs with bootgen (-format MCS)"
+        }
+        lassign $ub count a1 a2 rtype
+        if {[llength $ub] != 5 + $count} {
+            die "malformed .mcs at line $lineno: length byte ($count) != record body" \
+                "corrupted image — regenerate the .mcs with bootgen (-format MCS)"
+        }
+        if {$rtype == 0x00} {
+            # Data record: absolute byte offset = (ELA upper << 16) + 16-bit record address.
+            set base [expr {($upper << 16) + (($a1 << 8) | $a2)}]
+            set cur [string length $out]
+            if {$base > $cur} {
+                # Gap between records = unprogrammed flash, which erased QSPI reads as 0xFF.
+                append out [string repeat \xFF [expr {$base - $cur}]]
+            } elseif {$base < $cur} {
+                # bootgen emits strictly ascending addresses; going backwards means a
+                # spliced/corrupt file. (The Python parser overwrites in place; a one-pass
+                # TCL string can't, so refuse loudly instead of building a wrong image.)
+                die "non-monotonic data record at line $lineno (offset 0x[format %x $base] < current 0x[format %x $cur])" \
+                    "unexpected record order — regenerate the .mcs with bootgen (-format MCS)"
+            }
+            append out [string range $rec 4 [expr {3 + $count}]]   ;# the payload bytes
+        } elseif {$rtype == 0x04} {
+            # Extended Linear Address: payload = the upper 16 bits for subsequent records.
+            set upper [expr {([lindex $ub 4] << 8) | [lindex $ub 5]}]
+        } elseif {$rtype == 0x01} {
+            set eof_seen 1                  ;# EOF record: stop (anything after is ignored)
+            break
+        }
+        # 0x02/0x03/0x05 (segment/start-address) aren't emitted for flash .mcs — ignore.
+    }
+    if {!$eof_seen} {
+        die "no Intel-HEX EOF record (:00000001FF) — file truncated?" \
+            "truncated image — regenerate the .mcs with bootgen (-format MCS)"
+    }
+    if {[string length $out] == 0} {
+        die "the .mcs decoded to 0 bytes" \
+            "empty image — regenerate the .mcs with bootgen (-format MCS)"
+    }
+    return $out
+}
+
+# Prepare the staged write image from the decoded bytes (plan-08 D2): trim trailing 0xFF
+# (after the FULL-CHIP erase the tail is already 0xFF, so writing the trimmed span leaves
+# the chip content-identical to a padded full-chip write — minutes faster over DCC), then
+# round up to a 256 B flash page (padding WITH 0xFF if the round-up passes the data end).
+proc trim_page_align {bin} {
+    set trimmed [string trimright $bin \xFF]        ;# C-speed trailing-0xFF trim
+    set used [string length $trimmed]
+    set used [expr {($used + 0xFF) & ~0xFF}]        ;# round UP to a 256 B page boundary
+    if {$used <= [string length $bin]} {
+        return [string range $bin 0 [expr {$used - 1}]]
+    }
+    # Round-up passed the decoded end: pad the difference with 0xFF (= erased flash).
+    return "$trimmed[string repeat \xFF [expr {$used - [string length $trimmed]}]]"
+}
+
+# Sanity-guard the decoded image before anything destructive: a Zynq-7000 boot image
+# carries 0xAA995566 at 0x20 (width detect) and 'XLNX' at 0x24 (image id). Refusing a
+# blank/garbled image HERE is the root-cause guard the dashboard's write_flash proved out
+# (an all-0xFF "image" would otherwise trim to 0 bytes and brick-by-erase).
+proc check_boot_header {bin} {
+    if {[string length $bin] < 0x28} {
+        die "decoded image is smaller than a Zynq boot header" \
+            "this .mcs is not a Zynq boot image — regenerate it with bootgen"
+    }
+    binary scan [string range $bin 0x20 0x27] ii width_detect image_id
+    set width_detect [expr {$width_detect & 0xFFFFFFFF}]
+    set image_id     [expr {$image_id & 0xFFFFFFFF}]
+    if {$width_detect != 0xAA995566 || $image_id != 0x584C4E58} {
+        die "decoded image has no Zynq boot header (0x20=0x[format %08x $width_detect], 0x24=0x[format %08x $image_id])" \
+            "expected width-detect 0xAA995566 + 'XLNX' — this .mcs is not a Zynq-7000 boot image; regenerate it with bootgen"
+    }
+}
+
+# --------------------------------------------------------------------- stage into DRAM
+# JTAG-load the prepared image into DRAM at the staging address — the same transfer
+# program_flash itself uses (the cfgmem helper has no loadx/ymodem; confirmed by strings).
+# DDR serves this because ps7_init ran and rst -processor dropped the stale MMU.
+set STAGE_ADDR 0x00100000                   ;# proven staging base (dashboard _STAGE); inside
+                                            ;# the SCU-filtered DDR window set up in bringup
+proc stage_to_dram {binfile bin} {
+    global STAGE_ADDR
+    # The core must be halted for a JTAG memory load; U-Boot is running -> stop first.
+    catch {stop}
+    logputs "+ dow -data (stage [string length $bin] bytes -> DRAM @ [format 0x%08x $STAGE_ADDR], ~30-60 s over JTAG)"
+    if {[catch {dow -data $binfile $STAGE_ADDR} err]} {
+        die "staging the image into DRAM failed: $err" \
+            "an 'MMU section translation fault' here means the rst -processor MMU drop didn't happen — re-run; power-cycle if it repeats"
+    }
+    # Spot-check: read the first 4 words back over the DAP and compare against the file's
+    # first 16 bytes — catches a silently-failed load before the flash is touched.
+    set rb [run [list mrd -value $STAGE_ADDR 4] "DRAM readback failed after staging"]
+    binary scan [string range $bin 0 15] i4 expect          ;# little-endian 32-bit words
+    for {set i 0} {$i < 4} {incr i} {
+        set want [expr {[lindex $expect $i] & 0xFFFFFFFF}]
+        set got  [expr {[lindex $rb $i] & 0xFFFFFFFF}]
+        if {$want != $got} {
+            die "DRAM spot-check mismatch at word $i: wrote 0x[format %08x $want], read 0x[format %08x $got]" \
+                "DDR is not serving correctly — re-run the bring-up; check PLL_STATUS/DDRC state if it repeats"
+        }
+    }
+    logputs "DRAM spot-check OK (first 4 words match the image)"
+    # Resume U-Boot — it was alive before the halt; the DCC session picks up where it was.
+    run {con} "resume after staging failed — power-cycle and re-run"
+}
+
 # ------------------------------------------------------------------------ mode dispatch
+# FAIL FAST, host-side first: decode + validate the .mcs BEFORE touching the board, so a
+# malformed image can never leave the chip erased-but-unprogrammed.
+set BIN ""
+set STAGEBIN ""
+if {$MODE eq "erase+flash"} {
+    logputs "parsing Intel-HEX image (in-TCL, checksum-verified) ..."
+    set BIN [parse_mcs $MCS]
+    logputs "decoded [string length $BIN] bytes from the .mcs"
+    check_boot_header $BIN
+    set BIN [trim_page_align $BIN]
+    logputs "write span after trailing-0xFF trim + 256 B page align: [string length $BIN] bytes"
+    # The staged bytes travel via a temp .bin next to the log (dow -data reads a file).
+    set STAGEBIN "[file rootname $LOG]-stage.bin"
+    set bf [open $STAGEBIN w]
+    fconfigure $bf -translation binary      ;# raw bytes: no LF mangling on Windows
+    puts -nonewline $bf $BIN
+    close $bf
+    logputs "staged image written: $STAGEBIN"
+}
+
 # Connect to the hw_server. With --url we join an existing server (e.g. a Vivado GUI's);
 # without, plain `connect` auto-starts a local one — no tool paths needed (requirement 3).
 if {$URL ne ""} {
@@ -528,5 +700,12 @@ select_a9                                   ;# pin the A9 (with rst -dap self-re
 bringup                                     ;# proven PS bring-up; leaves U-Boot running
 set CHIP [open_uboot_console]               ;# DCC bridge + sf probe; flash size in bytes
 
-# Step 2+ fills these in: staging, erase, program, verify.
-die "not implemented yet: mode '$MODE' beyond bring-up (plan-08 Step 2+)"
+# Stage BEFORE erasing: if the JTAG load or its spot-check fails, the flash is untouched.
+# (sf erase never touches DRAM — the cfgmem helper runs entirely in OCM, so the staged
+# bytes survive the erase that follows.)
+if {$MODE eq "erase+flash"} {
+    stage_to_dram $STAGEBIN $BIN
+}
+
+# Step 3+ fills these in: erase, program, verify.
+die "not implemented yet: mode '$MODE' beyond staging (plan-08 Step 3+)"
