@@ -26,6 +26,27 @@ Mechanical facts emitted:
     - Handback inbox path       (<worktree>/codex-handoff/<plan-id>/)
     - Thread + plan IDs
 
+Environment file (staged alongside the packet):
+
+    The packet also stages <worktree>/codex-handoff/<plan-id>/env.sh and
+    the launch command becomes
+        cd <worktree> && source codex-handoff/<plan-id>/env.sh && codex
+    so toolchain environment (license files, version pins, vendor
+    settings scripts) is set in the terminal BEFORE Codex launches and
+    is inherited by every command Codex runs. Content priority:
+        1. --env-file <path>        copied verbatim into the inbox
+        2. existing inbox env.sh    left untouched (main session authored it)
+        3. skeleton                 generic template; chains the worktree
+                                    .envrc if present, with a marked
+                                    per-hop toolchain section to fill in
+    Origin: two hops in one thread failed on Vivado license env that the
+    build shell never inherited (fpga/20260706-ad9986-native-rate-profile-
+    smoke plan-03 hop-2 and plan-04 hop-3). Env exported before `codex`
+    launches is the one channel that reaches every child shell. NOTE:
+    env cannot fix sandbox isolation (e.g. FlexLM needing NIC visibility)
+    — document such constraints as comments in env.sh so the operator
+    runs those commands unsandboxed.
+
 Generic operational rules emitted:
 
     - Don't push the branch (long-lived; merge-back at thread close).
@@ -160,12 +181,30 @@ def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | N
                     return resolved, entry.get("branch")
             # Fall through to the next entry if no candidate exists
             continue
+        # thread.json also stores paths as $WORKBASE/<worktree> (the
+        # fingerprint-safe placeholder for the directory that holds the
+        # project checkouts). Expand from the environment if set; else
+        # assume WORKBASE = the main repo's parent (the common layout:
+        # main checkout and codex worktrees are siblings).
+        if raw_path.startswith("$WORKBASE/"):
+            tail = raw_path[len("$WORKBASE/"):]
+            workbase = os.environ.get("WORKBASE")
+            candidates = [Path(workbase) / tail] if workbase else []
+            candidates += [
+                main_repo.parent / tail,
+                main_repo.parent.parent / tail,
+            ]
+            for candidate in candidates:
+                resolved = candidate.resolve()
+                if resolved.exists():
+                    return resolved, entry.get("branch")
+            continue
         # Expand a leading ~ first: thread.json stores worktree paths
         # home-relative (~/.claude/skills-<slug>) to keep the username out
         # of committed bookkeeping. Without expansion, ~/... is not
         # is_absolute(), so the branch below would prepend main_repo and
         # never resolve.
-        path = Path(raw_path).expanduser()
+        path = Path(os.path.expandvars(raw_path)).expanduser()
         if not path.is_absolute():
             path = (main_repo / raw_path).resolve()
         if path.exists():
@@ -176,6 +215,74 @@ def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | N
         f"  expected at least one entry with a 'path' that resolves "
         f"to an existing directory."
     )
+
+
+ENV_SKELETON = """\
+# env.sh — Codex launch environment for {thread_id} / {plan_id}
+#
+# Source this from the WORKTREE ROOT in the terminal BEFORE launching
+# codex, so every command Codex runs inherits it:
+#
+#     cd {worktree} && source codex-handoff/{plan_id}/env.sh && codex
+#
+# Fill in the per-hop toolchain section below (license files, version
+# pins, vendor settings scripts) from the plan's toolchain block.
+# NOTE: env cannot fix sandbox isolation — if a tool needs hardware or
+# NIC visibility (JTAG, UART, FlexLM node-locked checkout), add a
+# comment here telling the operator to run that command unsandboxed.
+
+# --- worktree-level env (python pins etc.) ---------------------------
+[ -f .envrc ] && . ./.envrc
+
+# --- per-hop toolchain env (EDIT ME) ---------------------------------
+# export XILINXD_LICENSE_FILE="$HOME/.Xilinx/Xilinx.lic"
+# export REQUIRED_VIVADO_VERSION=2022.2
+# . /tools/Xilinx/Vivado/2022.2/settings64.sh
+#
+# --- FlexLM node-locked license MAC precondition (RUN UNSANDBOXED) ----
+# A node-locked Xilinx license only checks out when its HOSTID (a MAC
+# address) is present on a live link. On a laptop/dock the licensed NIC
+# comes and goes, so synth_design silently falls back to an older feature
+# line and fails with "license version is not valid ... requires <ver>".
+# Verify BEFORE any Vivado run (needs root to set — cannot be sandboxed):
+#   want=$(grep -hoiE 'HOSTID=[0-9a-f]{12}' "$HOME"/.Xilinx/*.lic | head -1 | cut -d= -f2)
+#   have=$(cat /sys/class/net/*/address | tr -d ':')
+#   grep -qi "$want" <<<"$have" || echo "licensed MAC $want ABSENT — set it:"
+#   #   sudo ip link set dev <nic> address $(sed 's/../&:/g;s/:$//' <<<"$want")
+"""
+
+
+def stage_env_file(
+    handback_inbox: Path,
+    *,
+    env_file: Path | None,
+    worktree: Path,
+    thread_id: str,
+    plan_id: str,
+) -> tuple[Path, str]:
+    """Stage codex-handoff/<plan-id>/env.sh; return (path, how).
+
+    Priority: --env-file copy > existing inbox env.sh (kept) > skeleton.
+    Never overwrites an existing inbox env.sh unless --env-file is given
+    explicitly (an explicit flag is an explicit intent to replace).
+    """
+    dest = handback_inbox / "env.sh"
+    if env_file is not None:
+        src = env_file.resolve()
+        if not src.exists():
+            die(f"--env-file {src} does not exist")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(src.read_text())
+        return dest, f"copied from {src}"
+    if dest.exists():
+        return dest, "existing file kept (not overwritten)"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        ENV_SKELETON.format(
+            thread_id=thread_id, plan_id=plan_id, worktree=worktree
+        )
+    )
+    return dest, "skeleton written — EDIT the per-hop toolchain section"
 
 
 def emit_packet(
@@ -205,7 +312,11 @@ Paste this whole block into Codex's first turn:
 ```
 WORKING CONTEXT — set this up FIRST:
 - Launch Codex from (cwd):  {worktree}
-      cd {worktree} && source .envrc && codex
+      cd {worktree} && source codex-handoff/{plan_id}/env.sh && codex
+  (env.sh carries the hop's toolchain environment — license files,
+  version pins, vendor settings — and chains the worktree .envrc.
+  It was staged with this packet; the operator sources it BEFORE
+  launching so every command you run inherits it.)
 - This thread's bookkeeping (plan, ADRs, findings, handback inbox) lives in the
   MAIN checkout — read it from there, do NOT edit .threads/:
       {thread_dir}
@@ -274,6 +385,14 @@ handback.json + handback.md + scripts/ + temp/ + artifacts/ per
 ```
 
 **Thread / Plan IDs:** `{thread_id}` / `{plan_id}`
+
+**Environment file** (staged with this packet; the operator sources it
+in the launch terminal so Codex inherits the hop's toolchain env —
+review/extend its per-hop section before launching):
+
+```
+{handback_inbox}/env.sh
+```
 
 ## Three generic operational rules to state at Codex turn 1
 
@@ -353,7 +472,7 @@ when it opens the plan as turn 1.
 
 ```bash
 cd {worktree}
-source .envrc
+source codex-handoff/{plan_id}/env.sh
 codex
 ```
 
@@ -398,6 +517,16 @@ def main() -> None:
         default=None,
         help="Output path for the launch packet. Default: stdout",
     )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help=(
+            "Path to an env.sh to copy into the inbox verbatim "
+            "(replaces any existing codex-handoff/<plan-id>/env.sh). "
+            "Default: keep an existing inbox env.sh, else write a "
+            "skeleton to fill in."
+        ),
+    )
     args = parser.parse_args()
 
     main_repo = Path(args.main_repo).resolve()
@@ -437,6 +566,14 @@ def main() -> None:
 
     handback_inbox = worktree / "codex-handoff" / args.plan_id
 
+    env_path, env_how = stage_env_file(
+        handback_inbox,
+        env_file=Path(args.env_file) if args.env_file else None,
+        worktree=worktree,
+        thread_id=args.thread_id,
+        plan_id=args.plan_id,
+    )
+
     packet = emit_packet(
         plan_file=plan_file,
         worktree=worktree,
@@ -460,7 +597,14 @@ def main() -> None:
         print()
         print(f"Codex launch packet written to:")
         print(f"  {out_path}")
+        print()
+        print(f"Environment file: {env_path}")
+        print(f"  ({env_how})")
+        print(f"  Launch: cd {worktree} && "
+              f"source codex-handoff/{args.plan_id}/env.sh && codex")
     else:
+        print(f"# Environment file: {env_path} ({env_how})",
+              file=sys.stderr)
         sys.stdout.write(packet)
 
 
