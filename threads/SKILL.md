@@ -159,6 +159,32 @@ section in `references/workflows.md`:
 | "Merge the codex worktree work back" / "the codex agent finished, pull the work in" | **Codex worktree merge-back** (`references/codex-handoff.md`) |
 | "Reconcile threads pulled from another machine" / "thread state diverged across clones" / "threads.json merge conflict after pull" | **Cross-machine reconciliation** (`references/cross-machine-reconciliation.md`) |
 | "Orchestrate several live threads" / "coordination thread" / "charter thread" / "orchestrator cache" / "write a note into another session's thread" / concurrent sessions on one repo | **Multi-session orchestration** (`references/orchestration.md`) |
+| "Wrap this session" / "hand off to a successor" / "give me a handoff prompt" / "cold-launch prompt" / running out of context mid-thread | **Session succession → the `orchestrator-handoff` skill** (wrap-protocol, launch-prompt template, succession audit) — but SCOPE-GATED, see below |
+
+**Session-succession scope gate.** This skill owns the thread's FILES
+(handoff.md Current-truth/session-log discipline, findings, registry);
+the `orchestrator-handoff` skill owns SESSION succession (the ordered
+wrap protocol, successor launch prompts, the orchestrator cache). Which
+you need depends on the thread's blast radius, not its age:
+
+- **Small thread** (one RTL module, one C file, one investigation that a
+  successor can resume from handoff.md Current-truth alone): the
+  threads file discipline IS the handoff. Close the hop, overwrite
+  Current-truth, append the session log — done. Do NOT drag in the
+  wrap-protocol machinery.
+- **Program-level thread** (spans substrates — BD + firmware + Linux +
+  host; carries live board/bench state a successor must inherit; runs
+  multi-session with cold successors; or produces rulings OTHER threads
+  must obey): load `orchestrator-handoff` and follow wrap-protocol.md
+  — boot surface FIRST, in-flight work captured, uncommitted state
+  stated, narrative LAST — and maintain a thread-local launch prompt
+  (durable + state-free, pointing at the boot surfaces). Rulings that
+  cross thread boundaries go to the orchestrator cache, not just the
+  thread (the fresh-cache corollary: thread-scope stays in the thread).
+
+The test in one line: *if a successor booting cold from handoff.md
+alone would miss something load-bearing (bench state, a cross-thread
+ruling, an in-flight build), you need the orchestrator-handoff canon.*
 
 If the user's ask doesn't match cleanly, ask which operation they
 want before acting. Don't invent new operations.
