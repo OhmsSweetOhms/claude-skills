@@ -47,9 +47,32 @@ if one exists — the banked launch prompt. If you have budget left, draft
 the launch prompt yourself (see `launch-prompt-template.md`); you know
 the mechanics better than anyone who will audit you.
 
-**6. Commit, explicit paths, before doing anything else.**
+**6. Fold session-earned facts into the durable knowledge surfaces.**
+Before the final commit, update the project/worktree `CLAUDE.md` (or the
+project's equivalent hard-won-facts surface) with anything this session
+PROVED that a future agent would otherwise re-derive at board/build
+cost: mechanisms, gotchas, diagnosis patterns, retired approaches. Facts
+that live only in findings files get found; facts that live only in the
+transcript die. Scrub any claims the session refuted (live docs
+reference current state).
+
+**7. Commit, explicit paths, before doing anything else.**
 A perfect wrap in the working tree is a wrap that doesn't exist. Run the
 project's scans/checks; commit the boot surface + narrative together.
+On shared checkouts, check `git diff --cached --name-only` first — a
+concurrent session's staged work can race into your commit between your
+status check and the commit itself; unstage theirs, commit yours,
+restage theirs.
+
+**8. End by handing the USER their next moves — with absolute paths.**
+The final chat message of a wrap is a copy-paste-ready "what you do
+next" list: the USER's reserved actions in order (merges to fire,
+sessions to launch, packets to emit), each with the ABSOLUTE paths and
+commands they need — session CWDs, launch-prompt files to paste,
+worktrees, gate scripts. Absolute paths are correct HERE and only here:
+this is chat guidance for the human at their own terminal, not a
+tracked file. Sanitization applies to what gets committed, not to what
+gets handed to the operator.
 
 ## Signals you should wrap NOW, not "after this next thing"
 

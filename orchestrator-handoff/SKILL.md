@@ -178,10 +178,28 @@ Run the self-audit — the same standard applied to workers, on yourself:
   orchestrator must verify or expect (an unexecuted close, an expected
   escalation, a pending push). Watch items are the highest-value part;
   they encode your unfinished suspicions.
+- Fold session-earned facts into the durable knowledge surfaces (the
+  project/worktree CLAUDE.md hard-won facts): mechanisms proven,
+  approaches refuted, diagnosis patterns — anything a future agent
+  would re-derive at board/build cost. Scrub claims the session
+  refuted.
 - Commit everything, explicit paths, in as few commits as coherent.
+  On shared checkouts, check `git diff --cached --name-only` first — a
+  concurrent session's staged work can race into your commit; unstage
+  theirs, commit yours, restage theirs.
+- **End with the USER's next moves, copy-paste-ready with ABSOLUTE
+  paths.** The wrap's final chat message lists the operator's reserved
+  actions in order (merges to fire, sessions to launch, packets to
+  emit), each with the absolute paths and commands they need — session
+  CWDs, launch-prompt files to paste, worktrees, gate scripts.
+  Absolute paths are correct here and only here: chat guidance for the
+  human at their own terminal, never a tracked file. Sanitization
+  applies to what gets committed, not to what gets handed to the
+  operator.
 
 The test of a good handoff: a successor booting from the cache alone
-makes the same next three moves you would have made.
+makes the same next three moves you would have made — and the USER
+knowing, without asking, which buttons are theirs to press.
 
 ## Launch prompts
 
