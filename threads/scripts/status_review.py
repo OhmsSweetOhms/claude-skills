@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -148,11 +149,19 @@ def active_codex_worktrees_table(threads: list[dict], threads_path: Path, today:
 
 
 def plan_id_for_hop(hop: dict) -> str:
-    """Return canonical plan id (plan-NN) from a plan_hops[] entry."""
-    filename = str(hop.get("file") or "")
-    name = Path(filename).name
-    if name.startswith("plan-") and len(name) >= 7 and name[5:7].isdigit():
-        return name[:7]
+    """Return canonical plan id (plan-NN) from a plan_hops[] entry.
+
+    Prefer a `plan-NN` token embedded in the filename over the hop's sequential
+    `num`. Sub-track hop files (`hilbase-plan-02-...`, `plan-04b-...`) name their
+    triage/handback artifacts from that stem, not from `num`; falling back to
+    `num` derives a plan id that matches none of the hop's artifacts and produces
+    a phantom `missing_codex_handback` on an already-triaged hop (while masking
+    the real gap on the hop that actually owns that number).
+    """
+    name = Path(str(hop.get("file") or "")).name
+    m = re.search(r"plan-(\d{2})", name)
+    if m:
+        return f"plan-{m.group(1)}"
     num = hop.get("num")
     if isinstance(num, int):
         return f"plan-{num:02d}"
