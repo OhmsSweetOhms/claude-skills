@@ -178,6 +178,26 @@ def handoff_inbox_pair_exists(repo_root: Path, plan_id: str) -> bool:
     return (inbox / "handback.json").exists() and (inbox / "handback.md").exists()
 
 
+def _handback_attributed_to(handback_json: Path, thread_id: str) -> bool:
+    """True unless the handback provably belongs to a *different* thread.
+
+    The project-root `codex-handoff/<plan-id>/` inbox is shared across every
+    thread and keyed only on the bare `plan-NN`, so without this guard thread A's
+    missing/untriaged check latches onto thread B's `plan-01` handback at the
+    shared root (a cross-thread false positive). Read the handback's own thread
+    attribution and exclude it on a mismatch. Lenient: an unparseable or
+    attribution-less handback returns True (cannot disprove ownership).
+    """
+    try:
+        data = json.loads(handback_json.read_text())
+    except (OSError, json.JSONDecodeError):
+        return True
+    owner = data.get("thread_id") or data.get("thread") or data.get("thread_path")
+    if not owner:
+        return True
+    return str(owner).rstrip("/") == str(thread_id).rstrip("/")
+
+
 def handback_locations(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> list[Path]:
     """Return directories where a handback pair is readable.
 
@@ -189,7 +209,11 @@ def handback_locations(threads_path: Path, thread_id: str, thread_data: dict, pl
     project_root = threads_path.parent
 
     if handoff_inbox_pair_exists(project_root, plan_id):
-        locations.append(project_root / "codex-handoff" / plan_id)
+        shared_inbox = project_root / "codex-handoff" / plan_id
+        # The project-root inbox is shared across threads and keyed on the bare
+        # plan id; only count it for THIS thread (attribution guard).
+        if _handback_attributed_to(shared_inbox / "handback.json", thread_id):
+            locations.append(shared_inbox)
 
     main_thread_dir = threads_path / thread_id
     if legacy_handback_pair_exists(main_thread_dir, plan_id):
@@ -214,9 +238,16 @@ def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict,
 
 
 def handback_triage_record_exists(thread_dirs: list[Path], plan_id: str) -> bool:
+    # Match any triage record whose filename CONTAINS the canonical plan id, not
+    # only the exact `codex-handback-<plan_id>-triage.md`. Real triage files carry
+    # descriptive suffixes (`codex-handback-plan-04-axi-dmac-gapless-triage.md`),
+    # sub-letters (`codex-handback-plan-04a-triage.md`), or sub-track prefixes
+    # (`codex-handback-hilbase-plan-06-triage.md`) -- an exact match phantom-flags a
+    # hop that was in fact triaged. Callers guard against plan_id == "plan-??"
+    # (which carries a glob metachar) before reaching here.
     return any(
-        (d / f"codex-handback-{plan_id}-triage.md").exists()
-        or (d / "triage.md").exists()
+        (d / "triage.md").exists()
+        or any(d.glob(f"codex-handback-*{plan_id}*-triage.md"))
         for d in thread_dirs
     )
 
