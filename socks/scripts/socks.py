@@ -556,10 +556,14 @@ def main() -> int:
         else:
             print(f"  WARNING: clean.py not found at {clean_script}")
 
+    # Load project configuration for both workflow and explicit-stage runs.
+    # Stage argument construction consumes values such as sim_timeout even
+    # when no named workflow is active.
+    socks_cfg = load_project_config(project_dir) or {}
+
     # --- socks.json gate: all workflows except --design require it ---
     if active_workflow and active_workflow != "design":
-        socks_cfg = load_project_config(project_dir)
-        if socks_cfg is None:
+        if not socks_cfg:
             print(f"\n  ERROR: socks.json not found. Run --design first to create a "
                   f"project, or --migrate to import an existing one.")
             return 1
