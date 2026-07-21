@@ -2,7 +2,7 @@
 # Zynq-7000, driven entirely over JTAG (no UART, no bash, no Python). Run with xsdb:
 #
 #     xsdb jtag_erase_reflash.tcl erase        --ps7 <ps7_init.tcl> [options]
-#     xsdb jtag_erase_reflash.tcl erase+flash  <image.mcs> --ps7 <ps7_init.tcl> [options]
+#     xsdb jtag_erase_reflash.tcl erase+flash  <image.mcs|image.bin> --ps7 <ps7_init.tcl> [options]
 #
 # Windows and Linux use the SAME invocation (xsdb on PATH after sourcing/settings the
 # Xilinx toolchain); there is deliberately no shell wrapper in the critical path.
@@ -37,7 +37,7 @@
 #
 # MODES
 #   erase        — full-chip `sf erase 0 <chip_size>`, then verify sampled offsets read 0xFF
-#   erase+flash  — the above, then program the .mcs image span from offset 0 and verify.
+#   erase+flash  — the above, then program the image span from offset 0 and verify.
 #                  ("flash" is accepted as a shorthand.) The image SPAN (trailing 0xFF
 #                  trimmed) is written, not a padded chip-size write: after the full-chip
 #                  erase the untouched tail is already 0xFF, so the chip ends
@@ -45,9 +45,13 @@
 #
 # ARGUMENTS
 #   <mode>            erase | erase+flash   (required, first positional)
-#   <image.mcs>       Intel-HEX image (bootgen -format MCS) — required for erase+flash.
-#                     Parsed IN TCL (record types 00/01/04 + per-line checksum) to a raw
-#                     .bin, because U-Boot `sf write` copies raw bytes from DRAM (plan-08 D1).
+#   <image.mcs|.bin>  Boot image — required for erase+flash. Accepts either an Intel-HEX
+#                     .mcs (bootgen -format MCS) or a raw .bin (bootgen -format BIN),
+#                     auto-detected by extension or (for an extensionless/renamed file) a
+#                     leading ':' byte — same heuristic as the workbench dashboard's
+#                     /api/upload-image. An .mcs is parsed IN TCL (record types 00/01/04 +
+#                     per-line checksum) to raw bytes; a .bin is read as-is. Either way,
+#                     U-Boot `sf write` copies raw bytes from DRAM (plan-08 D1).
 #   --ps7 <path>      ps7_init.tcl matching THIS board (extract from its .xsa). REQUIRED.
 #                     An incompatible ps7_init can WEDGE the debug DAP/TAP (power-cycle to
 #                     recover) — always use the board's own export.
@@ -72,12 +76,13 @@ proc usage {} {
 
 USAGE
   xsdb jtag_erase_reflash.tcl erase        --ps7 <ps7_init.tcl> [options]
-  xsdb jtag_erase_reflash.tcl erase+flash  <image.mcs> --ps7 <ps7_init.tcl> [options]
+  xsdb jtag_erase_reflash.tcl erase+flash  <image.mcs|image.bin> --ps7 <ps7_init.tcl> [options]
 
 MODES
   erase          full-chip erase, then verify sampled offsets read back 0xFF
-  erase+flash    full-chip erase, program the .mcs image span from offset 0, verify
-                 readback ("flash" accepted as shorthand)
+  erase+flash    full-chip erase, program the image span from offset 0, verify
+                 readback ("flash" accepted as shorthand). Accepts an Intel-HEX .mcs
+                 or a raw .bin — auto-detected by extension or a leading ':' byte.
 
 OPTIONS
   --ps7 <path>        ps7_init.tcl for THIS board (from its .xsa)  [REQUIRED]
@@ -92,7 +97,7 @@ EXAMPLES
   Linux:    source /tools/Xilinx/Vitis/2022.2/settings64.sh
             xsdb jtag_erase_reflash.tcl erase+flash boot.mcs --ps7 ps7_init.tcl
   Windows:  C:\Xilinx\Vitis\2022.2\settings64.bat
-            xsdb jtag_erase_reflash.tcl erase+flash boot.mcs --ps7 ps7_init.tcl
+            xsdb jtag_erase_reflash.tcl erase+flash boot.bin --ps7 ps7_init.tcl
 
 DESTRUCTIVE: both modes wipe the entire QSPI flash. JTAG has a single owner — close other
 xsdb/Vivado hw sessions first, or point --url at the session that owns the cable.}
@@ -143,11 +148,11 @@ proc run {cmd {hint ""}} {
 
 # ---------------------------------------------------------------------------- arg parsing
 # Pure-TCL argv parse (requirement 2: no bash/env resolution — Windows-friendly). Positional
-# args first (mode, then the .mcs for erase+flash), then --flag value pairs.
+# args first (mode, then the image for erase+flash), then --flag value pairs.
 if {[lsearch -exact $argv --help] >= 0 || [llength $argv] == 0} { usage; exit 0 }
 
-set MODE ""            ;# erase | erase+flash
-set MCS  ""            ;# Intel-HEX image path (erase+flash only)
+set MODE  ""            ;# erase | erase+flash
+set IMAGE ""            ;# boot image path, .mcs or .bin (erase+flash only)
 set PS7  ""            ;# ps7_init.tcl path (required)
 # Default helper: the pinned 2022.2 cfgmem U-Boot carried NEXT TO THIS SCRIPT (plan-08 D6:
 # self-contained; the 2021.1 build is a known dud). [info script] is this file's own path.
@@ -187,12 +192,12 @@ if {$MODE eq "flash"} { set MODE "erase+flash" }
 if {$MODE ni {erase erase+flash}} {
     usage; puts stderr "\nERROR: mode must be 'erase' or 'erase+flash' (got '$MODE')"; exit 2
 }
-# Positional 2: the .mcs — required by erase+flash, meaningless for erase.
-set MCS [lindex $positionals 1]
-if {$MODE eq "erase+flash" && $MCS eq ""} {
-    usage; puts stderr "\nERROR: erase+flash needs an <image.mcs> argument"; exit 2
+# Positional 2: the image (.mcs or .bin) — required by erase+flash, meaningless for erase.
+set IMAGE [lindex $positionals 1]
+if {$MODE eq "erase+flash" && $IMAGE eq ""} {
+    usage; puts stderr "\nERROR: erase+flash needs an <image.mcs|image.bin> argument"; exit 2
 }
-if {$MODE eq "erase" && $MCS ne ""} {
+if {$MODE eq "erase" && $IMAGE ne ""} {
     usage; puts stderr "\nERROR: mode 'erase' takes no image (did you mean erase+flash?)"; exit 2
 }
 if {[llength $positionals] > 2} {
@@ -205,8 +210,8 @@ if {$PS7 eq ""} { usage; puts stderr "\nERROR: --ps7 <ps7_init.tcl> is required"
 # Windows and Linux (requirement 2). xsdb does NOT expand ~ or shell vars, so we don't either.
 set PS7   [file normalize $PS7]
 set UBOOT [file normalize $UBOOT]
-if {$MCS ne ""} { set MCS [file normalize $MCS] }
-foreach {what f} [list ps7_init $PS7 u-boot-helper $UBOOT image $MCS] {
+if {$IMAGE ne ""} { set IMAGE [file normalize $IMAGE] }
+foreach {what f} [list ps7_init $PS7 u-boot-helper $UBOOT image $IMAGE] {
     if {$f ne "" && ![file isfile $f]} {
         puts stderr "ERROR: $what file not found: $f"
         if {$what eq "u-boot-helper"} {
@@ -225,7 +230,7 @@ if {$CHIPSIZE ne ""} {
 # ------------------------------------------------------------------------- run banner
 log_open $LOG
 logputs "mode:      $MODE"
-logputs "image:     [expr {$MCS ne "" ? $MCS : "(none — erase only)"}]"
+logputs "image:     [expr {$IMAGE ne "" ? $IMAGE : "(none — erase only)"}]"
 logputs "ps7_init:  $PS7"
 logputs "u-boot:    $UBOOT"
 logputs "hw_server: [expr {$URL ne "" ? $URL : "(auto-start local)"}]"
@@ -514,6 +519,23 @@ proc open_uboot_console {} {
     return $chip
 }
 
+# ------------------------------------------------------------- image format auto-detect
+# An .mcs is text Intel-HEX and needs decoding to raw bytes before it can be staged; a .bin
+# already IS raw bytes. Both extensions are trusted outright — a raw bootgen .bin can
+# legitimately start with the byte ':' (0x3A), so guessing from content would misroute it
+# into the Intel-HEX parser. Only an extensionless/renamed file falls back to sniffing a
+# leading ':' byte (an Intel-HEX file always starts every line, including the first, with
+# ':'), same fallback the workbench dashboard's /api/upload-image (app.py) uses.
+proc is_mcs_file {path} {
+    if {[string match -nocase "*.mcs" $path]} { return 1 }
+    if {[string match -nocase "*.bin" $path]} { return 0 }
+    set f [open $path r]
+    fconfigure $f -translation binary
+    set first [read $f 1]
+    close $f
+    return [expr {$first eq ":"}]
+}
+
 # ----------------------------------------------------------------- Intel-HEX (.mcs) parse
 # U-Boot `sf write` copies RAW BYTES from a DRAM address — it cannot read Intel HEX. So the
 # .mcs is decoded host-side, in pure TCL, to a temp .bin that `dow -data` stages into DRAM
@@ -623,14 +645,14 @@ proc trim_page_align {bin} {
 proc check_boot_header {bin} {
     if {[string length $bin] < 0x28} {
         die "decoded image is smaller than a Zynq boot header" \
-            "this .mcs is not a Zynq boot image — regenerate it with bootgen"
+            "this image is not a Zynq boot image — regenerate it with bootgen"
     }
     binary scan [string range $bin 0x20 0x27] ii width_detect image_id
     set width_detect [expr {$width_detect & 0xFFFFFFFF}]
     set image_id     [expr {$image_id & 0xFFFFFFFF}]
     if {$width_detect != 0xAA995566 || $image_id != 0x584C4E58} {
         die "decoded image has no Zynq boot header (0x20=0x[format %08x $width_detect], 0x24=0x[format %08x $image_id])" \
-            "expected width-detect 0xAA995566 + 'XLNX' — this .mcs is not a Zynq-7000 boot image; regenerate it with bootgen"
+            "expected width-detect 0xAA995566 + 'XLNX' — this image is not a Zynq-7000 boot image; regenerate it with bootgen"
     }
 }
 
@@ -667,14 +689,26 @@ proc stage_to_dram {binfile bin} {
 }
 
 # ------------------------------------------------------------------------ mode dispatch
-# FAIL FAST, host-side first: decode + validate the .mcs BEFORE touching the board, so a
+# FAIL FAST, host-side first: decode + validate the image BEFORE touching the board, so a
 # malformed image can never leave the chip erased-but-unprogrammed.
 set BIN ""
 set STAGEBIN ""
 if {$MODE eq "erase+flash"} {
-    logputs "parsing Intel-HEX image (in-TCL, checksum-verified) ..."
-    set BIN [parse_mcs $MCS]
-    logputs "decoded [string length $BIN] bytes from the .mcs"
+    if {[is_mcs_file $IMAGE]} {
+        logputs "parsing Intel-HEX image (in-TCL, checksum-verified) ..."
+        set BIN [parse_mcs $IMAGE]
+        logputs "decoded [string length $BIN] bytes from the .mcs"
+    } else {
+        logputs "reading raw binary image ..."
+        set bf [open $IMAGE r]
+        fconfigure $bf -translation binary   ;# raw bytes: no CR/LF mangling on Windows
+        set BIN [read $bf]
+        close $bf
+        if {[string length $BIN] == 0} {
+            die "the image file is empty" "pass a non-empty bootgen-produced .bin or .mcs image"
+        }
+        logputs "read [string length $BIN] bytes from the .bin"
+    }
     check_boot_header $BIN
     set BIN [trim_page_align $BIN]
     logputs "write span after trailing-0xFF trim + 256 B page align: [string length $BIN] bytes"
@@ -810,7 +844,7 @@ if {$MODE eq "erase+flash"} {
     # The image has to fit the chip we just probed — refuse before erasing anything.
     if {[string length $BIN] > $CHIP} {
         die "image span ([string length $BIN] bytes) exceeds the flash size ($CHIP bytes)" \
-            "wrong .mcs for this board, or sf probe read the wrong chip — check --chip-size"
+            "wrong image for this board, or sf probe read the wrong chip — check --chip-size"
     }
     stage_to_dram $STAGEBIN $BIN
 }
