@@ -36,6 +36,7 @@ under `socks/references/` — no external skill dependencies.
 │    dpll.md               (DPLL/PLL designs)              │
 │    structure-module.md   (module/block directory layout)  │
 │    vendored-ip-reuse.md  (wrap ADI/3rd-party IP in a module)│
+│    bd-authoring.md       (BD module refs, net surgery, CDC)│
 │    structure-system.md   (system scope directory layout)  │
 │    migration-module.md   (legacy + flat→SOCKS migration) │
 │    migration-system.md   (Vivado project→SOCKS migration)│

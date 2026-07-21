@@ -259,6 +259,15 @@ hard post-route gate on every build that adds/modifies RTL or BD or inserts an I
 BD edit or even an ILA insertion can silently sever an AXIS interface in the netlist while
 sim, synthesis, and routing all pass.
 
+**Before authoring or wiring anything into a block design programmatically** (module-
+reference cells, net surgery on an existing BD, HP-port fan-in, CDC constraints for
+BD-destined modules): read `references/bd-authoring.md`. It carries the hard flow
+constraints a green sim cannot see — VHDL-93-only module refs (`filemgmt 56-195`),
+the out-port mirror idiom, clockless-cell FREQ_HZ defaults (`BD 41-237`/`41-967`),
+Vivado dropping multi-interface `ASSOCIATED_BUSIF` attributes, assert-single-load
+net surgery, the CDC XDC pairing rule with exact-count hardware gates, and the
+authoring checklist for BD-destined module packets.
+
 **For DPLL/PLL/NCO/clock recovery designs:** read `references/dpll.md` before Stage 1.
 
 **For DSP rate-conversion / FIR / multi-rate designs:** read `references/dsp/rate-conversion.md` before Stage 1.
