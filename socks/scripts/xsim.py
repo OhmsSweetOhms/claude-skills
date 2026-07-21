@@ -440,19 +440,23 @@ def main() -> int:
     check_lines = [l for l in sim_output.splitlines()
                    if not l.strip().startswith("##")]
     check_text = "\n".join(check_lines).upper()
-    # Exclude FAIL in zero-count contexts: "FAIL: 0", "FAIL:0", "0 FAIL", "0 FAILURES"
-    fail_zero = re.search(r'FAIL\s*:\s*0\b|0\s+FAIL', check_text)
-    has_fail = ("FAIL" in check_text and "ALL PASS" not in check_text and
-                "SIMULATION PASSED" not in check_text and not fail_zero)
+    # Match failure records, not arbitrary words containing "fail" (for
+    # example, "PASS failing-status directed test").
+    fail_lines = [
+        line for line in check_lines
+        if re.search(r'^\s*FAIL(?:\s|:|$)|\bFATAL:', line, re.IGNORECASE)
+        and not re.search(r'FAIL\s*:\s*0\b|\b0\s+FAIL(?:URE)?S?\b',
+                          line, re.IGNORECASE)
+    ]
+    has_fail = bool(fail_lines)
     has_pass = ("ALL PASS" in check_text or "ALL TESTS PASSED" in check_text or
                 "TEST PASSED" in check_text or "SIMULATION PASSED" in check_text)
 
     if has_fail:
         all_passed = False
         print(f"\n  Simulation output contains FAIL:")
-        for line in sim_output.splitlines():
-            if "FAIL" in line.upper():
-                print(f"    ! {line.strip()}")
+        for line in fail_lines:
+            print(f"    ! {line.strip()}")
 
     if has_pass:
         print(f"\n  Simulation self-check: {pass_str()}")
