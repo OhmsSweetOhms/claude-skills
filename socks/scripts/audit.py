@@ -281,7 +281,8 @@ def check_sync_reset(path: str, lines: List[str]) -> CheckResult:
             in_process = True
             found_rising_edge = False
 
-        if in_process and re.search(r'rising_edge\s*\(\s*clk\s*\)', code):
+        if in_process and re.search(
+                r'rising_edge\s*\(\s*[a-z]\w*\s*\)', code):
             found_rising_edge = True
 
         if (in_process and not found_rising_edge and
@@ -289,7 +290,7 @@ def check_sync_reset(path: str, lines: List[str]) -> CheckResult:
             result.passed = False
             result.violations.append(
                 Violation(basename(path), i,
-                          "rst_n check before rising_edge(clk)"))
+                          "rst_n check before rising_edge(<clock>)"))
 
         if re.search(r'\bend\s+process\b', code):
             in_process = False
