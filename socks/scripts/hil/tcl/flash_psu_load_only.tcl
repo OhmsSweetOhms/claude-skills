@@ -33,6 +33,14 @@ if {$firmware eq "" || $target_filter eq ""} {
     exit 1
 }
 
+# Multi-cable safety (same contract as flash_psu_no_os.tcl): if
+# HIL_JTAG_CABLE_FILTER is set, constrain the target selection to that
+# JTAG cable so a same-named core on a second board cannot be matched.
+if {[info exists ::env(HIL_JTAG_CABLE_FILTER)] && $::env(HIL_JTAG_CABLE_FILTER) ne ""} {
+    set target_filter "($target_filter) && jtag_cable_name =~ \"$::env(HIL_JTAG_CABLE_FILTER)\""
+    puts "JTAG cable filter: $::env(HIL_JTAG_CABLE_FILTER)"
+}
+
 puts "Firmware:      $firmware"
 puts "Target filter: $target_filter"
 
