@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Apply an ADI MxFE profile selected by socks.json::adi."""
+"""Apply the MxFE build recipe named by socks.json::build.recipe.
+
+One-pointer contract (operator ruling 2026-07-25, gps_design thread
+cross-cutting/20260703-socks-canonical-build-driver): the retired
+socks.json::adi selection block (active_profile + profile_search_path +
+build.project_dir disambiguation) is replaced by a single build.recipe
+path to the profile's unified platforms/profiles/<p>/build-recipe.json.
+The recipe is schema-validated at load (fail loud at parse time) and its
+stages.hdl_no_os section drives materialize -> patch: pristine HDL files
+are restored from <hdl_project>/upstream/, then the recipe's explicit
+repo-relative patch paths are applied (no implicit join conventions).
+
+The state file build/state/adi-profile-apply.json keeps its historical
+key names (active_profile / manifest_path / ...) -- hil_run's UART
+marker config and bench tools consume that contract; manifest_path now
+points at the unified recipe.
+"""
 
 import argparse
 import hashlib
@@ -9,6 +25,8 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
+
+RECIPE_SCHEMA_REL = "platforms/schemas/build-recipe.schema.json"
 
 
 def _repo_root(project_dir):
@@ -65,20 +83,6 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _run(cmd, cwd):
-    result = subprocess.run(
-        cmd,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Command failed in {cwd}: {' '.join(cmd)}\n{result.stdout}")
-    return result.stdout
-
-
 def _git_apply_to_dir(target_dir, patch_path):
     repo = _repo_root(target_dir)
     prefix = os.path.relpath(target_dir, repo)
@@ -98,68 +102,44 @@ def _git_apply_to_dir(target_dir, patch_path):
     return result.stdout
 
 
-def _profile_project_dir(profile_dir):
-    # .../<project>/profiles/<profile-name>
-    return os.path.abspath(os.path.join(profile_dir, os.pardir, os.pardir))
+def load_recipe(project_dir, socks_cfg=None, recipe_path=None):
+    """Resolve, load, and schema-validate the unified build recipe.
+
+    Explicit recipe_path wins; otherwise socks.json::build.recipe is the
+    per-project default. Returns (recipe_abspath, recipe_dict).
+    """
+    if recipe_path is None:
+        if socks_cfg is None:
+            socks_cfg = _load_json(os.path.join(project_dir, "socks.json"))
+        recipe_path = socks_cfg.get("build", {}).get("recipe")
+        if not recipe_path:
+            raise ValueError(
+                "socks.json::build.recipe is required (the adi selection block is "
+                "retired -- one-pointer ruling 2026-07-25; point build.recipe at "
+                "platforms/profiles/<profile>/build-recipe.json)")
+    recipe_abs = _resolve_config_path(project_dir, recipe_path)
+    recipe = _load_json(recipe_abs)
+
+    recipe_repo = _repo_root(os.path.dirname(recipe_abs))
+    schema_path = os.path.join(recipe_repo, RECIPE_SCHEMA_REL)
+    try:
+        import jsonschema
+    except ImportError as exc:
+        raise RuntimeError("python3-jsonschema is required: recipe validation is not optional") from exc
+    if not os.path.isfile(schema_path):
+        raise FileNotFoundError(f"recipe schema not found: {schema_path}")
+    jsonschema.validate(recipe, _load_json(schema_path))
+    return recipe_abs, recipe
 
 
-def _manifest_matches_build_project(manifest, manifest_path, build_project_dir):
-    if not build_project_dir:
-        return False
-    normalized = build_project_dir.replace("\\", "/").strip("/")
-    if normalized.startswith("projects/"):
-        normalized = normalized[len("projects/"):]
-    hdl_project = str(manifest.get("hdl_project", "")).replace("\\", "/").strip("/")
-    if hdl_project == normalized:
-        return True
-    project_dir = _profile_project_dir(os.path.dirname(manifest_path))
-    return project_dir.replace("\\", "/").endswith("/projects/" + normalized)
-
-
-def find_profile_manifest(project_dir, socks_cfg):
-    adi_cfg = socks_cfg.get("adi", {})
-    active = adi_cfg.get("active_profile")
-    if not active:
-        raise ValueError("socks.json::adi.active_profile is required")
-
-    matches = []
-    for search in adi_cfg.get("profile_search_path", []):
-        search_dir = _resolve_config_path(project_dir, search)
-        manifest_path = os.path.join(search_dir, active, "manifest.json")
-        if os.path.isfile(manifest_path):
-            manifest = _load_json(manifest_path)
-            matches.append((manifest_path, manifest))
-
-    if not matches:
-        raise FileNotFoundError(
-            f"Active ADI profile '{active}' not found in profile_search_path")
-
-    build_project_dir = socks_cfg.get("build", {}).get("project_dir")
-    preferred = [
-        item for item in matches
-        if _manifest_matches_build_project(item[1], item[0], build_project_dir)
-    ]
-    if len(preferred) == 1:
-        return preferred[0]
-    if len(matches) == 1:
-        return matches[0]
-
-    choices = ", ".join(_rel(path, _repo_root(project_dir)) for path, _ in matches)
-    raise ValueError(
-        f"Profile '{active}' is ambiguous for build.project_dir="
-        f"{build_project_dir!r}; matches: {choices}")
-
-
-def _copy_pristine_hdl_files(hdl_project_dir, manifest):
+def _copy_pristine_hdl_files(hdl_project_dir, stage):
     copied = []
     upstream_dir = os.path.join(hdl_project_dir, "upstream")
     if not os.path.isdir(upstream_dir):
         raise FileNotFoundError(f"HDL upstream directory not found: {upstream_dir}")
 
-    for patch in manifest.get("patches", {}).get("hdl", []):
-        rel = patch.get("applies_to")
-        if not rel:
-            raise ValueError("HDL patch entry missing applies_to")
+    for patch in stage["patches"]["hdl"]:
+        rel = patch["applies_to"]
         src = os.path.join(upstream_dir, rel)
         dst = os.path.join(hdl_project_dir, rel)
         if not os.path.isfile(src):
@@ -190,19 +170,16 @@ def _materialize_no_os(no_os_subtree, build_dir):
     return dst
 
 
-def _apply_no_os_patches(no_os_build_root, no_os_subtree, manifest):
+def _apply_patch_series(target_dir, repo_root, entries):
+    """Apply recipe patch entries; each entry.file is repo-relative."""
     applied = []
-    patches_dir = os.path.join(no_os_subtree, "patches")
-    for patch in manifest.get("patches", {}).get("no_os", []):
-        patch_file = patch.get("file")
-        if not patch_file:
-            raise ValueError("no-OS patch entry missing file")
-        patch_path = os.path.join(patches_dir, patch_file)
+    for patch in entries:
+        patch_path = os.path.join(repo_root, patch["file"])
         if not os.path.isfile(patch_path):
-            raise FileNotFoundError(f"no-OS patch not found: {patch_path}")
-        output = _git_apply_to_dir(no_os_build_root, patch_path)
+            raise FileNotFoundError(f"recipe-declared patch not found: {patch_path}")
+        output = _git_apply_to_dir(target_dir, patch_path)
         applied.append({
-            "file": patch_file,
+            "file": patch["file"],
             "sha256": _sha256(patch_path),
             "applies_to": patch.get("applies_to"),
             "output": output.strip(),
@@ -210,29 +187,11 @@ def _apply_no_os_patches(no_os_build_root, no_os_subtree, manifest):
     return applied
 
 
-def _apply_hdl_patches(hdl_project_dir, profile_dir, manifest):
-    applied = []
-    for patch in manifest.get("patches", {}).get("hdl", []):
-        patch_file = patch.get("file")
-        if not patch_file:
-            raise ValueError("HDL patch entry missing file")
-        patch_path = os.path.join(profile_dir, patch_file)
-        if not os.path.isfile(patch_path):
-            raise FileNotFoundError(f"HDL patch not found: {patch_path}")
-        output = _git_apply_to_dir(hdl_project_dir, patch_path)
-        applied.append({
-            "file": patch_file,
-            "sha256": _sha256(patch_path),
-            "applies_to": patch.get("applies_to"),
-            "output": output.strip(),
-        })
-    return applied
+def apply_recipe(project_dir, recipe_path=None):
+    """Materialize + patch per the unified recipe. Returns a result dict.
 
-
-def apply_active_profile(project_dir):
-    """Apply the active ADI profile. Returns a structured result dict.
-
-    Projects without socks.json::adi are a no-op.
+    Projects without socks.json::build.recipe (and no explicit path) are
+    a no-op skip, mirroring the old adi-absent behavior for plain modules.
     """
     project_dir = os.path.abspath(project_dir)
     root = _repo_root(project_dir)
@@ -240,34 +199,40 @@ def apply_active_profile(project_dir):
     if not os.path.isfile(socks_path):
         raise FileNotFoundError(f"socks.json not found: {socks_path}")
     socks_cfg = _load_json(socks_path)
-    adi_cfg = socks_cfg.get("adi")
-    if not adi_cfg:
-        return {"status": "skipped", "reason": "socks.json has no adi section"}
+    build_cfg = socks_cfg.get("build", {})
+    if recipe_path is None and not build_cfg.get("recipe"):
+        return {"status": "skipped", "reason": "socks.json has no build.recipe"}
 
-    manifest_path, manifest = find_profile_manifest(project_dir, socks_cfg)
-    profile_dir = os.path.dirname(manifest_path)
-    hdl_project_dir = _profile_project_dir(profile_dir)
-    no_os_subtree = _resolve_config_path(project_dir, adi_cfg.get("no_os_subtree"))
+    recipe_abs, recipe = load_recipe(project_dir, socks_cfg, recipe_path)
+    recipe_repo = _repo_root(os.path.dirname(recipe_abs))
+    stage = recipe["stages"]["hdl_no_os"]
+
+    adi_root = _resolve_config_path(project_dir, build_cfg.get("adi_root"))
+    if not adi_root or not build_cfg.get("project_dir"):
+        raise ValueError("socks.json build.adi_root and build.project_dir are required for adi_make")
+    hdl_project_dir = os.path.abspath(os.path.join(adi_root, build_cfg["project_dir"]))
+    no_os_subtree = _resolve_config_path(project_dir, build_cfg.get("no_os_subtree"))
+    if not no_os_subtree:
+        raise ValueError("socks.json build.no_os_subtree is required (e.g. 'ADI/no-OS/')")
 
     build_dir = os.path.join(project_dir, "build", "hil")
     state_dir = os.path.join(project_dir, "build", "state")
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(state_dir, exist_ok=True)
 
-    print(f"  ADI profile: {adi_cfg['active_profile']}")
-    print(f"  Manifest:    {_rel(manifest_path, root)}")
+    print(f"  Recipe:      {_rel(recipe_abs, root)} ({recipe['name']})")
     print(f"  HDL project: {_rel(hdl_project_dir, root)}")
 
-    copied_hdl = _copy_pristine_hdl_files(hdl_project_dir, manifest)
+    copied_hdl = _copy_pristine_hdl_files(hdl_project_dir, stage)
     no_os_build_root = _materialize_no_os(no_os_subtree, build_dir)
-    no_os_patches = _apply_no_os_patches(no_os_build_root, no_os_subtree, manifest)
-    hdl_patches = _apply_hdl_patches(hdl_project_dir, profile_dir, manifest)
+    no_os_patches = _apply_patch_series(no_os_build_root, recipe_repo, stage["patches"]["no_os"])
+    hdl_patches = _apply_patch_series(hdl_project_dir, recipe_repo, stage["patches"]["hdl"])
 
     result = {
         "status": "applied",
         "timestamp": datetime.now().isoformat(),
-        "active_profile": adi_cfg["active_profile"],
-        "manifest_path": _rel(manifest_path, root),
+        "active_profile": recipe["name"],
+        "manifest_path": _rel(recipe_abs, root),
         "hdl_project_dir": _rel(hdl_project_dir, root),
         "no_os_subtree": _rel(no_os_subtree, root),
         "no_os_build_root": no_os_build_root,
@@ -286,15 +251,17 @@ def apply_active_profile(project_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Apply socks.json::adi active profile")
+    parser = argparse.ArgumentParser(description="Apply the socks.json::build.recipe build recipe")
     parser.add_argument("--project-dir", required=True, help="SOCKS project root")
+    parser.add_argument("--recipe", default=None,
+                        help="Explicit recipe path (wins over socks.json::build.recipe)")
     args = parser.parse_args()
     try:
-        result = apply_active_profile(args.project_dir)
+        result = apply_recipe(args.project_dir, recipe_path=args.recipe)
     except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"ERROR: {e}")
         return 1
-    print(json.dumps(result, indent=2))
+    print(json.dumps({k: v for k, v in result.items() if k != "patches"}, indent=2))
     return 0
 
 

@@ -177,7 +177,9 @@ def _active_profile_marker_config(project_dir):
     if not manifest:
         return None, None
 
-    markers = manifest.get("uart_pass_markers")
+    # manifest_path points at the unified build-recipe.json (one-pointer
+    # ruling 2026-07-25); markers live under its verification section.
+    markers = manifest.get("verification", {}).get("uart_pass_markers")
     if not markers:
         return None, None
     return markers, manifest.get("match_mode")

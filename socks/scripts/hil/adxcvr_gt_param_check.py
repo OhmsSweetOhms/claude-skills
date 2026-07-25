@@ -143,15 +143,13 @@ def _resolve_path(base: str, value: str) -> str:
 
 
 def _find_profile_operating_point(project_dir: str, socks_cfg: dict[str, Any]) -> str | None:
-    active = socks_cfg.get("adi", {}).get("active_profile")
-    if not active:
+    # One-pointer ruling 2026-07-25: the operating point lives in the unified
+    # build recipe named by socks.json::build.recipe (::operating_point).
+    recipe = socks_cfg.get("build", {}).get("recipe")
+    if not recipe:
         return None
-    for search in socks_cfg.get("adi", {}).get("profile_search_path", []):
-        search_dir = _resolve_path(project_dir, search)
-        candidate = os.path.join(search_dir, active, "operating-point.json")
-        if os.path.isfile(candidate):
-            return candidate
-    return None
+    candidate = _resolve_path(project_dir, recipe)
+    return candidate if os.path.isfile(candidate) else None
 
 
 def _resolve_from_project(project_dir: str) -> SourceInfo:
@@ -267,6 +265,9 @@ def _infer_refclk_from_operating_point(path: str | None) -> float | None:
     if not path or not os.path.isfile(path):
         return None
     data = _load_json(path)
+    op = data.get("operating_point")
+    if op and "fpga_refclk_mhz" in op:
+        return float(op["fpga_refclk_mhz"])
     clocking = data.get("clocking", {})
     if "fpga_refclk_hz" in clocking:
         return float(clocking["fpga_refclk_hz"]) / 1e6
