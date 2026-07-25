@@ -3,19 +3,25 @@
 ADI-based system HIL projects can use a named profile to keep HDL and no-OS
 patches reproducible across Stage 14, Stage 16, and Stage 17.
 
-## Configuration
+## Configuration (one-pointer, ruling 2026-07-25)
 
-Set `build.flow` to `adi_make` and set `adi.active_profile` in `socks.json`.
-The profile manifest must live under the project `ADI/` tree and identify the
-ADI HDL project, the no-OS upstream source, copied files, and patch files.
+Set `build.flow` to `adi_make` and point `build.recipe` in `socks.json` at the
+profile's unified recipe: `platforms/profiles/<profile>/build-recipe.json`
+(see `references/build.md` for the recipe's shape and the `socks build`
+driver). Also set `build.no_os_subtree` (e.g. `ADI/no-OS/`). The retired
+`adi.{active_profile, profile_search_path, no_os_subtree}` block is rejected:
+Stage 14 errors actionably if `build.recipe` is missing.
 
-Stage 14 calls `scripts/hil/adi_profile_apply.py` before ADI Make. The helper:
+Stage 14 calls `scripts/hil/adi_profile_apply.py::apply_recipe` before ADI
+Make. The helper:
 
-- selects the manifest entry whose project directory matches `build.project_dir`
-- materializes no-OS under `ADI/no-OS/work/active`
+- loads and schema-validates the recipe (`build-recipe.schema.json`)
+- materializes no-OS under `<build.no_os_subtree>/work/active`
 - copies HDL upstream files into the live ADI project
-- applies HDL and no-OS patches
-- writes `build/state/adi-profile-apply.json`
+- applies the recipe's HDL and no-OS patches via their explicit
+  repo-relative paths (e.g. `platforms/patches/no-os/...`)
+- writes `build/state/adi-profile-apply.json` (historical key names
+  preserved; `manifest_path` points at the unified recipe)
 
 `ADI/no-OS/work/` must be ignored by the project repository. Do not commit the
 materialized active tree.

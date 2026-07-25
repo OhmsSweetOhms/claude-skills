@@ -480,10 +480,11 @@ verify_elf_layout requires pyelftools.` rather than a silent bypass.
 ### ADI profile UART markers
 
 For ADI profile-based flows, Stage 17 first checks
-`build/state/adi-profile-apply.json` for the active profile manifest. If that
-manifest contains `uart_pass_markers`, those regex markers override the static
-`hil.json` markers. This keeps profile switching strict: changing only
-`socks.json::adi.active_profile` can move the gate from a 61.44 MHz
+`build/state/adi-profile-apply.json` for the applied build recipe
+(`manifest_path` points at `platforms/profiles/<p>/build-recipe.json`). If
+that recipe carries `verification.uart_pass_markers`, those regex markers
+override the static `hil.json` markers. This keeps profile switching strict:
+changing only `socks.json::build.recipe` can move the gate from a 61.44 MHz
 lane-rate-/40 expectation to a 245.76 MHz expectation and back without editing
 `hil.json`.
 
@@ -513,9 +514,10 @@ Stage 18 captures on RX-clock-domain ILAs are only interpretable after:
   for the same profile's asymmetric TX, `61.440 MHz` for the 6144 family,
   `245.760 MHz` for the 24576 family).
 
-The exact marker set per profile lives alongside the operating-point
-summary in `references/boards/<board>/profiles.json` (the consuming
-project's `socks.json::adi.active_profile` selects which entry applies).
+The exact marker set per profile lives in the profile's unified recipe
+(`platforms/profiles/<p>/build-recipe.json::verification.uart_pass_markers`;
+the consuming project's `socks.json::build.recipe` selects which recipe
+applies). `references/boards/<board>/profiles.json` keeps a summary view.
 
 If the firmware lifecycle is "boot bitstream -> no-OS bring-up -> ILA
 capture" (typical for a combined A53 + R5 streaming flow), the Vivado
@@ -942,11 +944,13 @@ ERROR: sw/hil_test_main.c not found. Claude must write firmware before Stage 16 
 
 When `build.flow` is `adi_make`, Stage 14 bypasses the native PS7 block-design
 flow and runs `make -C <adi_root>/<project_dir>` after sourcing Vivado settings.
-If `socks.json` also has `adi.active_profile`, Stage 14 first applies the named
-profile with `scripts/hil/adi_profile_apply.py`. The profile materializes the
-matching no-OS upstream tree under the ignored path `ADI/no-OS/work/active`,
-copies HDL upstream files into the live ADI project, applies HDL/no-OS patches,
-and writes `build/state/adi-profile-apply.json`.
+Stage 14 first applies the recipe named by `socks.json::build.recipe` with
+`scripts/hil/adi_profile_apply.py::apply_recipe` (required for `adi_make`;
+missing `build.recipe` is an actionable error). The apply materializes the
+no-OS upstream tree under the ignored path `<build.no_os_subtree>/work/active`,
+copies HDL upstream files into the live ADI project, applies the recipe's
+HDL/no-OS patches from their explicit repo-relative paths, and writes
+`build/state/adi-profile-apply.json`.
 
 Stage 14 writes the make transcript to `build/hil/stage14_adi_make.log`, copies
 the ADI XSA to `build/hil/system_wrapper.xsa`, copies the ADI bitstream to

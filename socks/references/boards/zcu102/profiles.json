@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "board": "zcu102",
-  "description": "Xilinx ZCU102 (Zynq UltraScale+ MPSoC, XCZU9EG) with ADI MxFE FMC daughter cards. Profiles in this catalog cover validated MxFE operating points; profile data (manifests + patches + upstream pristine subtrees) lives in each consuming project under its own `socks.json::adi.no_os_subtree` and `socks.json::adi.hdl_subtree`. The catalog is name-only \u2014 it lists which profiles are known + their high-level operating points + their hardware-validation status, NOT the patch bytes.",
+  "description": "Xilinx ZCU102 (Zynq UltraScale+ MPSoC, XCZU9EG) with ADI MxFE FMC daughter cards. Profiles in this catalog cover known MxFE operating points; since the 2026-07-25 unification a profile's authoritative data is its unified platforms/profiles/<p>/build-recipe.json in the socks monorepo, selected per-project by socks.json::build.recipe (the adi.* selection block is retired). Only txm8l4 (2048) and the 16384 SHRIKE profile survive in-tree; the other entries here are historical operating points whose files live in git history. The catalog is name-only \u2014 operating points + validation status, NOT the patch bytes.",
   "fmc_daughter_cards_supported": [
     "ad9986-fmca",
     "ad9081-fmca-ebz (reference design; some profiles work on AD9986-FMCA via chip-ID acceptance patch)"
@@ -46,7 +46,7 @@
         "Running IIOD server"
       ],
       "patch_layout_contract": {
-        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "no_os_patches_dir": "<socks-monorepo>/platforms/patches/no-os/ (unified-recipe world, 2026-07-25; entries in build-recipe.json carry explicit repo-relative paths)",
         "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-jesd204b-m8l4/",
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-jesd204b-m8l4/manifest.json",
         "expected_no_os_patch_count": 4,
@@ -88,7 +88,7 @@
         "Running IIOD server"
       ],
       "patch_layout_contract": {
-        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "no_os_patches_dir": "<socks-monorepo>/platforms/patches/no-os/ (unified-recipe world, 2026-07-25; entries in build-recipe.json carry explicit repo-relative paths)",
         "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/24576-jesd204b-m8l4/",
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/24576-jesd204b-m8l4/manifest.json",
         "expected_no_os_patch_count": 7,
@@ -145,7 +145,7 @@
         "Running IIOD server"
       ],
       "patch_layout_contract": {
-        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "no_os_patches_dir": "<socks-monorepo>/platforms/patches/no-os/ (unified-recipe world, 2026-07-25; entries in build-recipe.json carry explicit repo-relative paths)",
         "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-l1-clean-jesd204b-rxm8l4-txm8l8/",
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-l1-clean-jesd204b-rxm8l4-txm8l8/manifest.json",
         "expected_no_os_patch_count": 5,
@@ -197,7 +197,7 @@
         "Running IIOD server"
       ],
       "patch_layout_contract": {
-        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "no_os_patches_dir": "<socks-monorepo>/platforms/patches/no-os/ (unified-recipe world, 2026-07-25; entries in build-recipe.json carry explicit repo-relative paths)",
         "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/24576-clean-l1-jesd204b-rxm8l4-txm8l4/",
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/24576-clean-l1-jesd204b-rxm8l4-txm8l4/manifest.json",
         "expected_no_os_patch_count": 7,
@@ -277,7 +277,7 @@
         "Running IIOD server"
       ],
       "patch_layout_contract": {
-        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "no_os_patches_dir": "<socks-monorepo>/platforms/patches/no-os/ (unified-recipe world, 2026-07-25; entries in build-recipe.json carry explicit repo-relative paths)",
         "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-quad-band-jesd204b-rxm8l4-txm8l8/",
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/6144-quad-band-jesd204b-rxm8l4-txm8l8/manifest.json",
         "expected_no_os_patch_count": 7,
@@ -362,7 +362,7 @@
         "Running IIOD server"
       ],
       "patch_layout_contract": {
-        "no_os_patches_dir": "<consuming-project>/<no_os_subtree>/patches/",
+        "no_os_patches_dir": "<socks-monorepo>/platforms/patches/no-os/ (unified-recipe world, 2026-07-25; entries in build-recipe.json carry explicit repo-relative paths)",
         "hdl_profile_dir": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/2048-quad-band-jesd204b-rxm8l2-txm8l4/",
         "manifest_path": "<consuming-project>/<hdl_subtree>/projects/<adi-project-name>/profiles/2048-quad-band-jesd204b-rxm8l2-txm8l4/manifest.json",
         "expected_no_os_patch_count": 13,
