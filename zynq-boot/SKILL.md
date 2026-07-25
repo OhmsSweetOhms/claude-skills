@@ -41,6 +41,40 @@ you go (see "Adding a new project" at the bottom). Don't invent paths for a
 board you have no reference for — that's exactly the searching this skill exists
 to avoid.
 
+## SD-card boot: use `scripts/sd_boot.py`
+
+For any board that boots from an SD card, the whole card workflow is one
+board-agnostic script — don't hand-roll `dd` and a pile of `cp`s:
+
+```bash
+python3 scripts/sd_boot.py flash  --image <base>.img --device /dev/sdX   # dry run
+python3 scripts/sd_boot.py flash  --image <base>.img --device /dev/sdX --confirm /dev/sdX
+python3 scripts/sd_boot.py deploy --boot-mount <BOOT-mount> --set <src>:<dest> --write
+python3 scripts/sd_boot.py verify --boot-mount <BOOT-mount>
+```
+
+- **`flash`** is dry-run by default and refuses non-removable devices, anything
+  holding a mounted `/`, `/home` or `/boot`, devices with mounted partitions,
+  devices over a size ceiling, a partition passed instead of the whole disk,
+  and a still-compressed image. It will not write until `--confirm` repeats the
+  device name.
+- **`deploy`** puts the boot artifacts at the FAT32 partition root — the step a
+  freshly flashed vendor image still needs, because vendors ship multi-board
+  bundles with per-board subdirectories and the boot loader only reads the root.
+  It sha256-verifies **after `sync`** (FAT through a card reader buffers hard,
+  so verifying before the flush just re-reads the page cache) and writes a
+  manifest onto the card.
+- **`verify`** re-hashes a card against that manifest, so "what is actually on
+  this card?" is a question with an answer.
+- It also reads a socks build bank directly: `--from-build-output
+  systems/builds/<run-label>/build-output.json` maps artifacts by `kind`, takes
+  only the three that belong on BOOT, applies the provenance→boot rename
+  (`system_<variant>.dtb` → `system.dtb`), and says why it skipped the rest.
+
+Board-specific facts — which base image, boot-mode switches, power-on order,
+what a good boot looks like — stay in `references/<board>.md`. The script
+knows none of them on purpose.
+
 ## The flow
 
 ```

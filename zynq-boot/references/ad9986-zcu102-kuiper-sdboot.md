@@ -74,14 +74,28 @@ the known-good release for vcxo122p88; it locked first try.
 
 ADI doesn't publish a `.bmap` sidecar, so `bmaptool` needs `--nobmap`:
 
+Use the skill's script, which picks `bmaptool` when present and falls back to
+`dd`, and which will not write until you repeat the device back to it:
+
 ```bash
-sudo bmaptool copy --nobmap 2024-04-04-ADI-Kuiper-full.img /dev/sdX
-# or:
-sudo dd if=2024-04-04-ADI-Kuiper-full.img of=/dev/sdX bs=4M status=progress conv=fsync
+python3 <skill>/scripts/sd_boot.py flash --image 2024-04-04-ADI-Kuiper-full.img \
+    --device /dev/sdX                      # dry run: prints the exact command
+python3 <skill>/scripts/sd_boot.py flash --image 2024-04-04-ADI-Kuiper-full.img \
+    --device /dev/sdX --confirm /dev/sdX   # actually writes
 ```
 
-(`/dev/sdX` = the SD card block device — verify with `lsblk` first; getting this
-wrong overwrites the wrong disk.)
+It refuses a device that is not removable, one that holds a mounted `/`,
+`/home` or `/boot`, one with partitions still mounted, one larger than 128 GiB,
+a partition passed instead of the whole disk, and a still-compressed image.
+Getting `/dev/sdX` wrong overwrites the wrong disk, and `lsblk` alone has not
+historically been enough to prevent that.
+
+The raw equivalents, if you would rather do it by hand:
+
+```bash
+sudo bmaptool copy --nobmap 2024-04-04-ADI-Kuiper-full.img /dev/sdX
+sudo dd if=2024-04-04-ADI-Kuiper-full.img of=/dev/sdX bs=4M status=progress conv=fsync
+```
 
 ### 3. Deploy the per-board boot files (the BOOT partition is a multi-board bundle)
 
@@ -99,8 +113,45 @@ For this board/variant, copy to the BOOT FAT32 root:
 | `zynqmp-common/Image` | `Image` |
 
 `BOOT.BIN` (~15.2 MiB) contains FSBL + PMUFW + BL31 + bitstream + U-Boot — that's
-the FSBL you depend on; you never build it yourself on this path. The
-`deploy_boot.sh` helper automates the three copies.
+the FSBL you depend on; you never build it yourself **on the stock path**.
+
+Automate the three copies with the skill's own script (board-agnostic, dry-run
+by default, sha256-verifies after `sync`, and leaves a manifest on the card
+recording what it put there):
+
+```bash
+python3 <skill>/scripts/sd_boot.py deploy --boot-mount <BOOT-mount> \
+    --set <bundle>/zynqmp-zcu102-rev10-ad9081/m8_l4/BOOT.BIN:BOOT.BIN \
+    --set <bundle>/zynqmp-zcu102-rev10-ad9081/m8_l4/m8_l4_vcxo122p88/system.dtb:system.dtb \
+    --set <bundle>/zynqmp-common/Image:Image --write
+```
+
+### 3b. Booting a build of YOUR OWN, not ADI's stock files
+
+Everything above is the *stock* bring-up path. If you are running a custom PL
+design — the GPS streaming substrate, say — you deploy the artifacts your build
+produced, and the stock `BOOT.BIN` is exactly what you must NOT copy: yours
+carries your bitstream and an FSBL regenerated from your own XSA.
+
+A socks build bank is understood natively, including the rename, which is the
+trap here — a build bank names the DTB for provenance
+(`system_<variant>.dtb`) while the boot loader only reads `system.dtb`:
+
+```bash
+python3 <skill>/scripts/sd_boot.py deploy --boot-mount <BOOT-mount> \
+    --from-build-output systems/builds/<run-label>/build-output.json --write
+```
+
+It maps by artifact `kind`, so it takes exactly the three that belong on the
+BOOT partition and tells you why it skipped the others — the bitstream is
+already inside your `BOOT.BIN` as the PL partition, the XSA is a build input,
+and the R5 firmware ELF belongs in the **rootfs** at
+`/lib/firmware/r5_0_capture_rproc.elf` where remoteproc loads it (the capture
+stack's own deploy tooling puts it there). Kernel modules are rootfs-side too.
+
+Check any card later with `sd_boot.py verify --boot-mount <mnt>` — it re-hashes
+against the manifest and tells you which run label the card is carrying, which
+beats guessing when a board boots something you did not expect.
 
 ### 4. Static IP (optional) via uEnv.txt
 
