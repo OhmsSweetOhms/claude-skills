@@ -863,6 +863,47 @@ def apply_build_env(recipe, ledger=None):
     return env
 
 
+def gate_patch_mirror(ledger, apply_result, root):
+    """Assert `upstream + patch == active` for the HDL twins.
+
+    apply_recipe rebuilds every twinned file from its pristine copy plus the
+    recipe's patch series, so if the tracked working copy differs from that
+    reconstruction, apply just SILENTLY REVERTED someone's edit -- which is
+    exactly the failure mode CLAUDE.md marks 'breaks silently if skipped'. The
+    invariant is therefore visible as a git diff over the tracked HDL project
+    after the apply, and it must be empty.
+
+    Ported from cold_rebuild.stage_a_hdl_roundtrip, which had been checking it
+    by copy-patch-cmp -- and which the plan-02 rehoming of the patches had
+    silently turned into a no-op glob. This form cannot go vacuous: it compares
+    the real tree against the real reconstruction, so there is no list to be
+    empty."""
+    hdl_dir = apply_result.get("hdl_project_dir")
+    if not hdl_dir:
+        ledger.gate("patch_mirror", "fail",
+                    evidence="apply result named no hdl_project_dir")
+        raise SystemExit("ERROR: apply result named no hdl_project_dir")
+    try:
+        diff = subprocess.run(["git", "-C", root, "diff", "--name-only", "--", hdl_dir],
+                              capture_output=True, text=True, check=True).stdout.split()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        ledger.gate("patch_mirror", "fail", evidence=f"cannot read git diff: {exc}"[:400])
+        raise SystemExit(f"ERROR: patch-mirror check could not run: {exc}")
+    ok = not diff
+    ledger.gate("patch_mirror", "pass" if ok else "fail",
+                evidence=(f"tracked {hdl_dir} is diff-empty after apply: "
+                          f"upstream + patch == active" if ok else
+                          f"apply rewrote tracked files, so the working copy did NOT "
+                          f"equal upstream+patch: {', '.join(diff)}")[:400])
+    print(f"  patch mirror: {hdl_dir} "
+          f"{'diff-empty (upstream + patch == active)' if ok else 'DIVERGED: ' + ', '.join(diff)}"
+          f"  [{'PASS' if ok else 'FAIL'}]")
+    if not ok:
+        raise SystemExit(f"ERROR: patch-mirror violation -- apply_recipe rewrote "
+                         f"{', '.join(diff)}. Regenerate the patch from the active "
+                         f"file (or restore the active file) before building.")
+
+
 def execute_hdl(recipe, ctx, ledger):
     recipe_abs, project_dir, root = ctx["recipe_abs"], ctx["project_dir"], ctx["root"]
     stage_t0 = time.time()
@@ -881,6 +922,7 @@ def execute_hdl(recipe, ctx, ledger):
     ledger.gate("apply_recipe", "pass",
                 evidence=f"{len(patches)} patches applied from "
                          f"{result['manifest_path']}")
+    gate_patch_mirror(ledger, result, root)
     ledger.emit("stage_done", stage="apply", status="ok",
                 elapsed_s=round(time.time() - stage_t0, 1))
 
