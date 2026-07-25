@@ -41,6 +41,9 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -89,12 +92,14 @@ def plan_hdl(recipe, recipe_abs, project_dir):
 
 def plan_linux(recipe):
     lx = recipe["stages"]["linux"]
-    print(f"# stage linux : kernel -> dt -> boot assembly")
+    print(f"# stage linux : kernel -> dt -> r5 -> boot assembly")
     k = lx["kernel"]
     print(f"# kernel {k['release']} from {k['source']['repo']} @ {k['source']['commit']}")
     for c in k["commands"]:
         print(c)
     print(f"# dt: {lx['dt']['source']} -> {lx['dt']['dtb']}")
+    print(f"# r5: standalone_v8_0 BSP from this run's XSA -> "
+          f"r5_0_capture_rproc.elf (+ host desk tests)")
     if "pl" in lx:
         print(f"# pl: from stage hdl_no_os (internal edge)")
     else:
@@ -483,6 +488,169 @@ def gate_routed_timing(ledger, timing_report, root):
     return ok
 
 
+# ------------------------------------------------- bounded normalization
+# A Vivado bitstream and an XSA are not bit-reproducible, but they are not
+# arbitrarily different either: everything that varies between two builds of
+# identical source sits in a NAMED, structurally locatable field. Hashing the
+# artifact with exactly those fields zeroed -- after asserting the structure
+# the manifest declares -- turns "we cannot compare these" into a machine
+# verdict, which is the whole point of a baseline.
+#
+# The pattern is the one normalized_kernel_image_sha256 already uses, and its
+# rule is the important part: ASSERT THE DECLARED STRUCTURE FIRST. Zeroing a
+# field found by an unanchored search would let arbitrary drift hide inside it.
+#
+# EVIDENCE (2026-07-25, plan-03 Step 6). The instrumented flow writes the
+# bitstream twice per run, before and after debug-core insertion. Those two
+# files -- same design, same placement, same routing, written four minutes
+# apart -- differ in exactly THREE bytes, all inside the 'd' (time) header
+# record. The raw configuration body is byte-identical. So the manifests'
+# stated reason was wrong on one point: there is no per-build bitstream UUID.
+# See findings-2026-07-25-plan03-linux-port.md.
+
+BIT_HEADER_MAGIC = bytes.fromhex("0ff00ff00ff00ff000")
+
+
+def parse_bitstream_header(body):
+    """Return (records, payload_offset) for a Xilinx .bit.
+
+    Structure (fixed, documented): a 2-byte length + 9-byte magic + 2-byte
+    0x0001, then TLV records keyed 'a'..'d' with 2-byte big-endian lengths,
+    then key 'e' with a 4-byte length introducing the raw configuration data.
+    Each record's span is returned so normalization can address a field by its
+    parsed position rather than by searching for its value."""
+    if len(body) < 16 or struct_unpack_be16(body, 0) != 9:
+        raise StageFail("not a Xilinx .bit: leading header-field length is not 9")
+    if body[2:11] != BIT_HEADER_MAGIC:
+        raise StageFail("not a Xilinx .bit: 9-byte header magic mismatch")
+    offset = 13
+    records = {}
+    while offset < len(body):
+        key = chr(body[offset])
+        offset += 1
+        if key == "e":
+            length = int.from_bytes(body[offset:offset + 4], "big")
+            return records, offset + 4, length
+        if key not in "abcd":
+            raise StageFail(f"unexpected .bit header record key {key!r} at offset {offset}")
+        length = struct_unpack_be16(body, offset)
+        offset += 2
+        records[key] = (offset, offset + length)
+        offset += length
+    raise StageFail("no 'e' payload record in the .bit header")
+
+
+def struct_unpack_be16(body, offset):
+    return int.from_bytes(body[offset:offset + 2], "big")
+
+
+def normalized_bitstream_sha256(path, policy):
+    """sha256 of a .bit with the declared header records zeroed.
+
+    Only records the policy names are zeroed, and only after the parsed record
+    set matches the policy exactly -- an extra or missing header record means
+    the artifact is not the shape the baseline was recorded for, which is a
+    failure rather than something to normalize away."""
+    with open(path, "rb") as fh:
+        body = bytearray(fh.read())
+    records, payload_at, payload_len = parse_bitstream_header(body)
+    expected = policy["expected_header_records"]
+    if sorted(records) != sorted(expected):
+        raise StageFail(f"{os.path.basename(path)} header records {sorted(records)} "
+                        f"!= policy {sorted(expected)}")
+    if payload_at + payload_len != len(body):
+        raise StageFail(f"{os.path.basename(path)} payload length {payload_len} does not "
+                        f"reach end of file ({len(body) - payload_at} bytes present)")
+    for key in policy["zeroed_header_records"]:
+        start, end = records[key]
+        body[start:end] = bytes(end - start)
+    return hashlib.sha256(bytes(body)).hexdigest()
+
+
+RE_XSA_TIMESTAMP = re.compile(rb'(TimeStamp|TIMESTAMP)="[^"]*"')
+RE_XSA_JSON_TIMESTAMP = re.compile(rb'("generatedTimestamp"\s*:\s*)"[^"]*"')
+
+
+def normalized_xsa_sha256(path, policy):
+    """sha256 of a canonical rendering of an XSA with declared fields zeroed.
+
+    An XSA is a zip, so three classes of noise have to go: the entry mtimes
+    (dropped by hashing name+content rather than the container), the generator
+    timestamps carried inside xsa.xml / xsa.json / every *.hwh, and the
+    embedded bitstream's own header records. Every count the policy declares
+    is asserted before anything is rewritten."""
+    import zipfile
+    try:
+        archive = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise StageFail(f"{os.path.basename(path)} is not a readable XSA "
+                        f"(an XSA is a zip): {exc}")
+    with archive:
+        names = sorted(archive.namelist())
+        if len(names) != policy["expected_entries"]:
+            raise StageFail(f"{os.path.basename(path)} has {len(names)} zip entries; "
+                            f"policy declares {policy['expected_entries']}")
+        digest = hashlib.sha256()
+        stamps = {"xml": 0, "json": 0, "hwh": 0}
+        for name in names:
+            data = archive.read(name)
+            if name.endswith(".bit"):
+                if name != policy["embedded_bitstream"]:
+                    raise StageFail(f"unexpected embedded bitstream {name}; policy "
+                                    f"declares {policy['embedded_bitstream']}")
+                tmp = os.path.join(os.path.dirname(os.path.abspath(path)),
+                                   f".{os.path.basename(name)}.normalize")
+                try:
+                    with open(tmp, "wb") as fh:
+                        fh.write(data)
+                    data = normalized_bitstream_sha256(tmp, policy["bitstream"]).encode()
+                finally:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+            elif name.endswith(".hwh"):
+                data, n = RE_XSA_TIMESTAMP.subn(rb'\1=""', data)
+                stamps["hwh"] += n
+            elif name == "xsa.xml":
+                data, n = RE_XSA_TIMESTAMP.subn(rb'\1=""', data)
+                stamps["xml"] += n
+            elif name == "xsa.json":
+                data, n = RE_XSA_JSON_TIMESTAMP.subn(rb'\1""', data)
+                stamps["json"] += n
+            digest.update(name.encode() + b"\0")
+            digest.update(len(data).to_bytes(8, "big"))
+            digest.update(data)
+    declared = {"xml": policy["expected_xsa_xml_timestamps"],
+                "json": policy["expected_xsa_json_timestamps"],
+                "hwh": policy["expected_hwh_timestamps"]}
+    if stamps != declared:
+        raise StageFail(f"{os.path.basename(path)} timestamp fields {stamps} != policy "
+                        f"{declared}")
+    return digest.hexdigest()
+
+
+def normalizers():
+    """Resolved at call time: the kernel normalizer is defined with the Linux
+    stages it belongs to, further down the file."""
+    return {
+        "kernel-image-load-equivalence/1": normalized_kernel_image_sha256,
+        "fpga-bitstream-load-equivalence/1": normalized_bitstream_sha256,
+        "fpga-xsa-load-equivalence/1": normalized_xsa_sha256,
+    }
+
+
+def normalized_sha256(path, policy):
+    """Dispatch on the policy's declared normalization schema. An unknown
+    schema is a failure, never a silent pass -- the manifest is claiming a
+    verification this code cannot perform."""
+    NORMALIZERS = normalizers()
+    schema = policy.get("normalization_schema")
+    fn = NORMALIZERS.get(schema)
+    if fn is None:
+        raise StageFail(f"no normalizer for normalization_schema {schema!r} "
+                        f"(known: {', '.join(sorted(NORMALIZERS))})")
+    return fn(path, policy)
+
+
 # ----------------------------------------------------- baseline comparison
 
 def baseline_index(root, prefer_dir=None):
@@ -500,11 +668,10 @@ def baseline_index(root, prefer_dir=None):
         try:
             doc = json.load(open(path))
             art = doc["artifact"]
-            mode = ((doc.get("build") or {}).get("reproducibility") or {}).get(
-                "mode", "bit-reproducible")
+            policy = ((doc.get("build") or {}).get("reproducibility") or {})
             by_name.setdefault(art["file"], []).append(
                 {"sha256": art["sha256"], "source": os.path.relpath(path, root),
-                 "mode": mode})
+                 "mode": policy.get("mode", "bit-reproducible"), "policy": policy})
         except (KeyError, ValueError, OSError):
             continue
     index = {}
@@ -519,21 +686,30 @@ def baseline_index(root, prefer_dir=None):
     return index
 
 
-def compare_baselines(ledger, produced, root, prefer_dir=None):
+def compare_baselines(ledger, produced, root, prefer_dir=None, deploy_dir=None):
     """Emit one baseline event per produced artifact. Returns the comparison
     rows for the bundle manifest.
 
     A raw-sha comparison is only meaningful for a BIT-REPRODUCIBLE artifact.
-    A Vivado bitstream embeds a build timestamp and a UUID, so comparing one
-    by raw hash reports a divergence on every rebuild from identical source --
-    an alarm that always fires is an alarm that gets ignored. Such artifacts
-    declare build.reproducibility.mode in their manifest and are reported
-    load_equivalent instead."""
+    A Vivado bitstream embeds a build date and time, so comparing one by raw
+    hash reports a divergence on every rebuild from identical source -- an
+    alarm that always fires is an alarm that gets ignored. Such artifacts
+    declare build.reproducibility.mode in their manifest:
+
+      bit-reproducible            raw sha must match      -> reproduces/diverges
+      load-equivalent-normalized  NORMALIZED sha must match, under the
+                                  manifest's bounded policy
+                                  -> load_equivalent (VERIFIED) / diverges
+      load-equivalent-unverified  nothing is checked      -> load_equivalent
+
+    The middle row is what plan-03 Step 6 adds. Before it, every
+    load-equivalent artifact returned load_equivalent unconditionally -- the
+    verdict said "not comparable by raw hash" and was read as "fine"."""
     index = baseline_index(root, prefer_dir)
     rows = []
     for entry in produced:
         b = index.get(entry["file"])
-        recorded = source = None
+        recorded = source = normalized = None
         if b is None:
             verdict = "no_baseline"
         elif "ambiguous" in b:
@@ -548,7 +724,10 @@ def compare_baselines(ledger, produced, root, prefer_dir=None):
                   f"{len(b['ambiguous'])} manifests claim this name")
         else:
             recorded, source = b["sha256"], b["source"]
-            if b["mode"].startswith("load-equivalent"):
+            if b["mode"] == "load-equivalent-normalized":
+                verdict, normalized = _verify_normalized(
+                    ledger, entry, b, root, deploy_dir)
+            elif b["mode"].startswith("load-equivalent"):
                 verdict = "load_equivalent"
             else:
                 verdict = "reproduces" if recorded == entry["sha256"] else "diverges"
@@ -558,11 +737,49 @@ def compare_baselines(ledger, produced, root, prefer_dir=None):
         if recorded:
             row["recorded_sha256"] = recorded
             row["source"] = source
+        if normalized:
+            row["normalized_sha256"] = normalized
         rows.append(row)
         if b is None or "ambiguous" not in b:
             note = "" if b is None else f"  ({b['mode']})"
             print(f"  baseline {entry['file']:28s} {verdict}{note}")
     return rows
+
+
+def _verify_normalized(ledger, entry, baseline, root, deploy_dir):
+    """Machine-verify a load-equivalent artifact against its bounded policy.
+
+    Returns (verdict, normalized_sha). A policy that cannot be applied -- the
+    artifact is not where we can read it, the declared structure does not
+    match, the schema is unknown -- fails as `diverges` with the reason banked,
+    never as a quiet pass. 'We could not check' must not look like 'it
+    matched'."""
+    policy = baseline.get("policy") or {}
+    path = os.path.join(deploy_dir, entry["file"]) if deploy_dir else None
+    if not path or not os.path.isfile(path):
+        ledger.gate("baseline_normalized", "fail",
+                    evidence=f"{entry['file']} declares "
+                             f"load-equivalent-normalized but the artifact is not "
+                             f"readable for normalization")
+        return "diverges", None
+    try:
+        got = normalized_sha256(path, policy)
+    except Exception as exc:
+        # Deliberately broad. Anything that stops the policy being applied --
+        # a malformed artifact, a policy field the manifest never declared, a
+        # parser blowing up on bytes that are not the shape we expected -- is
+        # a DIVERGENCE with the reason banked. An exception escaping here
+        # would abort a build over a comparison that is meant to be a report.
+        ledger.gate("baseline_normalized", "fail",
+                    evidence=f"{entry['file']}: {type(exc).__name__}: {exc}"[:400])
+        print(f"  baseline {entry['file']:28s} NORMALIZATION FAILED: {exc}")
+        return "diverges", None
+    want = policy.get("normalized_sha256")
+    ok = got == want
+    ledger.gate("baseline_normalized", "pass" if ok else "fail",
+                evidence=f"{entry['file']} normalized sha256 {got} vs manifest {want} "
+                         f"({policy.get('normalization_schema')})")
+    return ("load_equivalent" if ok else "diverges"), got
 
 
 def bundle_verdict(rows):
@@ -596,6 +813,21 @@ def vivado_settings_for(version):
                      f"(searched {', '.join(VIVADO_SEARCH_PATHS)})")
 
 
+def vitis_settings_for(version):
+    """Same, for Vitis -- the Linux stages need xsct, dtc, bootgen and the
+    aarch64/armr5 cross toolchains, all of which ship with a Vitis install.
+    A profile may be an ERA MIX (txm8l4 pins Vivado 2023.2 over a 2022.2 boot
+    chain), so this resolves the vitis slot independently of the vivado one."""
+    from socks_lib import VIVADO_SEARCH_PATHS
+    roots = sorted({p.split("/Vivado/")[0] for p in VIVADO_SEARCH_PATHS})
+    for root in roots:
+        path = os.path.join(root, "Vitis", version, "settings64.sh")
+        if os.path.isfile(path):
+            return path
+    raise SystemExit(f"ERROR: recipe pins Vitis {version}, which is not installed "
+                     f"(searched {', '.join(os.path.join(r, 'Vitis') for r in roots)})")
+
+
 def apply_build_env(recipe, ledger=None):
     """The recipe IS the build: its toolchain pin and build_env are applied
     here rather than left to whatever the invoking shell happened to export.
@@ -622,7 +854,8 @@ def apply_build_env(recipe, ledger=None):
     return env
 
 
-def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
+def execute_hdl(recipe, ctx, ledger):
+    recipe_abs, project_dir, root = ctx["recipe_abs"], ctx["project_dir"], ctx["root"]
     stage_t0 = time.time()
     ledger.emit("stage_start", stage="apply")
     result = apply_recipe(project_dir, recipe_path=recipe_abs)
@@ -645,7 +878,7 @@ def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
     from hil_project import run_adi_make_stage14
     with open(os.path.join(project_dir, "socks.json")) as f:
         build_cfg = json.load(f).get("build", {})
-    build_dir = os.path.join(project_dir, "build", "hil")
+    build_dir = ctx["build_dir"]
     adi_project_dir = os.path.abspath(os.path.join(
         project_dir, build_cfg["adi_root"], build_cfg["project_dir"]))
     settings = vivado_settings_for(recipe["toolchain"]["vivado"])
@@ -673,21 +906,531 @@ def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
     ledger.emit("stage_done", stage="hdl_make", status="ok",
                 elapsed_s=round(time.time() - stage_t0, 1))
 
-    ledger.emit("stage_start", stage="gates")
     gate_routed_timing(ledger, os.path.join(adi_project_dir, "timing_impl.log"), root)
-    produced = emit_sha256_manifest(build_dir, ledger, root)
+    emit_sha256_manifest(build_dir)          # build-dir inventory, not the deploy set
     gate_toolchain_actual(ledger, recipe["toolchain"]["vivado"], adi_project_dir,
                           build_dir, root)
-    return produced
+
+    # The deploy set is named, not discovered. Walking the build dir would bank
+    # system_top.bit twice -- Stage 14 stages one copy under
+    # vivado_project/<proj>.runs/impl_1/ and Stage 16 leaves another at the
+    # build-dir root -- and a deploy list with two rows for one filename has no
+    # single baseline to compare against.
+    xsa = os.path.join(build_dir, "system_wrapper.xsa")
+    bits = sorted(glob.glob(os.path.join(build_dir, "vivado_project", "*.runs",
+                                         "impl_1", "*.bit")))
+    if not bits:
+        raise SystemExit(f"ERROR: Stage 14 exited 0 but staged no bitstream under "
+                         f"{os.path.relpath(build_dir, root)}/vivado_project/*/impl_1")
+    if not os.path.isfile(xsa):
+        raise SystemExit(f"ERROR: Stage 14 exited 0 but system_wrapper.xsa is missing")
+    produced = [ledger.artifact(bank_deployable(bits[0], os.path.basename(bits[0]),
+                                                ctx["deploy"]), root),
+                ledger.artifact(bank_deployable(xsa, "system_wrapper.xsa",
+                                                ctx["deploy"]), root)]
+    return {"produced": [p for p in produced if p],
+            "xsa": xsa, "xsa_sha": file_digests(xsa)[0],
+            "no_os_tree": result["no_os_build_root"]}
 
 
-def execute_linux(recipe, ledger):
-    ledger.emit("progress", stage="boot_assembly",
-                detail="Linux --execute not implemented (plan-03 port); "
-                       "interim executor platforms/tools/cold_rebuild.py")
-    raise SystemExit("ERROR: Linux --execute is not implemented yet (plan-03: port the "
-                     "cold_rebuild.py kernel/dt/boot stages + reproducibility gates). "
-                     "Use --plan for the command contract, or platforms/tools/cold_rebuild.py.")
+# -------------------------------------------------------- execute: linux
+# Ported from platforms/tools/cold_rebuild.py stages C / E-DTB / E-R5 / D
+# (plan-03 Steps 2-5). Every reproducibility gate that guarded a stage there
+# is kept, and is now emitted as a ledger gate instead of a private JSON
+# ledger. The traps in each stage's docstring each cost a build or a board
+# cycle to find -- they are load-bearing, not commentary.
+
+
+class StageFail(Exception):
+    """A Linux stage gate failed. Caught in execute_linux, which banks the
+    failure as a ledger gate before re-raising as a SystemExit -- a stage that
+    dies must still leave a readable run record."""
+
+
+def run_step(ledger, stage, name, argv, cwd, log_path, env=None, check=True):
+    """Run one command, tee stdout+stderr to a log, emit a ledger step.
+
+    argv is a list -- no implicit shell. Commands that genuinely need a shell
+    (the settings64.sh sourcing) build their own `bash -c` via sourced()."""
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    t0 = time.time()
+    proc = subprocess.run(argv, cwd=cwd, env={**os.environ, **(env or {})},
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    with open(log_path, "w") as fh:
+        fh.write(proc.stdout)
+    ledger.emit("step", stage=stage, name=name,
+                elapsed_s=round(time.time() - t0, 1),
+                detail=None if proc.returncode == 0 else f"rc={proc.returncode}")
+    if check and proc.returncode != 0:
+        tail = "\n".join(proc.stdout.strip().splitlines()[-15:])
+        raise StageFail(f"{stage}/{name} exited {proc.returncode}; see "
+                        f"{os.path.basename(log_path)}\n{tail}")
+    return proc
+
+
+def sourced(settings, cmd):
+    """A DEDICATED clean bash that sources a Xilinx settings64.sh first.
+
+    cold_rebuild ledger E-DTB1: sourcing inside a compound or piped command
+    left dtc unresolved. The settings script exports tool paths into the shell
+    it runs in, so it needs its own shell whose only job is to run this one
+    command."""
+    return ["bash", "-c", f"source {shlex.quote(settings)} && {cmd}"]
+
+
+def bank_deployable(source, filename, deploy_dir):
+    """Copy one gated deployable into this run's canonical deploy set.
+
+    Resume is permitted only when the existing banked file is byte-identical;
+    a conflicting file fails closed rather than silently mixing two builds
+    into one deploy directory (cold_rebuild bank_deployable, verbatim rule)."""
+    if not os.path.isfile(source):
+        raise StageFail(f"deployable source is missing: {source}")
+    os.makedirs(deploy_dir, exist_ok=True)
+    destination = os.path.join(deploy_dir, filename)
+    source_sha = file_digests(source)[0]
+    if os.path.exists(destination):
+        if not os.path.isfile(destination) or file_digests(destination)[0] != source_sha:
+            raise StageFail(f"conflicting banked deployable: {destination}")
+    else:
+        shutil.copy2(source, destination)
+    if file_digests(destination)[0] != source_sha:
+        raise StageFail(f"banked deployable hash mismatch: {destination}")
+    return destination
+
+
+def normalized_kernel_image_sha256(path, policy):
+    """Hash load-semantic Image bytes under the manifest's bounded policy.
+
+    The accepted kernel predates complete reproducibility controls. Its raw
+    Image varies only in GNU build-ID payloads (derived from non-loaded DWARF)
+    and empty-initramfs newc mtimes. The manifest-declared structure counts are
+    asserted BEFORE zeroing those fields, so normalization cannot mask
+    arbitrary drift -- the pattern Step 6 must follow for the bitstream."""
+    with open(path, "rb") as fh:
+        body = bytearray(fh.read())
+    note = b"\x04\x00\x00\x00\x14\x00\x00\x00\x03\x00\x00\x00GNU\x00"
+    note_offsets, offset = [], 0
+    while True:
+        found = body.find(note, offset)
+        if found < 0:
+            break
+        note_offsets.append(found)
+        start = found + len(note)
+        body[start:start + 20] = bytes(20)
+        offset = start + 20
+    expected_notes = policy["expected_gnu_build_id_notes"]
+    if len(note_offsets) != expected_notes:
+        raise StageFail(f"kernel Image has {len(note_offsets)} GNU build-ID notes; "
+                        f"normalization policy requires {expected_notes}")
+    cpio_header = re.compile(b"070701[0-9A-Fa-f]{40}([0-9A-Fa-f]{8})")
+    cpio_mtimes = [m.span(1) for m in cpio_header.finditer(body)]
+    expected_headers = policy["expected_newc_headers"]
+    if len(cpio_mtimes) != expected_headers:
+        raise StageFail(f"kernel Image has {len(cpio_mtimes)} newc headers; "
+                        f"normalization policy requires {expected_headers}")
+    for start, end in cpio_mtimes:
+        body[start:end] = b"00000000"
+    return hashlib.sha256(body).hexdigest()
+
+
+def _manifest_for(root, recipe_abs, rel_or_path):
+    """Resolve a recipe-declared manifest pointer. Recipe paths are either
+    repo-relative (the patch convention) or relative to the profile home (the
+    dt block's convention); both are accepted, neither is guessed at."""
+    for base in (root, os.path.dirname(recipe_abs)):
+        candidate = os.path.join(base, rel_or_path)
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    raise StageFail(f"recipe-declared manifest does not resolve: {rel_or_path}")
+
+
+# ---- Step 2: kernel -------------------------------------------------------
+
+def stage_kernel(recipe, ctx, ledger):
+    """Build the kernel Image from stages.linux.kernel under the reproducibility
+    policy its build-manifest declares.
+
+    Two traps, both from the cold_rebuild ledger, both preserved:
+      C4  the .config seed is MANDATORY -- `olddefconfig` in a bare O= dir
+          produces a DEFAULT config, not the Kuiper baseline. The build would
+          succeed and the board would not boot the same kernel.
+      C3  the kernel patches carry no git-format-patch `From:` headers, so
+          `git am` fails STRUCTURALLY. Always `git apply` + a scripted commit.
+    """
+    k = recipe["stages"]["linux"]["kernel"]
+    stage_t0 = time.time()
+    ledger.emit("stage_start", stage="kernel")
+    manifest_path = _manifest_for(ctx["root"], ctx["recipe_abs"], k["artifact_manifest"])
+    manifest = json.load(open(manifest_path))
+    policy = k["reproducibility"]          # the recipe is the master (ruling 3)
+
+    # The same facts are declared twice -- in the recipe (which builds) and in
+    # the artifact manifest (which records what was accepted). Gate that they
+    # still agree rather than silently preferring one; a contract stated twice
+    # and checked never is how the retired-pointer defects got in.
+    drift = []
+    if manifest["kernel"]["release"] != k["release"]:
+        drift.append(f"release {manifest['kernel']['release']} != {k['release']}")
+    if manifest["source"]["commit"] != k["source"]["commit"]:
+        drift.append("source.commit")
+    if manifest["build"]["release_string_controls"] != k["release_string_controls"]:
+        drift.append("release_string_controls")
+    if manifest["build"]["reproducibility"] != policy:
+        drift.append("reproducibility policy")
+    m_patches = [p["file"] for p in manifest["build"]["required_kernel_patches"]
+                 if p["status"] == "required"]
+    r_patches = [p["file"] for p in k["required_patches"] if p["status"] == "required"]
+    if m_patches != r_patches:
+        drift.append("required kernel patch list")
+    ledger.gate("kernel_inputs_agree", "fail" if drift else "pass",
+                evidence=("; ".join(drift) if drift else
+                          f"recipe and {os.path.relpath(manifest_path, ctx['root'])} "
+                          f"declare the same kernel build inputs")[:400])
+    if drift:
+        raise StageFail(f"recipe and kernel build-manifest disagree: {'; '.join(drift)}")
+
+    src = os.path.join(ctx["scratch"], "adi-linux")
+    build = os.path.join(ctx["scratch"], "build")
+    os.makedirs(ctx["scratch"], exist_ok=True)
+    pin = k["source"]["commit"]
+    repo_url = f"https://{k['source']['repo']}"
+    if not os.path.isdir(src):
+        # blobless first; a full clone only as the fallback (ledger C1)
+        print(f"  kernel:    cloning {k['source']['repo']} (blobless) -> {ctx['scratch_label']}")
+        proc = run_step(ledger, "kernel", "git clone --filter=blob:none",
+                        ["git", "clone", "--filter=blob:none", repo_url, src],
+                        ctx["scratch"], os.path.join(ctx["logs"], "kernel-clone.log"),
+                        check=False)
+        if proc.returncode != 0:
+            run_step(ledger, "kernel", "git clone (full fallback)",
+                     ["git", "clone", repo_url, src], ctx["scratch"],
+                     os.path.join(ctx["logs"], "kernel-clone-full.log"))
+    run_step(ledger, "kernel", f"git checkout {pin[:12]}",
+             ["git", "checkout", "--force", pin], src,
+             os.path.join(ctx["logs"], "kernel-checkout.log"))
+
+    for entry in k["required_patches"]:
+        if entry["status"] != "required":
+            continue
+        patch = os.path.join(ctx["root"], entry["file"])
+        name = os.path.basename(entry["file"])
+        run_step(ledger, "kernel", f"git apply --check {name}",
+                 ["git", "apply", "--check", patch], src,
+                 os.path.join(ctx["logs"], f"kernel-patch-check-{name}.log"))
+        run_step(ledger, "kernel", f"git apply {name}",
+                 ["git", "apply", patch], src,
+                 os.path.join(ctx["logs"], f"kernel-patch-{name}.log"))
+        run_step(ledger, "kernel", f"commit {name}",
+                 ["git", "-c", "user.name=socks_build",
+                  "-c", "user.email=socks_build@local", "commit", "-am",
+                  f"apply {name}"], src,
+                 os.path.join(ctx["logs"], f"kernel-commit-{name}.log"))
+
+    os.makedirs(build, exist_ok=True)
+    config_src = os.path.join(os.path.dirname(manifest_path), k["config"])
+    if not os.path.isfile(config_src):
+        raise StageFail(f"kernel .config seed is missing: {config_src} -- olddefconfig "
+                        f"without it silently produces a DEFAULT config")
+    shutil.copyfile(config_src, os.path.join(build, ".config"))
+    controls = k["release_string_controls"]
+    with open(os.path.join(src, ".scmversion"), "w") as fh:
+        fh.write(controls[".scmversion"] + "\n")
+    build_env = {key: str(controls[key]) for key in
+                 ("KBUILD_BUILD_VERSION", "KBUILD_BUILD_TIMESTAMP",
+                  "KBUILD_BUILD_USER", "KBUILD_BUILD_HOST")}
+    cross = os.path.join(os.path.dirname(ctx["vitis_settings"]),
+                         "gnu/aarch64/lin/aarch64-linux/bin/aarch64-linux-gnu-")
+    mk = ["make", f"O={build}", "ARCH=arm64", f"CROSS_COMPILE={cross}"]
+
+    olddefconfig_log = os.path.join(ctx["logs"], "kernel-olddefconfig.log")
+    run_step(ledger, "kernel", "make olddefconfig", mk + ["olddefconfig"], src,
+             olddefconfig_log, env=build_env)
+    # C4 refinement: "No change to .config" proves the seed is current against
+    # THIS tree's Kconfig. A changed config is a drift WARNING, not a stopper
+    # (recorded review ruling) -- but it must be visible, so it is a gate.
+    seed_held = "No change to .config" in open(olddefconfig_log, errors="replace").read()
+    ledger.gate("kernel_config_seed", "pass" if seed_held else "fail",
+                evidence=("olddefconfig reports 'No change to .config' -- the seed is "
+                          "current against this tree's Kconfig" if seed_held else
+                          "olddefconfig CHANGED the seeded .config -- the baseline "
+                          "config has drifted against this kernel tree (FINDING)"))
+    print(f"  kernel:    .config seed {'held' if seed_held else 'DRIFTED (finding)'}")
+
+    run_step(ledger, "kernel", f"make -j{ctx['jobs']} Image",
+             mk + [f"-j{ctx['jobs']}", "Image"], src,
+             os.path.join(ctx["logs"], "kernel-build.log"), env=build_env)
+    image = os.path.join(build, "arch/arm64/boot/Image")
+    if not os.path.isfile(image):
+        raise StageFail("kernel build exited 0 but Image is missing")
+
+    rel = run_step(ledger, "kernel", "make -s kernelrelease", mk + ["-s", "kernelrelease"],
+                   src, os.path.join(ctx["logs"], "kernel-release.log"),
+                   env=build_env).stdout.strip().splitlines()[-1].strip()
+    ok_rel = rel == k["release"]
+    ledger.gate("kernel_release", "pass" if ok_rel else "fail",
+                evidence=f"kernelrelease {rel!r}, recipe declares {k['release']!r}")
+    if not ok_rel:
+        raise StageFail(f"kernelrelease {rel!r} != recipe {k['release']!r}")
+
+    raw = file_digests(image)[0]
+    normalized = normalized_kernel_image_sha256(image, policy)
+    ok_norm = normalized == policy["normalized_sha256"]
+    ledger.gate("repro_normalized_sha", "pass" if ok_norm else "fail",
+                evidence=f"Image normalized sha256 {normalized} vs manifest "
+                         f"{policy['normalized_sha256']} (raw {raw})")
+    if not ok_norm:
+        raise StageFail(f"Image normalized sha256 {normalized} != manifest "
+                        f"{policy['normalized_sha256']}; raw sha256 {raw}")
+    exact = raw == manifest["artifact"]["sha256"]
+    if not exact:
+        # Review ruling: a raw-sha difference is a FINDING, not a run-stopper.
+        # The manifest declares mode load-equivalent-normalized, so the baseline
+        # comparison reports load_equivalent rather than diverges.
+        ledger.emit("progress", stage="kernel",
+                    detail=(f"FINDING: raw Image sha {raw} differs from the accepted "
+                            f"cache {manifest['artifact']['sha256']}; bounded "
+                            f"normalized hash passed")[:200])
+    print(f"  kernel:    {rel}  normalized sha PASS  "
+          f"(raw {'== accepted cache' if exact else 'differs -- finding'})")
+    banked = bank_deployable(image, "Image", ctx["deploy"])
+    ledger.emit("stage_done", stage="kernel", status="ok",
+                elapsed_s=round(time.time() - stage_t0, 1))
+    return banked
+
+
+# ---- Step 3: device tree --------------------------------------------------
+
+def stage_dt(recipe, ctx, ledger):
+    """Compile the profile DTS to its DTB and compare against its manifest.
+
+    Trap (cold_rebuild ledger E-DTB1): dtc MUST be invoked with the Vitis
+    settings sourced in a dedicated clean bash -- see sourced(). dtc output is
+    deterministic, so this artifact is genuinely bit-reproducible and a
+    mismatch is a real finding rather than expected build noise."""
+    dt = recipe["stages"]["linux"]["dt"]
+    stage_t0 = time.time()
+    ledger.emit("stage_start", stage="dt")
+    profile_home = os.path.dirname(ctx["recipe_abs"])
+    dts = os.path.join(profile_home, dt["source"])
+    if not os.path.isfile(dts):
+        raise StageFail(f"recipe-declared DTS does not resolve: {dt['source']}")
+    manifest_path = _manifest_for(ctx["root"], ctx["recipe_abs"], dt["dtb_manifest"])
+    expected = json.load(open(manifest_path))["artifact"]["sha256"]
+    out = os.path.join(ctx["tmp"], os.path.basename(dt["dtb"]))
+    os.makedirs(ctx["tmp"], exist_ok=True)
+    run_step(ledger, "dt", "dtc -I dts -O dtb",
+             sourced(ctx["vitis_settings"],
+                     f"dtc -I dts -O dtb -o {shlex.quote(out)} {shlex.quote(dts)}"),
+             ctx["root"], os.path.join(ctx["logs"], "dtb.log"))
+    got = file_digests(out)[0]
+    ok = got == expected
+    ledger.gate("dtb_sha", "pass" if ok else "fail",
+                evidence=f"{os.path.basename(out)} sha256 {got} vs manifest {expected}")
+    if not ok:
+        # Reproducibility FINDING per the recorded review ruling, not a
+        # run-stopper -- but the artifact is declared bit-reproducible, so this
+        # is a real signal, never expected noise.
+        ledger.emit("progress", stage="dt",
+                    detail=f"FINDING: dtb sha {got} != manifest {expected}"[:200])
+    print(f"  dt:        {os.path.basename(out)} sha "
+          f"{'== manifest' if ok else 'DIFFERS (finding)'}")
+    # Bank under the RECIPE-declared basename, not a generic system.dtb: the
+    # deploy set is evidence, and the baseline comparator matches an artifact
+    # to its manifest BY FILENAME. Renaming for the board's /boot is a
+    # deploy-time concern, not a build-output one.
+    banked = bank_deployable(out, os.path.basename(dt["dtb"]), ctx["deploy"])
+    ledger.emit("stage_done", stage="dt", status="ok",
+                elapsed_s=round(time.time() - stage_t0, 1))
+    return banked
+
+
+# ---- Step 4: R5 capture firmware ------------------------------------------
+
+def stage_r5(recipe, ctx, ledger, xsa, no_os_tree):
+    """Regenerate the R5 BSP from THIS run's XSA and build the capture ELF.
+
+    Three traps, each of which cost a bring-up cycle:
+      1. The BSP must be standalone_v8_0. v9_0 wedges Xil_SetMPURegion /
+         Xil_ExceptionEnable under bare-rproc ELFs. The capture Makefile
+         hard-fails on anything else (check-bsp-v8) and so does this gate.
+      2. The profile Makefile pins `NO-OS := $(realpath ../upstream)`, which
+         does not exist for this profile (the ADR-017 layer gap). NO-OS is
+         passed on the make COMMAND LINE, where it beats a `:=` in the body.
+      3. The no-OS tree is the one THIS run materialized and patched -- never
+         a pre-seeded, gitignored ADI/no-OS/work/active of unknown provenance.
+    All build products (BSP, objects, ELF, desk-test binaries) land under the
+    run bundle so the tracked source tree stays untouched."""
+    stage_t0 = time.time()
+    ledger.emit("stage_start", stage="r5")
+    profile_home = os.path.dirname(ctx["recipe_abs"])
+    capture = os.path.join(profile_home, "no-os/capture")
+    gen_tcl = os.path.join(capture, "gen_r5_bsp.tcl")
+    if not os.path.isfile(gen_tcl):
+        raise StageFail(f"R5 BSP generator missing: {gen_tcl}")
+    if not os.path.isdir(no_os_tree):
+        raise StageFail(f"patched no-OS tree missing: {no_os_tree}")
+    bsp_root = os.path.join(ctx["tmp"], "r5-bsp")
+    bsp = os.path.join(bsp_root, "psu_cortexr5_0")
+    rproc_build = os.path.join(ctx["tmp"], "rproc-capture")
+    desk_build = os.path.join(ctx["tmp"], "r5-desk")
+    os.makedirs(bsp_root, exist_ok=True)
+
+    run_step(ledger, "r5", "xsct gen_r5_bsp.tcl",
+             sourced(ctx["vitis_settings"],
+                     f"xsct {shlex.quote(gen_tcl)} {shlex.quote(xsa)} "
+                     f"{shlex.quote(bsp_root)}"),
+             ctx["root"], os.path.join(ctx["logs"], "r5-bsp-gen.log"))
+    v8 = os.path.isdir(os.path.join(bsp, "libsrc/standalone_v8_0"))
+    libxil = os.path.isfile(os.path.join(bsp, "lib/libxil.a"))
+    ledger.gate("r5_bsp_standalone_v8_0", "pass" if (v8 and libxil) else "fail",
+                evidence=f"standalone_v8_0 {'present' if v8 else 'ABSENT'}, "
+                         f"lib/libxil.a {'present' if libxil else 'ABSENT'} in "
+                         f"{os.path.relpath(bsp, ctx['root'])}")
+    if not v8:
+        raise StageFail(f"generated BSP is not standalone_v8_0: {bsp} -- v9_0 wedges "
+                        f"Xil_SetMPURegion/ExceptionEnable under bare-rproc ELFs")
+    if not libxil:
+        raise StageFail(f"generated BSP lacks lib/libxil.a: {bsp}")
+
+    run_step(ledger, "r5", "make rproc-capture",
+             sourced(ctx["vitis_settings"],
+                     f"make -C {shlex.quote(capture)} rproc-capture "
+                     f"HARDWARE={shlex.quote(xsa)} TARGET_CPU=psu_cortexr5_0 "
+                     f"NO-OS={shlex.quote(no_os_tree)} RPROC_BSP={shlex.quote(bsp)} "
+                     f"RPROC_CAPTURE_BUILD_DIR={shlex.quote(rproc_build)} "
+                     f"RPROC_CC=armr5-none-eabi-gcc "
+                     f"RPROC_OBJCOPY=armr5-none-eabi-objcopy"),
+             ctx["root"], os.path.join(ctx["logs"], "r5-build.log"))
+    elf = os.path.join(rproc_build, "r5_0_capture_rproc.elf")
+    if not os.path.isfile(elf):
+        raise StageFail(f"R5 build exited 0 but the ELF is missing: {elf}")
+
+    # Host desk tests for the recovery ladder -- no cross tools, no BSP.
+    desk = run_step(ledger, "r5", "make desk-test",
+                    ["make", "-C", capture, "desk-test", f"DESK_BUILD_DIR={desk_build}"],
+                    ctx["root"], os.path.join(ctx["logs"], "r5-desk-test.log"),
+                    check=False)
+    ledger.gate("r5_desk_test", "pass" if desk.returncode == 0 else "fail",
+                evidence=f"make desk-test rc={desk.returncode} "
+                         f"(capture recovery-ladder host tests)")
+    if desk.returncode != 0:
+        raise StageFail(f"R5 desk tests failed (rc={desk.returncode}); see r5-desk-test.log")
+    print(f"  r5:        BSP standalone_v8_0 + desk-test PASS")
+    banked = bank_deployable(elf, "r5_0_capture_rproc.elf", ctx["deploy"])
+    ledger.emit("stage_done", stage="r5", status="ok",
+                elapsed_s=round(time.time() - stage_t0, 1))
+    return banked
+
+
+# ---- Step 5: boot assembly (internal edge) --------------------------------
+
+def stage_boot_assembly(recipe, ctx, ledger, xsa_sha):
+    """Run the recipe's boot_assembly.command verbatim, substituting only the
+    per-run fields, and gate its four output invariants.
+
+    The recipe command is the SINGLE command authority -- flags are never
+    restated here (restating them is how the --profile/--xsa doc bugs
+    happened). xsa_matches_build binds to the XSA sha of THIS run, which is
+    the seam that forced the 2026-07-25 hand-invocation: the packager was told
+    an XSA, but nothing checked it was the one the bitstream came from."""
+    ba = recipe["stages"]["linux"]["boot_assembly"]
+    stage_t0 = time.time()
+    ledger.emit("stage_start", stage="boot_assembly")
+    out_dir = os.path.join(ctx["bundle"], "boot-package")
+    cmd = (ba["command"]
+           .replace("codex-handoff/<plan>/artifacts/<label>/boot-package", out_dir)
+           .replace("<label>", ctx["run_label"])
+           .replace("<design>", ctx["build_dir"])
+           .replace("<Vitis-2022.2>/settings64.sh", ctx["vitis_settings"]))
+    if "<" in cmd and ">" in cmd:
+        leftover = re.findall(r"<[^>\s]+>", cmd)
+        if leftover:
+            raise StageFail(f"boot_assembly.command has unsubstituted placeholders: "
+                            f"{', '.join(leftover)}")
+    run_step(ledger, "boot_assembly", "package boot chain",
+             ["bash", "-c", cmd], ctx["root"],
+             os.path.join(ctx["logs"], "boot-package.log"))
+
+    manifest_path = os.path.join(out_dir, "package_manifest.json")
+    if not os.path.isfile(manifest_path):
+        raise StageFail(f"boot packager wrote no package_manifest.json at {manifest_path}")
+    manifest = json.load(open(manifest_path))
+    boot_bin = os.path.join(out_dir, "BOOT.BIN")
+    gates = {
+        "homed_match_passed": manifest["homed_match_passed"] is True,
+        "no_r5_partitions": manifest["no_r5_partitions"] is True,
+        "xsa_matches_build": manifest["fsbl_pmufw_source"]["xsa_sha256"] == xsa_sha,
+        "boot_sha": (os.path.isfile(boot_bin)
+                     and file_digests(boot_bin)[0] == manifest["output_boot_sha256"]),
+    }
+    evidence = {
+        "homed_match_passed": "both stock payloads match their homed manifests",
+        "no_r5_partitions": "no R5 partition in the packaged image",
+        "xsa_matches_build": (f"FSBL/PMUFW built from xsa sha256 "
+                              f"{manifest['fsbl_pmufw_source']['xsa_sha256']}; this "
+                              f"run's XSA is {xsa_sha}"),
+        "boot_sha": f"BOOT.BIN sha equals package_manifest.output_boot_sha256",
+    }
+    for name, passed in gates.items():
+        ledger.gate(name, "pass" if passed else "fail", evidence=evidence[name][:400])
+        print(f"  boot:      {name:22s} [{'PASS' if passed else 'FAIL'}]")
+    if not all(gates.values()):
+        raise StageFail(f"boot-package gates failed: "
+                        f"{[n for n, v in gates.items() if not v]}")
+    banked = bank_deployable(boot_bin, "BOOT.BIN", ctx["deploy"])
+    sha, md5, _size = file_digests(banked)
+    block = {
+        "manifest": os.path.relpath(manifest_path, ctx["bundle"]),
+        "boot_bin_sha256": sha, "boot_bin_md5": md5,
+        "gates": [{"name": n, "verdict": "pass", "evidence": evidence[n][:400]}
+                  for n in gates],
+    }
+    ledger.emit("stage_done", stage="boot_assembly", status="ok",
+                elapsed_s=round(time.time() - stage_t0, 1))
+    return banked, block
+
+
+def ensure_no_os_tree(project_dir, recipe_abs, ledger):
+    """Materialize + patch the no-OS tree for a standalone --stage linux run.
+
+    The R5 stage must consume the tree THIS run produced. When the HDL stage
+    ran, its apply result names it; when it did not, apply the recipe here
+    rather than trusting whatever a previous session left in the gitignored
+    ADI/no-OS/work/active."""
+    result = apply_recipe(project_dir, recipe_path=recipe_abs)
+    if result.get("status") != "applied":
+        raise StageFail(f"recipe apply did not complete: {result}")
+    ledger.gate("apply_recipe", "pass",
+                evidence=f"{len(result['patches']['no_os']) + len(result['patches']['hdl'])} "
+                         f"patches applied from {result['manifest_path']} "
+                         f"(--stage linux: no-OS tree materialized for the R5 build)")
+    return result["no_os_build_root"]
+
+
+def execute_linux(recipe, ctx, ledger, xsa=None, xsa_sha=None, no_os_tree=None):
+    """Run the four Linux stages. kernel and dt are independent of the HDL
+    stage; r5 and boot_assembly consume this run's XSA over the internal edge
+    the unified recipe declares (stages.linux.pl.from_stage == hdl_no_os)."""
+    if xsa is None:
+        # --stage linux on its own: the XSA in the project build dir IS this
+        # invocation's PL input. Bind to it explicitly rather than letting the
+        # packager compare an XSA against itself.
+        xsa = os.path.join(ctx["build_dir"], "system_wrapper.xsa")
+        if not os.path.isfile(xsa):
+            raise StageFail(f"--stage linux needs a built XSA at "
+                            f"{os.path.relpath(xsa, ctx['root'])}; run --stage all "
+                            f"or --stage hdl first")
+        xsa_sha = file_digests(xsa)[0]
+        ledger.emit("progress", stage="r5",
+                    detail=(f"PL input from a prior hdl_no_os run: "
+                            f"{os.path.relpath(xsa, ctx['root'])} sha256 {xsa_sha}")[:200])
+    produced = [stage_kernel(recipe, ctx, ledger),
+                stage_dt(recipe, ctx, ledger),
+                stage_r5(recipe, ctx, ledger, xsa, no_os_tree)]
+    boot_bin, boot_block = stage_boot_assembly(recipe, ctx, ledger, xsa_sha)
+    produced.append(boot_bin)
+    return produced, boot_block
 
 
 def emit_sha256_manifest(build_dir, ledger=None, root=None):
@@ -717,7 +1460,7 @@ def emit_sha256_manifest(build_dir, ledger=None, root=None):
 # ------------------------------------------------- build-output (bundle)
 
 def write_build_output(root, run_label, recipe, recipe_abs, recipe_sha, ledger,
-                       produced, baseline_rows, verdict, stage):
+                       produced, baseline_rows, verdict, stage, boot_package=None):
     """The bundle manifest -- systems/builds/<run-label>/build-output.json.
     Schema-governed (build-output.schema.json); the bank README is a pointer."""
     bundle = os.path.join(root, "systems", "builds", run_label)
@@ -750,6 +1493,8 @@ def write_build_output(root, run_label, recipe, recipe_abs, recipe_sha, ledger,
         "produced_by": f"socks_build.py --execute --stage {stage} "
                        f"(thread cross-cutting/20260703-socks-canonical-build-driver)",
     }
+    if boot_package:
+        doc["boot_package"] = boot_package
     out = os.path.join(bundle, "build-output.json")
     with open(out, "w") as f:
         json.dump(doc, f, indent=2)
@@ -774,7 +1519,14 @@ def main():
     parser.add_argument("--no-ledger", action="store_true",
                         help="Disable ledger emission (the build itself is unaffected either way)")
     parser.add_argument("--run-label", default=None,
-                        help="Bank the bundle manifest at systems/builds/<label>/build-output.json")
+                        help="Bundle name under systems/builds/<label>/ (deploy set, logs, "
+                             "ledger, build-output.json). Default: a timestamped label")
+    parser.add_argument("--scratch", default="~/bench-scratch/socks-build",
+                        help="Kernel tree + large build scratch. Keep this on a roomy "
+                             "volume -- it is a DIFFERENT filesystem from the worktree, "
+                             "so freeing one does not help the other")
+    parser.add_argument("--jobs", type=int, default=8,
+                        help="make -j for the kernel build (runbook-documented value: 8)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--plan", dest="mode", action="store_const", const="plan", default="plan",
                       help="Emit exact commands + tree state (default; no license needed)")
@@ -799,6 +1551,27 @@ def main():
 
     # execute
     root = _repo_root(project_dir)
+    run_label = args.run_label or ("socks-build-" + datetime.now().strftime("%Y%m%dT%H%M%S"))
+    if not args.run_label:
+        print(f"  run label: {run_label} (synthesized -- pass --run-label to name it)")
+    # Evidence is homed under the run bundle on the worktree volume, never in
+    # /tmp: a host reboot mid-window once wiped a full pass of verdicts.
+    bundle = os.path.join(root, "systems", "builds", run_label)
+    ctx = {
+        "root": root, "project_dir": project_dir, "recipe_abs": recipe_abs,
+        "run_label": run_label, "bundle": bundle,
+        "build_dir": os.path.join(project_dir, "build", "hil"),
+        "deploy": os.path.join(bundle, "deploy"),
+        "logs": os.path.join(bundle, "logs"),
+        "tmp": os.path.join(bundle, "tmp"),
+        # The kernel tree is tens of GiB and belongs on the roomy volume, which
+        # is a DIFFERENT filesystem from the worktree -- freeing one does not
+        # help the other.
+        "scratch": os.path.abspath(os.path.expanduser(args.scratch)),
+        "scratch_label": args.scratch,
+        "jobs": args.jobs,
+        "vitis_settings": None,
+    }
     ledger = make_ledger(args, project_dir)
     recipe_sha = hashlib.sha256(open(recipe_abs, "rb").read()).hexdigest()
     wt_sha, wt_dirty = worktree_state(root)
@@ -808,8 +1581,15 @@ def main():
         raise SystemExit(f"ERROR: cannot read the worktree HEAD of {root}; "
                          f"re-run with --no-ledger to build without a run record")
     stage_plan = [s for s in ("apply", "hdl_make") if stage_selected(args, "hdl")]
-    stage_plan += [s for s in ("kernel", "dt", "boot_assembly") if stage_selected(args, "linux")]
+    stage_plan += [s for s in ("kernel", "dt", "r5", "boot_assembly")
+                   if stage_selected(args, "linux")]
     stage_plan.append("gates")
+    if stage_selected(args, "linux"):
+        # Resolve the Vitis slot BEFORE the hours-long HDL make: the Linux half
+        # cannot start without it, and finding that out four hours in is a
+        # wholly avoidable way to lose an evening.
+        ctx["vitis_settings"] = vitis_settings_for(recipe["toolchain"]["vitis"])
+        print(f"  vitis:     {ctx['vitis_settings']}")
     ledger.emit("run_start", recipe_path=os.path.relpath(recipe_abs, root),
                 recipe_sha256=recipe_sha, recipe_name=recipe["name"],
                 toolchain=dict(recipe["toolchain"]),
@@ -823,14 +1603,27 @@ def main():
                 evidence="; ".join(rate_findings)[:400] if rate_findings
                          else "all NCO words re-derive bit-exact")
 
-    produced = []
-    if stage_selected(args, "hdl"):
-        produced = execute_hdl(recipe, recipe_abs, project_dir, ledger, root)
-    if stage_selected(args, "linux"):
-        execute_linux(recipe, ledger)
+    produced, hdl, boot_block = [], {}, None
+    try:
+        if stage_selected(args, "hdl"):
+            hdl = execute_hdl(recipe, ctx, ledger)
+            produced += hdl["produced"]
+        if stage_selected(args, "linux"):
+            no_os_tree = hdl.get("no_os_tree") or ensure_no_os_tree(
+                project_dir, recipe_abs, ledger)
+            banked, boot_block = execute_linux(
+                recipe, ctx, ledger, xsa=hdl.get("xsa"),
+                xsa_sha=hdl.get("xsa_sha"), no_os_tree=no_os_tree)
+            produced += [a for a in (ledger.artifact(p, root) for p in banked) if a]
+    except StageFail as exc:
+        ledger.emit("run_done", status="fail", elapsed_s=ledger.elapsed() or 0,
+                    summary=ledger.summary(), detail=str(exc)[:400])
+        raise SystemExit(f"ERROR: {exc}")
 
+    ledger.emit("stage_start", stage="gates")
     prefer_dir = os.path.dirname(os.path.relpath(recipe_abs, root))
-    baseline_rows = compare_baselines(ledger, produced, root, prefer_dir)
+    baseline_rows = compare_baselines(ledger, produced, root, prefer_dir,
+                                      deploy_dir=ctx["deploy"])
     summary = ledger.summary()
     # Two vocabularies, deliberately kept apart: stages and runs are ok|fail,
     # gate/bundle verdicts are pass|fail.
@@ -840,9 +1633,16 @@ def main():
                 elapsed_s=ledger.elapsed() or 0)
     ledger.emit("run_done", status=status, elapsed_s=ledger.elapsed() or 0,
                 summary=summary)
-    if args.run_label:
-        write_build_output(root, args.run_label, recipe, recipe_abs, recipe_sha,
-                           ledger, produced, baseline_rows, verdict, args.stage)
+    if ledger.enabled:
+        write_build_output(root, run_label, recipe, recipe_abs, recipe_sha,
+                           ledger, produced, baseline_rows, verdict, args.stage,
+                           boot_block)
+    else:
+        # build-output.schema.json requires a ledger pointer, and every claim in
+        # the bundle is meant to be derivable from it. Writing one that names a
+        # file this run deliberately did not produce would be a declared
+        # contract nobody can execute.
+        print("  bundle manifest skipped (--no-ledger: nothing to derive it from)")
     return 0 if verdict == "pass" else 1
 
 
