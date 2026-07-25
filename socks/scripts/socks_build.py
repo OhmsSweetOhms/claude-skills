@@ -331,7 +331,16 @@ class VivadoTail(threading.Thread):
         super().__init__(daemon=True)
         self.ledger, self.log_path, self.poll_s = ledger, log_path, poll_s
         self.stop_evt = threading.Event()
-        self._pos = 0
+        # Start at the END of whatever is already on disk. A previous run's
+        # vivado.log is still there when this one starts -- the ADI makefile
+        # deletes it only after make begins -- so draining from byte 0 would
+        # replay the LAST build's synth/place/route/write_bitstream milestones
+        # into THIS run's ledger as if they had just happened. The truncation
+        # check below then picks up the new log from its start.
+        try:
+            self._pos = os.path.getsize(log_path)
+        except OSError:
+            self._pos = 0
         self._seen = set()
         self._steps = 0
 
