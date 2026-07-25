@@ -25,10 +25,10 @@ import json
 import os
 import sys
 
-STAGE_ORDER = ["apply", "hdl_make", "kernel", "dt", "boot_assembly", "gates"]
+STAGE_ORDER = ["apply", "hdl_make", "kernel", "dt", "r5", "boot_assembly", "gates"]
 STAGE_LABEL = {"apply": "apply (materialize + patch)", "hdl_make": "hdl_make (Stage-14 ADI make)",
-               "kernel": "kernel", "dt": "device tree", "boot_assembly": "boot assembly",
-               "gates": "gates"}
+               "kernel": "kernel", "dt": "device tree", "r5": "R5 capture firmware",
+               "boot_assembly": "boot assembly", "gates": "gates"}
 
 
 def read_ledger(path):
@@ -96,11 +96,20 @@ def verdict_strip(m):
         return f"RUNNING — in {esc(where)}", "run"
     d = m["done"]
     s = d.get("summary", {})
-    base = ("reproduces baseline" if s.get("baseline_reproduces") and not s.get("baseline_diverges")
-            and not s.get("baseline_absent")
-            else "no baseline (first build)" if s.get("baseline_absent") and not s.get("baseline_diverges")
-            else f"diverges ({s.get('baseline_diverges', 0)})" if s.get("baseline_diverges")
-            else "no artifacts compared")
+    # Report every verdict class present. Collapsing a mixed result to a single
+    # phrase hid real information: a run with one artifact reproducing, one
+    # verified load-equivalent and two with no baseline used to render as
+    # "no baseline (first build)", which reads as "nothing was checked" when in
+    # fact two artifacts were compared and passed. load_equivalent never
+    # appeared at all. This is the HR5 face -- it has to be faithful.
+    classes = (("reproduces", "baseline_reproduces"),
+               ("load-equivalent", "baseline_load_equivalent"),
+               ("no baseline", "baseline_absent"),
+               ("DIVERGES", "baseline_diverges"))
+    present = [f"{s.get(key, 0)} {name}" for name, key in classes if s.get(key)]
+    base = ", ".join(present) if present else "no artifacts compared"
+    if len(present) == 1 and s.get("baseline_absent"):
+        base += " (first build)"
     if d.get("status") == "ok":
         return (f"PASS — {s.get('gates_passed', 0)} gates, "
                 f"{s.get('artifacts', 0)} artifacts — {base}"), "pass"
