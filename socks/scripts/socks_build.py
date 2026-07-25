@@ -234,6 +234,14 @@ class Ledger(NullLedger):
         open(self.path, "w").close()          # one file per run, never appended across runs
 
     def emit(self, event, **fields):
+        # Self-check the one place two vocabularies can cross: a GATE has a
+        # pass/fail verdict, a STAGE or RUN has an ok/fail status. Feeding a
+        # gate verdict into a stage status writes a schema-invalid record that
+        # nothing notices until a harness reads it back -- so fail at the
+        # emit, loudly, with the offending value in hand.
+        if event in ("stage_done", "run_done") and fields.get("status") not in ("ok", "fail"):
+            raise ValueError(f"{event}.status must be ok|fail (a stage is not a gate); "
+                             f"got {fields.get('status')!r}")
         rec = {"t": datetime.now().isoformat(timespec="seconds"), "event": event}
         rec.update({k: v for k, v in fields.items() if v is not None})
         line = json.dumps(rec)
@@ -769,10 +777,13 @@ def main():
 
     baseline_rows = compare_baselines(ledger, produced, root)
     summary = ledger.summary()
+    # Two vocabularies, deliberately kept apart: stages and runs are ok|fail,
+    # gate/bundle verdicts are pass|fail.
+    status = "fail" if summary["gates_failed"] else "ok"
     verdict = "fail" if summary["gates_failed"] else "pass"
-    ledger.emit("stage_done", stage="gates", status=verdict,
+    ledger.emit("stage_done", stage="gates", status=status,
                 elapsed_s=ledger.elapsed() or 0)
-    ledger.emit("run_done", status=verdict, elapsed_s=ledger.elapsed() or 0,
+    ledger.emit("run_done", status=status, elapsed_s=ledger.elapsed() or 0,
                 summary=summary)
     if args.run_label:
         write_build_output(root, args.run_label, recipe, recipe_abs, recipe_sha,
