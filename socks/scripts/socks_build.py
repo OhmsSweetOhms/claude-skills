@@ -206,16 +206,16 @@ class NullLedger:
         return {"file": os.path.basename(path), "sha256": sha, "md5": md5,
                 "bytes": size, "kind": kind}
 
-    def baseline(self, artifact, observed, recorded, source):
-        return ("no_baseline" if recorded is None
-                else "reproduces" if recorded == observed else "diverges")
+    def baseline(self, artifact, observed, recorded, source, verdict):
+        return verdict
 
     def elapsed(self):
         return 0
 
     def summary(self):
         return {"gates_passed": 0, "gates_failed": 0, "artifacts": 0,
-                "baseline_reproduces": 0, "baseline_diverges": 0, "baseline_absent": 0}
+                "baseline_reproduces": 0, "baseline_diverges": 0,
+                "baseline_absent": 0, "baseline_load_equivalent": 0}
 
 
 class Ledger(NullLedger):
@@ -229,7 +229,7 @@ class Ledger(NullLedger):
         self._lock = threading.Lock()
         self._tally = {"gates_passed": 0, "gates_failed": 0, "artifacts": 0,
                        "baseline_reproduces": 0, "baseline_diverges": 0,
-                       "baseline_absent": 0}
+                       "baseline_absent": 0, "baseline_load_equivalent": 0}
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         open(self.path, "w").close()          # one file per run, never appended across runs
 
@@ -268,12 +268,11 @@ class Ledger(NullLedger):
         return {"file": os.path.basename(path), "sha256": sha, "md5": md5,
                 "bytes": size, "kind": kind}
 
-    def baseline(self, artifact, observed, recorded, source):
-        verdict = ("no_baseline" if recorded is None
-                   else "reproduces" if recorded == observed else "diverges")
+    def baseline(self, artifact, observed, recorded, source, verdict):
         self._tally[{"reproduces": "baseline_reproduces",
                      "diverges": "baseline_diverges",
-                     "no_baseline": "baseline_absent"}[verdict]] += 1
+                     "no_baseline": "baseline_absent",
+                     "load_equivalent": "baseline_load_equivalent"}[verdict]] += 1
         self.emit("baseline", artifact=artifact, observed_sha256=observed,
                   recorded_sha256=recorded, verdict=verdict, source=source)
         return verdict
@@ -486,36 +485,83 @@ def gate_routed_timing(ledger, timing_report, root):
 
 # ----------------------------------------------------- baseline comparison
 
-def baseline_index(root):
-    """filename -> (recorded sha256, manifest path) over every tracked
+def baseline_index(root, prefer_dir=None):
+    """artifact filename -> {sha256, source, mode} over every tracked
     *.build-manifest.json. A produced artifact with no entry is a FIRST
-    BUILD, not a failure (dashboard spec section 5)."""
-    index = {}
+    BUILD, not a failure (dashboard spec section 5).
+
+    Artifact names are NOT globally unique -- two profiles may each home a
+    `system_top.bit`. On a collision, a manifest under prefer_dir (the
+    building profile's own home) wins; otherwise the entry is marked
+    ambiguous and the caller refuses to guess."""
+    by_name = {}
     for path in sorted(glob.glob(os.path.join(root, "platforms", "**", "*.build-manifest.json"),
                                  recursive=True)):
         try:
-            art = json.load(open(path))["artifact"]
-            index[art["file"]] = (art["sha256"], os.path.relpath(path, root))
+            doc = json.load(open(path))
+            art = doc["artifact"]
+            mode = ((doc.get("build") or {}).get("reproducibility") or {}).get(
+                "mode", "bit-reproducible")
+            by_name.setdefault(art["file"], []).append(
+                {"sha256": art["sha256"], "source": os.path.relpath(path, root),
+                 "mode": mode})
         except (KeyError, ValueError, OSError):
             continue
+    index = {}
+    for name, entries in by_name.items():
+        if len(entries) == 1:
+            index[name] = entries[0]
+            continue
+        preferred = [e for e in entries
+                     if prefer_dir and e["source"].startswith(prefer_dir.rstrip("/") + "/")]
+        index[name] = (preferred[0] if len(preferred) == 1
+                       else {"ambiguous": [e["source"] for e in entries]})
     return index
 
 
-def compare_baselines(ledger, produced, root):
+def compare_baselines(ledger, produced, root, prefer_dir=None):
     """Emit one baseline event per produced artifact. Returns the comparison
-    rows for the bundle manifest."""
-    index = baseline_index(root)
+    rows for the bundle manifest.
+
+    A raw-sha comparison is only meaningful for a BIT-REPRODUCIBLE artifact.
+    A Vivado bitstream embeds a build timestamp and a UUID, so comparing one
+    by raw hash reports a divergence on every rebuild from identical source --
+    an alarm that always fires is an alarm that gets ignored. Such artifacts
+    declare build.reproducibility.mode in their manifest and are reported
+    load_equivalent instead."""
+    index = baseline_index(root, prefer_dir)
     rows = []
     for entry in produced:
-        recorded, source = index.get(entry["file"], (None, None))
-        verdict = ledger.baseline(entry["file"], entry["sha256"], recorded, source)
+        b = index.get(entry["file"])
+        recorded = source = None
+        if b is None:
+            verdict = "no_baseline"
+        elif "ambiguous" in b:
+            # Two manifests claim this artifact name and none is under the
+            # building profile. Refuse to guess, and say so loudly.
+            verdict = "no_baseline"
+            ledger.gate("baseline_ambiguous", "fail",
+                        evidence=f"{entry['file']} is claimed by "
+                                 f"{len(b['ambiguous'])} manifests: "
+                                 f"{', '.join(b['ambiguous'])}"[:400])
+            print(f"  baseline {entry['file']:28s} AMBIGUOUS -- "
+                  f"{len(b['ambiguous'])} manifests claim this name")
+        else:
+            recorded, source = b["sha256"], b["source"]
+            if b["mode"].startswith("load-equivalent"):
+                verdict = "load_equivalent"
+            else:
+                verdict = "reproduces" if recorded == entry["sha256"] else "diverges"
+        ledger.baseline(entry["file"], entry["sha256"], recorded, source, verdict)
         row = {"artifact": entry["file"], "observed_sha256": entry["sha256"],
                "verdict": verdict}
         if recorded:
             row["recorded_sha256"] = recorded
             row["source"] = source
         rows.append(row)
-        print(f"  baseline {entry['file']:28s} {verdict}")
+        if b is None or "ambiguous" not in b:
+            note = "" if b is None else f"  ({b['mode']})"
+            print(f"  baseline {entry['file']:28s} {verdict}{note}")
     return rows
 
 
@@ -529,6 +575,8 @@ def bundle_verdict(rows):
         return "diverges"
     if kinds == {"no_baseline"}:
         return "no_baseline"
+    if kinds == {"load_equivalent"}:
+        return "load_equivalent"
     return "mixed"
 
 
@@ -775,7 +823,8 @@ def main():
     if stage_selected(args, "linux"):
         execute_linux(recipe, ledger)
 
-    baseline_rows = compare_baselines(ledger, produced, root)
+    prefer_dir = os.path.dirname(os.path.relpath(recipe_abs, root))
+    baseline_rows = compare_baselines(ledger, produced, root, prefer_dir)
     summary = ledger.summary()
     # Two vocabularies, deliberately kept apart: stages and runs are ok|fail,
     # gate/bundle verdicts are pass|fail.
