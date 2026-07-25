@@ -84,11 +84,19 @@ python3 <skill>/scripts/sd_boot.py flash --image 2024-04-04-ADI-Kuiper-full.img 
     --device /dev/sdX --confirm /dev/sdX   # actually writes
 ```
 
-It refuses a device that is not removable, one that holds a mounted `/`,
-`/home` or `/boot`, one with partitions still mounted, one larger than 128 GiB,
-a partition passed instead of the whole disk, and a still-compressed image.
+Before writing it refuses a device that is not removable, one that holds a
+mounted `/`, `/home` or `/boot`, one with partitions still mounted, one larger
+than 128 GiB, a partition passed instead of the whole disk, a still-compressed
+image, an image **bigger than the card**, and an image with no MBR/GPT in its
+first sector. It prints the card's current partition table before erasing it.
+After writing it drops the page cache and reads the card back to compare
+against the image (`--verify quick|full|none`, default quick).
+
 Getting `/dev/sdX` wrong overwrites the wrong disk, and `lsblk` alone has not
-historically been enough to prevent that.
+historically been enough to prevent that. The readback matters just as much:
+this is exactly the workflow where a counterfeit or dying card writes
+"successfully" and then boots nothing, and three wasted boot attempts is how
+that gets diagnosed otherwise.
 
 The raw equivalents, if you would rather do it by hand:
 

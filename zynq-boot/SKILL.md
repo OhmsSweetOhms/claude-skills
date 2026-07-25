@@ -53,17 +53,32 @@ python3 scripts/sd_boot.py deploy --boot-mount <BOOT-mount> --set <src>:<dest> -
 python3 scripts/sd_boot.py verify --boot-mount <BOOT-mount>
 ```
 
-- **`flash`** is dry-run by default and refuses non-removable devices, anything
-  holding a mounted `/`, `/home` or `/boot`, devices with mounted partitions,
-  devices over a size ceiling, a partition passed instead of the whole disk,
-  and a still-compressed image. It will not write until `--confirm` repeats the
-  device name.
+- **`flash`** is dry-run by default and will not write until `--confirm`
+  repeats the device name. **Before** writing it refuses: a partition passed
+  instead of the whole disk, a device holding a mounted `/`, `/home` or
+  `/boot`, a device with ANY mounted partition, a non-removable device, one
+  over a size ceiling, a still-compressed image, an image **larger than the
+  card** (silent truncation — the card looks flashed and will not boot), and an
+  image with no MBR/GPT in its first sector. It then prints the target's
+  **current partition table**, so you see what you are about to erase rather
+  than trusting a `/dev/sdX` you typed from memory. **After** writing it drops
+  the page cache and **reads the card back** to compare against the image —
+  `--verify quick` (default, first 256 MiB: partition table + boot partition,
+  where a bad or counterfeit card usually shows), `--verify full`, or
+  `--verify none` if you accept the risk. Without the cache drop a readback
+  re-reads what you just wrote out of RAM and every card passes, including the
+  failing one.
 - **`deploy`** puts the boot artifacts at the FAT32 partition root — the step a
   freshly flashed vendor image still needs, because vendors ship multi-board
   bundles with per-board subdirectories and the boot loader only reads the root.
-  It sha256-verifies **after `sync`** (FAT through a card reader buffers hard,
-  so verifying before the flush just re-reads the page cache) and writes a
-  manifest onto the card.
+  It is also dry-run by default (`--write` to apply), checks **free space**
+  first (a copy that runs out of room leaves a truncated `Image` on a card that
+  otherwise looks deployed — the worst outcome, because everything reports
+  success), and shows **what it is about to overwrite**: which run label the
+  card currently carries, and per file whether the copy is `new`, `unchanged`,
+  or `REPLACES <sha>`. It sha256-verifies **after `sync`** (FAT through a card
+  reader buffers hard, so verifying before the flush just re-reads the page
+  cache) and writes a manifest onto the card.
 - **`verify`** re-hashes a card against that manifest, so "what is actually on
   this card?" is a question with an answer.
 - It also reads a socks build bank directly: `--from-build-output
