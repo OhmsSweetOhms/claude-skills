@@ -442,6 +442,40 @@ def bundle_verdict(rows):
 
 # ---------------------------------------------------------------- execute
 
+def vivado_settings_for(version):
+    """Settings64.sh for the version the RECIPE pins -- not the newest one on
+    the host. socks_lib.find_vivado_settings() deliberately returns the latest
+    install; for a recipe-driven build that is the wrong answer whenever the
+    host carries a newer Vivado than the profile was validated on."""
+    from socks_lib import VIVADO_SEARCH_PATHS
+    for pattern in VIVADO_SEARCH_PATHS:
+        for path in sorted(glob.glob(pattern)):
+            if f"/Vivado/{version}/" in path:
+                return path
+    raise SystemExit(f"ERROR: recipe pins Vivado {version}, which is not installed "
+                     f"(searched {', '.join(VIVADO_SEARCH_PATHS)})")
+
+
+def apply_build_env(recipe, ledger):
+    """The recipe IS the build: its toolchain pin and build_env are applied
+    here rather than left to whatever the invoking shell happened to export.
+    An inherited value that DISAGREES is overridden and said out loud."""
+    stage = recipe["stages"]["hdl_no_os"]
+    env = {"REQUIRED_VIVADO_VERSION": recipe["toolchain"]["vivado"]}
+    env.update(stage["build_env"])
+    for key, value in sorted(env.items()):
+        prior = os.environ.get(key)
+        if prior is not None and prior != value:
+            msg = f"recipe overrides inherited {key}={prior} -> {value}"
+            print(f"  NOTE: {msg}")
+            ledger.emit("progress", stage="hdl_make", detail=msg[:200])
+        os.environ[key] = value
+    ledger.gate("build_env", "pass",
+                evidence=" ".join(f"{k}={v}" for k, v in sorted(env.items()))[:400])
+    print(f"  build env: {' '.join(f'{k}={v}' for k, v in sorted(env.items()))}")
+    return env
+
+
 def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
     stage_t0 = time.time()
     ledger.emit("stage_start", stage="apply")
@@ -462,12 +496,16 @@ def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
     ledger.emit("stage_done", stage="apply", status="ok",
                 elapsed_s=round(time.time() - stage_t0, 1))
 
-    from hil_project import run_adi_make_stage14, find_vivado_settings
+    from hil_project import run_adi_make_stage14
     with open(os.path.join(project_dir, "socks.json")) as f:
         build_cfg = json.load(f).get("build", {})
     build_dir = os.path.join(project_dir, "build", "hil")
     adi_project_dir = os.path.abspath(os.path.join(
         project_dir, build_cfg["adi_root"], build_cfg["project_dir"]))
+    settings = vivado_settings_for(recipe["toolchain"]["vivado"])
+    apply_build_env(recipe, ledger)
+    ledger.gate("toolchain_pin", "pass", evidence=settings)
+    print(f"  vivado:    {settings}")
 
     stage_t0 = time.time()
     ledger.emit("stage_start", stage="hdl_make")
@@ -476,7 +514,7 @@ def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
         tail = VivadoTail(ledger, os.path.join(adi_project_dir, "vivado.log"))
         tail.start()
     try:
-        rc = run_adi_make_stage14(project_dir, build_dir, build_cfg, find_vivado_settings())
+        rc = run_adi_make_stage14(project_dir, build_dir, build_cfg, settings)
     finally:
         if tail:
             tail.stop()
