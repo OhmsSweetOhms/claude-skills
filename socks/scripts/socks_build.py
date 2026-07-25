@@ -596,10 +596,16 @@ def vivado_settings_for(version):
                      f"(searched {', '.join(VIVADO_SEARCH_PATHS)})")
 
 
-def apply_build_env(recipe, ledger):
+def apply_build_env(recipe, ledger=None):
     """The recipe IS the build: its toolchain pin and build_env are applied
     here rather than left to whatever the invoking shell happened to export.
-    An inherited value that DISAGREES is overridden and said out loud."""
+    An inherited value that DISAGREES is overridden and said out loud.
+
+    Shared with hil_project.run_adi_make_stage14 so the Stage-14 entry point
+    and `socks build --execute` cannot tell two different stories about what
+    the image was built from; ledger is optional so the non-ledgered caller
+    needs no dummy."""
+    ledger = ledger or NullLedger()
     stage = recipe["stages"]["hdl_no_os"]
     env = {"REQUIRED_VIVADO_VERSION": recipe["toolchain"]["vivado"]}
     env.update(stage["build_env"])

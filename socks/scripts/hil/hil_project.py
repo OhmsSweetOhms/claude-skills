@@ -31,7 +31,7 @@ from hil_lib import (
     expand_template, resolve_sources, board_family, boot_init_filename,
 )
 from hil_prep import maybe_generate_artifacts
-from adi_profile_apply import apply_recipe
+from adi_profile_apply import apply_recipe, load_recipe
 from validate_trigger_plan import validate_trigger_plan
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,6 +40,9 @@ from socks_lib import (
     pass_str, fail_str, yellow, bold,
 )
 from project_config import get_scope, load_project_config
+# One authority for "which toolchain / which env does this recipe declare",
+# shared with the socks_build driver so the two entry points cannot diverge.
+from socks_build import vivado_settings_for, apply_build_env
 
 
 def build_externalize_tcl(hil_config):
@@ -142,7 +145,13 @@ def _extract_boot_init_from_xsa(xsa_path, build_dir, family):
 
 
 def run_adi_make_stage14(project_dir, build_dir, build_cfg, settings_path):
-    """Run ADI Make and stage artifacts for later HIL stages."""
+    """Run ADI Make and stage artifacts for later HIL stages.
+
+    settings_path is REQUIRED here. This flow is recipe-driven by definition,
+    and find_vivado_settings()'s latest-wins contract -- correct for the module
+    pipeline -- is wrong for a build whose profile declares the version it was
+    validated on. The caller derives the path from the recipe's toolchain slot
+    (socks_build.vivado_settings_for)."""
     required = ["adi_root", "project_dir"]
     missing = [key for key in required if not build_cfg.get(key)]
     if missing:
@@ -157,10 +166,12 @@ def run_adi_make_stage14(project_dir, build_dir, build_cfg, settings_path):
         print(f"\n  ERROR: ADI project Makefile not found: {makefile}")
         return 1
 
-    settings = settings_path or find_vivado_settings()
-    if settings is None:
-        print(f"\n  ERROR: Vivado settings64.sh not found")
+    if not settings_path:
+        print(f"\n  ERROR: ADI Make requires an explicit Vivado settings64.sh derived "
+              f"from the recipe's toolchain.vivado slot (latest-wins is not a valid "
+              f"answer for a recipe-driven system build)")
         return 1
+    settings = settings_path
 
     os.makedirs(build_dir, exist_ok=True)
     log_path = os.path.join(build_dir, "stage14_adi_make.log")
@@ -270,13 +281,27 @@ def main() -> int:
         try:
             print(f"\n  Applying build recipe before Stage 14...")
             apply_recipe(project_dir)
+            recipe_abs, recipe = load_recipe(project_dir, socks_cfg=socks_cfg)
         except Exception as e:
             print(f"\n  ERROR: build recipe apply failed: {e}")
             return 1
+        # The recipe is the build. Before 2026-07-25 this entry point resolved
+        # Vivado as `args.settings or find_vivado_settings()` (latest-wins) and
+        # took GPS_STREAMING_* from the ambient shell -- so the decisive inputs
+        # to every image built this way came from outside socks. Both now come
+        # from the recipe; an explicit --settings still wins, but a --settings
+        # that disagrees with the pin is said out loud rather than obeyed
+        # silently.
+        pinned = recipe["toolchain"]["vivado"]
+        settings = args.settings or vivado_settings_for(pinned)
+        if args.settings and f"/Vivado/{pinned}/" not in args.settings:
+            print(f"\n  {yellow('WARNING')}: --settings {args.settings} does not look like "
+                  f"the Vivado {pinned} the recipe pins ({os.path.relpath(recipe_abs, project_dir)})")
+        apply_build_env(recipe)
         build_cfg = dict(build_cfg)
         build_cfg.setdefault("board", socks_cfg.get("board", {}) if socks_cfg else {})
         build_dir = hil_build_dir(project_dir)
-        return run_adi_make_stage14(project_dir, build_dir, build_cfg, args.settings)
+        return run_adi_make_stage14(project_dir, build_dir, build_cfg, settings)
 
     # Run hil_prep to generate missing artifacts
     if not maybe_generate_artifacts(project_dir, args.top, args.part):
