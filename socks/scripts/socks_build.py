@@ -364,6 +364,90 @@ class VivadoTail(threading.Thread):
         self.join(timeout=30)
 
 
+# --------------------------------------------- what actually built the bits
+# A declared pin only says which toolchain was SELECTED. These read the
+# version back out of the artifacts themselves (and the logs that made them),
+# so the run record can assert what the bitstream was actually built with.
+
+RE_LOG_VERSION = re.compile(r"Vivado v(\d{4}\.\d+)")
+RE_BIT_VERSION = re.compile(rb"Version=(\d{4}\.\d+)")
+RE_XSA_GENAPP = re.compile(r'<GenAppInfo[^>]*Name="Vivado"[^>]*Version="(\d{4}\.\d+)"')
+
+
+def vivado_version_from_bitstream(path):
+    """Vivado writes the tool version into the .bit header's 'a' field, e.g.
+    b'system_top;COMPRESS=TRUE;UserID=0XFFFFFFFF;Version=2022.2'."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(512)
+    except OSError:
+        return None
+    m = RE_BIT_VERSION.search(head)
+    return m.group(1).decode() if m else None
+
+
+def vivado_version_from_xsa(path):
+    """An XSA is a zip; xsa.xml carries <GenAppInfo Name="Vivado" Version=...>."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            m = RE_XSA_GENAPP.search(z.read("xsa.xml").decode(errors="replace"))
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return None
+    return m.group(1) if m else None
+
+
+def vivado_versions_from_logs(project_dir):
+    """Both Vivado log banner forms ('****** Vivado v2022.2' in the console
+    log, '# Vivado v2022.2' in the journal) match the same regex."""
+    found = {}
+    for path in sorted(glob.glob(os.path.join(project_dir, "*.log"))):
+        try:
+            with open(path, errors="replace") as fh:
+                versions = set(RE_LOG_VERSION.findall(fh.read(8192)))
+        except OSError:
+            continue
+        if versions:
+            found[path] = versions
+    return found
+
+
+def gate_toolchain_actual(ledger, pinned, adi_project_dir, build_dir, root):
+    """Assert every version readable from the produced artifacts and their
+    build logs equals the recipe's pin. Fails closed when NOTHING is
+    readable -- 'we cannot tell what built this' is the condition worth
+    surfacing, not one worth passing silently."""
+    seen = []          # (source, version)
+    for path, versions in vivado_versions_from_logs(adi_project_dir).items():
+        for v in sorted(versions):
+            seen.append((os.path.relpath(path, root), v))
+    for dirpath, _dirs, names in os.walk(build_dir):
+        for name in sorted(names):
+            path = os.path.join(dirpath, name)
+            v = (vivado_version_from_bitstream(path) if name.endswith(".bit")
+                 else vivado_version_from_xsa(path) if name.endswith(".xsa")
+                 else None)
+            if v:
+                seen.append((os.path.relpath(path, root), v))
+    if not seen:
+        ledger.gate("toolchain_actual", "fail",
+                    evidence=f"no Vivado version readable from artifacts or logs "
+                             f"under {os.path.relpath(build_dir, root)}; cannot verify the "
+                             f"{pinned} pin")
+        print(f"  toolchain actual: UNVERIFIABLE (pin {pinned})  [FAIL]")
+        return False
+    disagree = [f"{s}={v}" for s, v in seen if v != pinned]
+    ok = not disagree
+    ledger.gate("toolchain_actual", "pass" if ok else "fail",
+                evidence=(f"{len(seen)} sources all read Vivado {pinned}: "
+                          + ", ".join(s for s, _ in seen))[:400] if ok
+                         else (f"pinned {pinned} but " + "; ".join(disagree))[:400])
+    print(f"  toolchain actual: {len(seen)} sources, pin {pinned} -- "
+          f"{'all agree' if ok else 'DISAGREE: ' + '; '.join(disagree)}"
+          f"  [{'PASS' if ok else 'FAIL'}]")
+    return ok
+
+
 RE_TIMING_ROW = re.compile(
     r"^\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s+"
     r"(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(\d+)\s+(\d+)\s+"
@@ -530,6 +614,8 @@ def execute_hdl(recipe, recipe_abs, project_dir, ledger, root):
     ledger.emit("stage_start", stage="gates")
     gate_routed_timing(ledger, os.path.join(adi_project_dir, "timing_impl.log"), root)
     produced = emit_sha256_manifest(build_dir, ledger, root)
+    gate_toolchain_actual(ledger, recipe["toolchain"]["vivado"], adi_project_dir,
+                          build_dir, root)
     return produced
 
 
