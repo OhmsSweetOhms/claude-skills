@@ -1321,10 +1321,19 @@ def stage_r5(recipe, ctx, ledger, xsa, no_os_tree):
         raise StageFail(f"R5 BSP generator missing: {gen_tcl}")
     if not os.path.isdir(no_os_tree):
         raise StageFail(f"patched no-OS tree missing: {no_os_tree}")
-    bsp_root = os.path.join(ctx["tmp"], "r5-bsp")
+    # RUN-INDEPENDENT paths, deliberately. These land in the ELF: the BSP
+    # include dir is passed absolute (-I$(RPROC_BSP)/include) and the sources
+    # compile with -g3, so the path is baked into DWARF. Homing them under the
+    # per-run bundle made two builds of identical source differ in 543 bytes --
+    # every one of them the run label inside a debug-info string. Same-source
+    # rebuilds must produce the same ELF, so the scratch root (already
+    # run-independent, already off the worktree volume) owns them. The ELF is
+    # still BANKED into this run's deploy set; only the workspace is shared.
+    r5_root = os.path.join(ctx["scratch"], "r5")
+    bsp_root = os.path.join(r5_root, "bsp")
     bsp = os.path.join(bsp_root, "psu_cortexr5_0")
-    rproc_build = os.path.join(ctx["tmp"], "rproc-capture")
-    desk_build = os.path.join(ctx["tmp"], "r5-desk")
+    rproc_build = os.path.join(r5_root, "capture")
+    desk_build = os.path.join(r5_root, "desk")
     os.makedirs(bsp_root, exist_ok=True)
 
     run_step(ledger, "r5", "xsct gen_r5_bsp.tcl",
