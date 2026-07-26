@@ -351,6 +351,40 @@ def resolve_pairs(args) -> list[tuple[Path, str, str]]:
             die(f"cannot read {doc_path}: {exc}")
         deploy_dir = doc_path.parent / "deploy"
         label = doc.get("run_label", doc_path.parent.name)
+        by_kind = {a.get("kind"): a for a in doc.get("deploy", [])}
+
+        # The recipe is the authority on what a bootable card needs. Prefer its
+        # declared stages.linux.sd_deploy over the built-in kind map: the map
+        # only knows about build artifacts, and the set that actually boots
+        # includes profile files too (uEnv.txt, whose omission strands the
+        # board with no static IP). Falling back to the map keeps the script
+        # useful for boards with no recipe at all.
+        declared = recipe_sd_deploy(doc, doc_path)
+        if declared:
+            profile_home = declared["profile_home"]
+            print(f"  recipe:  {declared['recipe_rel']} declares "
+                  f"{len(declared['files'])} file(s) for the boot partition")
+            for entry in declared["files"]:
+                frm, dest = entry["from"], entry["to"]
+                if frm.startswith("artifact:"):
+                    kind = frm.split(":", 1)[1]
+                    art = by_kind.get(kind)
+                    if art is None:
+                        die(f"recipe sd_deploy wants artifact kind {kind!r}, which "
+                            f"this run did not produce. Build with --stage all.")
+                    pairs.append((deploy_dir / art["file"], dest,
+                                  f"{label}::{kind} sha256 {art['sha256']}"))
+                else:
+                    pairs.append((profile_home / frm, dest,
+                                  f"profile {frm}"))
+            for kind, art in by_kind.items():
+                if not any(e["from"] == f"artifact:{kind}" for e in declared["files"]):
+                    why = ROOTFS_KINDS.get(kind, "not in the recipe's boot set")
+                    print(f"  skip:    {art['file']:38s} ({kind}) -- {why}")
+            if declared.get("rootfs_note"):
+                print(f"\n  ROOTFS (NOT handled here): {declared['rootfs_note']}\n")
+            return pairs
+
         skipped = []
         for art in doc.get("deploy", []):
             kind, fname = art.get("kind"), art["file"]
@@ -366,6 +400,34 @@ def resolve_pairs(args) -> list[tuple[Path, str, str]]:
             why = ROOTFS_KINDS.get(kind, "no boot-partition destination for this kind")
             print(f"  skip:    {fname:38s} ({kind}) -- {why}")
     return pairs
+
+
+def recipe_sd_deploy(build_output: dict, doc_path: Path) -> dict | None:
+    """Resolve stages.linux.sd_deploy from the recipe this run was built from.
+
+    build-output.json records recipe_path relative to the repo root, and the
+    bundle sits at <root>/systems/builds/<label>/, so the root is three levels
+    up. Returns None when there is no recipe or no declared set -- the caller
+    then falls back to the built-in kind map."""
+    rel = build_output.get("recipe_path")
+    if not rel:
+        return None
+    root = doc_path.resolve().parent.parent.parent.parent
+    recipe_path = root / rel
+    if not recipe_path.is_file():
+        print(f"  note: recipe {rel} not found beside this bundle -- using the "
+              f"built-in kind map")
+        return None
+    try:
+        recipe = json.loads(recipe_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    block = ((recipe.get("stages") or {}).get("linux") or {}).get("sd_deploy")
+    if not block or not block.get("files"):
+        return None
+    return {"files": block["files"], "profile_home": recipe_path.parent,
+            "recipe_rel": rel, "rootfs_note": block.get("rootfs_note"),
+            "label": block.get("boot_partition_label")}
 
 
 def guard_boot_mount(mount: Path) -> None:

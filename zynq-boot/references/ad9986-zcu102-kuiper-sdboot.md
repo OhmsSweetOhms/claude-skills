@@ -141,14 +141,26 @@ design — the GPS streaming substrate, say — you deploy the artifacts your bu
 produced, and the stock `BOOT.BIN` is exactly what you must NOT copy: yours
 carries your bitstream and an FSBL regenerated from your own XSA.
 
-A socks build bank is understood natively, including the rename, which is the
-trap here — a build bank names the DTB for provenance
-(`system_<variant>.dtb`) while the boot loader only reads `system.dtb`:
+The profile's recipe declares the exact set in `stages.linux.sd_deploy`, so one
+command does it with nothing to remember:
 
 ```bash
 python3 <skill>/scripts/sd_boot.py deploy --boot-mount <BOOT-mount> \
     --from-build-output systems/builds/<run-label>/build-output.json --write
 ```
+
+**Four files, not three.** Alongside `BOOT.BIN`, `Image` and `system.dtb`
+(renamed from the bank's `system_<variant>.dtb` — the boot loader fatloads a
+fixed `system.dtb`), the set includes the **profile's `uEnv.txt`**. The vendor
+image ships one without a static IP; the profile's appends
+`ip=192.168.0.200`, which is exactly the address
+`platforms/boards/zcu102-ad9986/bench-access.json` binds to. Deploy only the
+three build artifacts and the board comes up healthy and **unreachable** —
+which looks like a network problem and is not one.
+
+Verified against physical media 2026-07-25: a freshly flashed BOOT partition
+contained **no `BOOT.BIN`, `Image` or `system.dtb` at all** — only `uEnv.txt`.
+This step is mandatory, not a convenience.
 
 It maps by artifact `kind`, so it takes exactly the three that belong on the
 BOOT partition and tells you why it skipped the others — the bitstream is

@@ -81,10 +81,21 @@ python3 scripts/sd_boot.py verify --boot-mount <BOOT-mount>
   cache) and writes a manifest onto the card.
 - **`verify`** re-hashes a card against that manifest, so "what is actually on
   this card?" is a question with an answer.
-- It also reads a socks build bank directly: `--from-build-output
-  systems/builds/<run-label>/build-output.json` maps artifacts by `kind`, takes
-  only the three that belong on BOOT, applies the provenance→boot rename
-  (`system_<variant>.dtb` → `system.dtb`), and says why it skipped the rest.
+- It reads a socks build bank directly: `--from-build-output
+  systems/builds/<run-label>/build-output.json`. If that run's recipe declares
+  **`stages.linux.sd_deploy`**, that list is the authority — source, exact
+  destination name, and a `why` per file — so the boot set is a versioned part
+  of the recipe rather than flags someone has to remember. Otherwise it falls
+  back to mapping build artifacts by `kind`.
+- **The set is not just build artifacts.** On the ZCU102/Kuiper profile it
+  includes the profile's own `uEnv.txt`, and omitting that is the trap: the
+  board boots perfectly and has **no static IP**, so every bench tool fails to
+  reach it and it reads as a network fault. Declaring the set in the recipe is
+  what makes that impossible to forget.
+- A recipe may also carry `rootfs_note`, which the tool prints prominently:
+  flashing plus a boot-partition deploy generally does **not** give you a
+  working application node, because per-session firmware, kernel modules and
+  tools live on the rootfs and are pushed separately.
 
 Board-specific facts — which base image, boot-mode switches, power-on order,
 what a good boot looks like — stay in `references/<board>.md`. The script
