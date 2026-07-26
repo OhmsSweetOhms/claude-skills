@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """sd_boot.py -- prepare a bootable SD card for a Zynq / ZynqMP board.
 
-Board-agnostic. Three subcommands, in the order you normally need them:
+Board-agnostic. Five subcommands, in the order you normally need them:
 
-  flash    write a base OS image (.img/.img.xz/.zip) to a removable device
-  deploy   place the per-board boot artifacts on the FAT32 BOOT partition
-  verify   re-check a card against the manifest deploy wrote on it
+  flash             write a base OS image (.img/.img.xz/.zip) to a removable device
+  deploy            place the per-board boot artifacts on the FAT32 BOOT partition
+  verify            re-check a card against the manifest deploy wrote on it
+  provision-rootfs  place the recipe's declared capture/serving stack on the
+                    mounted ext4 ROOTFS partition (the half deploy cannot do)
+  verify-rootfs     re-check a rootfs against the manifest provisioning wrote
 
 `deploy` is the one you run most: a freshly flashed vendor image is usually
 NOT bootable for your board yet, because vendors ship a multi-board bundle
 with artifacts in per-board subdirectories and the boot loader only reads the
 partition root. Deploying is a handful of copies plus a rename -- easy to get
 subtly wrong, and each mistake costs a boot cycle.
+
+`provision-rootfs` exists because a flashed + deployed card BOOTS but does
+nothing useful: the entire capture/serving stack lives on the rootfs, and
+restoring it by hand over SSH is dozens of copies, modes, and systemd enables
+-- each one rediscovered the hard way when a card dies. The recipe's
+stages.linux.rootfs_provision block declares the set once; this subcommand
+applies it offline and writes /root/provision-manifest.json binding the
+rootfs to the exact image it was provisioned for (the R5 firmware and kernel
+modules are per-image artifacts -- a stale pair booting against a new
+bitstream is the failure the manifest exists to prevent).
 
 WHY THIS IS CAREFUL ABOUT DEVICES
 `flash` writes raw bytes to a block device. Pointing it at the wrong /dev
@@ -37,6 +50,14 @@ EXAMPLES
 
   sd_boot.py verify --boot-mount <mnt>
 
+  # Provision the capture stack onto the mounted ext4 rootfs partition:
+  sd_boot.py provision-rootfs --rootfs-mount /run/media/<user>/rootfs \\
+      --from-build-output systems/builds/<run-label>/build-output.json \\
+      --external sdrangel-plan06-bundle=<path to banked bundle> \\
+      --boot-mount /run/media/<user>/BOOT --write
+
+  sd_boot.py verify-rootfs --rootfs-mount <mnt>
+
 Part of the zynq-boot skill. Board-specific facts -- boot-mode switches, which
 base image, what a good boot looks like -- live in references/<board>.md; this
 script deliberately knows none of them.
@@ -45,6 +66,7 @@ script deliberately knows none of them.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -359,7 +381,7 @@ def resolve_pairs(args) -> list[tuple[Path, str, str]]:
         # includes profile files too (uEnv.txt, whose omission strands the
         # board with no static IP). Falling back to the map keeps the script
         # useful for boards with no recipe at all.
-        declared = recipe_sd_deploy(doc, doc_path)
+        declared = recipe_stage_block(doc, doc_path, "sd_deploy")
         if declared:
             profile_home = declared["profile_home"]
             print(f"  recipe:  {declared['recipe_rel']} declares "
@@ -402,13 +424,15 @@ def resolve_pairs(args) -> list[tuple[Path, str, str]]:
     return pairs
 
 
-def recipe_sd_deploy(build_output: dict, doc_path: Path) -> dict | None:
-    """Resolve stages.linux.sd_deploy from the recipe this run was built from.
+def recipe_stage_block(build_output: dict, doc_path: Path,
+                       block_name: str) -> dict | None:
+    """Resolve stages.linux.<block_name> from the recipe this run was built
+    from. Serves both sd_deploy (boot partition) and rootfs_provision.
 
     build-output.json records recipe_path relative to the repo root, and the
     bundle sits at <root>/systems/builds/<label>/, so the root is three levels
-    up. Returns None when there is no recipe or no declared set -- the caller
-    then falls back to the built-in kind map."""
+    up. Returns None when there is no recipe or no declared set -- the
+    sd_deploy caller then falls back to the built-in kind map."""
     rel = build_output.get("recipe_path")
     if not rel:
         return None
@@ -416,18 +440,21 @@ def recipe_sd_deploy(build_output: dict, doc_path: Path) -> dict | None:
     recipe_path = root / rel
     if not recipe_path.is_file():
         print(f"  note: recipe {rel} not found beside this bundle -- using the "
-              f"built-in kind map")
+              f"built-in kind map" if block_name == "sd_deploy" else
+              f"  note: recipe {rel} not found beside this bundle -- no "
+              f"declared {block_name} set is available")
         return None
     try:
         recipe = json.loads(recipe_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    block = ((recipe.get("stages") or {}).get("linux") or {}).get("sd_deploy")
+    block = ((recipe.get("stages") or {}).get("linux") or {}).get(block_name)
     if not block or not block.get("files"):
         return None
     return {"files": block["files"], "profile_home": recipe_path.parent,
             "recipe_rel": rel, "rootfs_note": block.get("rootfs_note"),
-            "label": block.get("boot_partition_label")}
+            "label": block.get("boot_partition_label"),
+            "repo_root": root, "block": block}
 
 
 def guard_boot_mount(mount: Path) -> None:
@@ -587,6 +614,404 @@ def cmd_verify(args) -> int:
     return 1 if bad else 0
 
 
+# -------------------------------------------------------- provision-rootfs
+
+# The provisioning manifest lives inside the provisioned rootfs itself, so
+# the board (gps-live-ctl preconditions) and a later verify-rootfs both read
+# the same record of what was placed and for WHICH image.
+ROOTFS_MANIFEST_REL = "root/provision-manifest.json"
+
+# What binds a provisioned rootfs to ITS image. The R5 firmware and kernel
+# modules are per-image artifacts; a stale pair booting against a new
+# bitstream is exactly the failure the boot_identity record exists to catch.
+BOOT_IDENTITY_KINDS = {
+    "boot-image": "BOOT.BIN",
+    "kernel-image": "Image",
+    "device-tree-blob": "system.dtb",
+}
+
+
+def guard_rootfs_mount(mount: Path, unsafe_no_mount_check: bool) -> None:
+    if not mount.is_dir():
+        die(f"rootfs mount is not a directory: {mount}")
+    resolved = str(mount.resolve())
+    for critical in ("/", "/home", "/usr", "/etc", "/boot"):
+        if resolved == critical:
+            die(f"refusing to provision into {critical} -- that is this "
+                f"host's own filesystem, not a card's rootfs")
+    if unsafe_no_mount_check:
+        print("  UNSAFE: mount-point and fstype guards skipped "
+              "(--unsafe-no-mount-check exists for desk tests against a "
+              "plain directory -- never use it with a real card)")
+    else:
+        mounts = mounted_sources()
+        if resolved not in mounts:
+            die(f"{mount} is not a mount point. Mount the card's ext4 rootfs "
+                f"partition and pass that path -- writing into an unmounted "
+                f"directory silently fills your own disk instead of the card.")
+        fstype = ""
+        try:
+            for line in Path("/proc/self/mounts").read_text().splitlines():
+                p = line.split()
+                if len(p) >= 3 and p[1] == resolved:
+                    fstype = p[2]
+        except OSError:
+            pass
+        if fstype in ("vfat", "msdos", "exfat"):
+            die(f"{mount} is {fstype} -- that is the FAT BOOT partition, not "
+                f"the rootfs. The capture stack lives on the ext4 rootfs; "
+                f"boot artifacts go through `deploy` instead.")
+        if fstype and fstype not in ("ext2", "ext3", "ext4"):
+            die(f"{mount} is {fstype}, not ext2/3/4 -- this does not look "
+                f"like a Linux rootfs partition.")
+    # A real rootfs has etc/ and lib/. An empty or wrong partition does not,
+    # and provisioning into it builds a convincing file tree no boot reads.
+    for probe in ("etc", "lib"):
+        if not (mount / probe).is_dir():
+            die(f"{mount} has no {probe}/ -- this does not look like an "
+                f"extracted Linux rootfs. Wrong partition?")
+
+
+def parse_externals(entries) -> dict:
+    out = {}
+    for e in entries or []:
+        if "=" not in e:
+            die(f"--external expects NAME=PATH, got {e!r}")
+        name, path = e.split("=", 1)
+        out[name] = Path(path).expanduser()
+    return out
+
+
+def resolve_provision_source(frm: str, declared: dict, by_kind: dict,
+                             deploy_dir: Path, label: str,
+                             externals: dict) -> tuple[Path, str]:
+    """-> (source_path, provenance). Schemes mirror sd_deploy's artifact:/
+    profile-relative pair, plus repo: (board-level files shared across
+    profiles) and external: (banked outside the repo, mapped on the CLI)."""
+    if frm.startswith("artifact:"):
+        kind = frm.split(":", 1)[1]
+        art = by_kind.get(kind)
+        if art is None:
+            die(f"recipe rootfs_provision wants artifact kind {kind!r}, which "
+                f"this run did not produce. Build with --stage all.")
+        return (deploy_dir / art["file"],
+                f"{label}::{kind} sha256 {art['sha256']}")
+    if frm.startswith("repo:"):
+        rel = frm.split(":", 1)[1]
+        return declared["repo_root"] / rel, f"repo {rel}"
+    if frm.startswith("external:"):
+        name = frm.split(":", 1)[1]
+        path = externals.get(name)
+        if path is None:
+            die(f"recipe rootfs_provision needs external source {name!r}, "
+                f"which is banked OUTSIDE the repo. Pass "
+                f"--external {name}=<path> to say where it lives on this host.")
+        return path, f"external {name}"
+    return declared["profile_home"] / frm, f"profile {frm}"
+
+
+def walk_tree(src_dir: Path, excludes: list) -> list:
+    """Relative paths of every file under src_dir, honoring excludes
+    (fnmatch on the bare name; matching directories are pruned whole)."""
+    out = []
+    for base, dirs, files in os.walk(src_dir):
+        dirs[:] = sorted(d for d in dirs
+                         if not any(fnmatch.fnmatch(d, pat) for pat in excludes))
+        for f in sorted(files):
+            if any(fnmatch.fnmatch(f, pat) for pat in excludes):
+                continue
+            out.append(Path(base, f).relative_to(src_dir))
+    return out
+
+
+def plan_symlinks(block: dict, mount: Path) -> list:
+    """-> [(link_rel, target, state)]. Dies on a non-symlink collision now,
+    in dry run, rather than half-way through a write."""
+    plans = []
+    for entry in block.get("symlinks", []):
+        link_rel = entry["symlink"].lstrip("/")
+        target = entry["target"]
+        link = mount / link_rel
+        if link.is_symlink():
+            old = os.readlink(link)
+            state = "unchanged" if old == target else f"REPLACES -> {old}"
+        elif link.exists():
+            die(f"/{link_rel} exists and is NOT a symlink -- refusing to "
+                f"replace a real file with a link. Something else owns it.")
+        else:
+            state = "new symlink"
+        plans.append((link_rel, target, state))
+    return plans
+
+
+def check_boot_identity_against_card(boot_mount: Path,
+                                     boot_identity: dict) -> None:
+    """Provisioning a rootfs against a DIFFERENT card's image is exactly the
+    mistake this exists to catch: the pair would boot and then fail at R5
+    load or module insmod, hours later and far from the cause."""
+    prior = boot_mount / MANIFEST_NAME
+    if not prior.is_file():
+        print(f"  note:    no {MANIFEST_NAME} on {boot_mount} -- image "
+              f"identity cross-check skipped (card not deployed by this "
+              f"script?)")
+        return
+    try:
+        pdoc = json.loads(prior.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        die(f"cannot read {prior}: {exc}")
+    deployed = {r.get("file"): r.get("sha256") for r in pdoc.get("files", [])}
+    for name, want in boot_identity.items():
+        got = deployed.get(name)
+        if got and got != want:
+            die(f"boot-partition identity mismatch: {name} on the card is "
+                f"{got[:16]} but this build's is {want[:16]} -- this rootfs "
+                f"would be provisioned for a DIFFERENT image than the card "
+                f"boots. Deploy this build's boot set first, or point "
+                f"--boot-mount at the right card.")
+    print(f"  boot id: card's deployed BOOT.BIN/Image/system.dtb match this "
+          f"build -- rootfs and image agree")
+
+
+def cmd_provision_rootfs(args) -> int:
+    mount = Path(args.rootfs_mount).expanduser()
+    guard_rootfs_mount(mount, args.unsafe_no_mount_check)
+
+    doc_path = Path(args.from_build_output).expanduser()
+    try:
+        doc = json.loads(doc_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        die(f"cannot read {doc_path}: {exc}")
+    deploy_dir = doc_path.parent / "deploy"
+    label = doc.get("run_label", doc_path.parent.name)
+    by_kind = {a.get("kind"): a for a in doc.get("deploy", [])}
+    externals = parse_externals(args.external)
+
+    declared = recipe_stage_block(doc, doc_path, "rootfs_provision")
+    if declared is None:
+        die("this run's recipe declares no stages.linux.rootfs_provision -- "
+            "there is nothing authoritative to provision from. The declared "
+            "set is the contract; ad-hoc rootfs copies are how the by-hand "
+            "restore drifted in the first place.")
+    block = declared["block"]
+    print(f"  recipe:  {declared['recipe_rel']} declares "
+          f"{len(block['files'])} rootfs entries, "
+          f"{len(block.get('symlinks', []))} symlink(s)")
+
+    # boot_identity FIRST: if the bundle cannot name its own image, the
+    # manifest cannot bind the rootfs to anything and provisioning is moot.
+    boot_identity = {}
+    for kind, name in BOOT_IDENTITY_KINDS.items():
+        art = by_kind.get(kind)
+        if art is None:
+            die(f"build-output has no {kind!r} artifact, so the provision "
+                f"manifest cannot bind this rootfs to its image. Provision "
+                f"from a full bundle (--stage all), not a partial one.")
+        boot_identity[name] = art["sha256"]
+
+    def resolve(frm):
+        return resolve_provision_source(frm, declared, by_kind, deploy_dir,
+                                        label, externals)
+
+    # Resolve every declared entry before touching anything: a missing
+    # source must abort the whole run, not strand a half-provisioned card.
+    copies = []     # (src, dest_rel, mode, provenance)
+    dir_plans = []  # (spec, to, n_files, total_bytes, provenance)
+    for entry in block["files"]:
+        if "from_dir" in entry:
+            src_dir, prov = resolve(entry["from_dir"])
+            if not src_dir.is_dir():
+                die(f"source directory missing: {src_dir}  [{prov}]")
+            to_rel = entry["to"].lstrip("/")
+            rels = walk_tree(src_dir, entry.get("exclude", []))
+            if not rels:
+                die(f"source directory is empty after excludes: {src_dir}  "
+                    f"[{prov}]")
+            total = 0
+            for rel in rels:
+                src = src_dir / rel
+                total += src.stat().st_size
+                copies.append((src, str(Path(to_rel) / rel), None, prov))
+            dir_plans.append((entry["from_dir"], entry["to"], len(rels),
+                              total, prov))
+        else:
+            src, prov = resolve(entry["from"])
+            if not src.is_file():
+                die(f"source file missing: {src}  [{prov}]")
+            mode = int(entry["mode"], 8) if entry.get("mode") else None
+            copies.append((src, entry["to"].lstrip("/"), mode, prov))
+
+    link_plans = plan_symlinks(block, mount)
+
+    # If the boot partition is present, refuse a cross-image pairing BEFORE
+    # any write, and preview the config seeding.
+    boot_mount = None
+    if args.boot_mount:
+        boot_mount = Path(args.boot_mount).expanduser()
+        if args.unsafe_no_mount_check:
+            if not boot_mount.is_dir():
+                die(f"boot mount is not a directory: {boot_mount}")
+        else:
+            guard_boot_mount(boot_mount)
+        check_boot_identity_against_card(boot_mount, boot_identity)
+
+    # FREE SPACE, same rationale as deploy: a copy that dies part-way leaves
+    # a rootfs that LOOKS provisioned and fails at first chain start.
+    need = sum(s.stat().st_size for s, _d, _m, _p in copies)
+    replaced = sum((mount / d).stat().st_size
+                   for _s, d, _m, _p in copies if (mount / d).is_file())
+    stat = os.statvfs(mount)
+    free = stat.f_bavail * stat.f_frsize
+    print(f"  space:   need {need / (1<<20):.0f} MiB, "
+          f"{free / (1<<20):.0f} MiB free "
+          f"(+{replaced / (1<<20):.0f} MiB reclaimed from files being replaced)")
+    if need > free + replaced:
+        die(f"not enough room on {mount}: need {need / (1<<20):.0f} MiB, have "
+            f"{(free + replaced) / (1<<20):.0f} MiB. A partial provision "
+            f"leaves a rootfs that looks complete and fails at chain start.")
+
+    dir_dests = {to for _spec, to, _n, _b, _p in dir_plans}
+    for src, dest_rel, mode, prov in copies:
+        # Files inside a tree copy are summarized by their dir line below.
+        if any(("/" + dest_rel).startswith(d.rstrip("/") + "/")
+               for d in dir_dests):
+            continue
+        target = mount / dest_rel
+        if target.is_file():
+            state = ("unchanged" if sha256(target) == sha256(src)
+                     else f"REPLACES {sha256(target)[:16]}")
+        else:
+            state = "new file"
+        print(f"  rootfs:  {src.name:38s} -> /{dest_rel} [{state}]"
+              + (f" mode {mode:04o}" if mode is not None else ""))
+        print(f"           {prov}")
+    for spec, to, n, total, prov in dir_plans:
+        print(f"  rootfs:  {spec:38s} -> {to} "
+              f"[{n} files, {total / (1<<20):.1f} MiB]")
+        print(f"           {prov}")
+    for link_rel, target, state in link_plans:
+        print(f"  symlink: /{link_rel} -> {target} [{state}]")
+
+    seeds = []
+    if boot_mount is not None:
+        for entry in block.get("boot_config_seed", []):
+            src, prov = resolve(entry["from"])
+            if not src.is_file():
+                die(f"boot_config_seed source missing: {src}  [{prov}]")
+            dest = boot_mount / entry["to"]
+            if dest.exists():
+                # Operator-tuned at runtime; overwriting one silently undoes
+                # the tuning -- same only-if-absent rule as the on-board
+                # installer.
+                print(f"  seed:    {entry['to']} exists -- left untouched")
+            else:
+                print(f"  seed:    {src.name} -> {entry['to']} [absent -- "
+                      f"will seed from example]")
+                seeds.append((src, dest))
+
+    if not args.write:
+        print("\n  DRY RUN -- nothing copied. Add --write to apply.")
+        return 0
+
+    records = []
+    for src, dest_rel, mode, prov in copies:
+        want = sha256(src)
+        target = mount / dest_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)      # preserves the source mode by default
+        if mode is not None:
+            os.chmod(target, mode)
+        records.append({"path": "/" + dest_rel, "sha256": want,
+                        "bytes": src.stat().st_size, "provenance": prov})
+
+    link_records = []
+    for link_rel, target, state in link_plans:
+        link = mount / link_rel
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() and os.readlink(link) != target:
+            print(f"  symlink: /{link_rel} REPLACES old target "
+                  f"{os.readlink(link)}")
+            link.unlink()
+        if not link.is_symlink():
+            link.symlink_to(target)
+        link_records.append({"path": "/" + link_rel, "target": target})
+
+    for src, dest in seeds:
+        shutil.copy2(src, dest)
+
+    # ext4 through a card reader buffers heavily; verify only after a real
+    # flush, or you verify the page cache instead of the card.
+    os.sync()
+    bad = [r for r in records
+           if sha256(mount / r["path"].lstrip("/")) != r["sha256"]]
+    if bad:
+        die("post-copy verify FAILED for: "
+            + ", ".join(r["path"] for r in bad)
+            + " -- do not boot this rootfs")
+    print(f"\n  verified {len(records)} file(s) on the rootfs after sync")
+
+    manifest = {
+        "schema": "provisioned-rootfs/1",
+        "provisioned": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "run_label": label,
+        "build_output": str(args.from_build_output),
+        "files": records,
+        "symlinks": link_records,
+        "boot_identity": boot_identity,
+        "note": ("Written by the zynq-boot skill's sd_boot.py "
+                 "provision-rootfs. Re-check with `sd_boot.py verify-rootfs "
+                 "--rootfs-mount <mnt>`. boot_identity names the image this "
+                 "rootfs was provisioned FOR; gps-live-ctl refuses bring-up "
+                 "when the booted /boot disagrees with it."),
+    }
+    man_path = mount / ROOTFS_MANIFEST_REL
+    man_path.parent.mkdir(parents=True, exist_ok=True)
+    man_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    os.sync()
+    print(f"  manifest: /{ROOTFS_MANIFEST_REL}")
+    print("\n  Rootfs is provisioned. First boot compiles the on-board "
+          "binaries (gps-live-firstboot.service) before the chain starts.")
+    return 0
+
+
+def cmd_verify_rootfs(args) -> int:
+    mount = Path(args.rootfs_mount).expanduser()
+    manifest_path = mount / ROOTFS_MANIFEST_REL
+    if not manifest_path.is_file():
+        die(f"no /{ROOTFS_MANIFEST_REL} on {mount} -- this rootfs was not "
+            f"provisioned by this script, so there is nothing to verify "
+            f"against.")
+    doc = json.loads(manifest_path.read_text())
+    bad = ok = 0
+    for rec in doc["files"]:
+        path = mount / rec["path"].lstrip("/")
+        if not path.is_file():
+            print(f"  MISSING  {rec['path']}")
+            bad += 1
+            continue
+        got = sha256(path)
+        if got != rec["sha256"]:
+            print(f"  MISMATCH {rec['path']}  {got[:16]} != "
+                  f"{rec['sha256'][:16]}  [{rec.get('provenance', '')}]")
+            bad += 1
+        else:
+            ok += 1
+    for rec in doc.get("symlinks", []):
+        link = mount / rec["path"].lstrip("/")
+        if not link.is_symlink():
+            print(f"  MISSING  {rec['path']} (symlink)")
+            bad += 1
+        elif os.readlink(link) != rec["target"]:
+            print(f"  MISLINK  {rec['path']} -> {os.readlink(link)} "
+                  f"(want {rec['target']})")
+            bad += 1
+        else:
+            ok += 1
+    print(f"\n  provisioned {doc.get('provisioned', '?')} "
+          f"from {doc.get('run_label', '?')}")
+    print(f"  {ok} ok; " + ("ALL GREEN" if not bad else f"{bad} PROBLEM(S)"))
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -628,6 +1053,35 @@ def main() -> int:
     v = sub.add_parser("verify", help="re-check a card against its deployed manifest")
     v.add_argument("--boot-mount", required=True)
     v.set_defaults(func=cmd_verify)
+
+    pr = sub.add_parser(
+        "provision-rootfs",
+        help="place the recipe's declared capture/serving stack on the "
+             "mounted ext4 rootfs partition")
+    pr.add_argument("--rootfs-mount", required=True,
+                    help="the card's mounted ext4 rootfs partition")
+    pr.add_argument("--from-build-output", required=True,
+                    help="a socks build-output.json; its recipe's "
+                         "stages.linux.rootfs_provision block is the authority")
+    pr.add_argument("--external", action="append", metavar="NAME=PATH",
+                    help="resolve a recipe external:<NAME> source banked "
+                         "outside the repo (repeatable)")
+    pr.add_argument("--boot-mount",
+                    help="also seed the recipe's boot_config_seed files (only "
+                         "if absent) and cross-check the card's deployed "
+                         "image identity against this build")
+    pr.add_argument("--write", action="store_true",
+                    help="apply; default is a dry run")
+    pr.add_argument("--unsafe-no-mount-check", action="store_true",
+                    help="skip the mount-point/fstype guards; exists for desk "
+                         "tests against a plain directory, never a real card")
+    pr.set_defaults(func=cmd_provision_rootfs)
+
+    vr = sub.add_parser(
+        "verify-rootfs",
+        help="re-check a rootfs against its provision manifest")
+    vr.add_argument("--rootfs-mount", required=True)
+    vr.set_defaults(func=cmd_verify_rootfs)
 
     args = ap.parse_args()
     return args.func(args)
