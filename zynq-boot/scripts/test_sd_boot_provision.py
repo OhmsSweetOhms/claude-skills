@@ -220,11 +220,13 @@ class ProvisionRootfsTest(unittest.TestCase):
     def test_verify_green_then_red_after_tamper(self):
         rc, out = self.provision()
         self.assertEqual(rc, 0, out)
-        rc, out = run_cli("verify-rootfs", "--rootfs-mount", str(self.rootfs))
+        rc, out = run_cli("verify-rootfs", "--rootfs-mount", str(self.rootfs),
+                          "--unsafe-no-mount-check")
         self.assertEqual(rc, 0, out)
         self.assertIn("ALL GREEN", out)
         (self.rootfs / "root/mod.ko").write_bytes(b"tampered")
-        rc, out = run_cli("verify-rootfs", "--rootfs-mount", str(self.rootfs))
+        rc, out = run_cli("verify-rootfs", "--rootfs-mount", str(self.rootfs),
+                          "--unsafe-no-mount-check")
         self.assertEqual(rc, 1, out)
         self.assertIn("MISMATCH", out)
         self.assertIn("/root/mod.ko", out)

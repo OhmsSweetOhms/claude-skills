@@ -631,6 +631,21 @@ BOOT_IDENTITY_KINDS = {
 }
 
 
+def guard_rootfs_root(unsafe_no_mount_check: bool) -> None:
+    """A real card's rootfs preserves root ownership: /root is 0700, and the
+    destinations (/lib/firmware, /usr/local/sbin, /etc/systemd) are
+    root-owned. A non-root run cannot even stat inside /root -- the first
+    physical-card run died on exactly that -- and files it could write would
+    land owned by the host user instead of root. Desk tests provision into a
+    plain directory and skip this with --unsafe-no-mount-check."""
+    if unsafe_no_mount_check:
+        return
+    if os.geteuid() != 0:
+        die("provisioning a real rootfs reads and writes root-owned paths "
+            "(/root is 0700; written files must be root-owned on the card) "
+            "-- re-run under sudo")
+
+
 def guard_rootfs_mount(mount: Path, unsafe_no_mount_check: bool) -> None:
     if not mount.is_dir():
         die(f"rootfs mount is not a directory: {mount}")
@@ -775,6 +790,7 @@ def check_boot_identity_against_card(boot_mount: Path,
 def cmd_provision_rootfs(args) -> int:
     mount = Path(args.rootfs_mount).expanduser()
     guard_rootfs_mount(mount, args.unsafe_no_mount_check)
+    guard_rootfs_root(args.unsafe_no_mount_check)
 
     doc_path = Path(args.from_build_output).expanduser()
     try:
@@ -975,6 +991,7 @@ def cmd_provision_rootfs(args) -> int:
 
 def cmd_verify_rootfs(args) -> int:
     mount = Path(args.rootfs_mount).expanduser()
+    guard_rootfs_root(getattr(args, "unsafe_no_mount_check", False))
     manifest_path = mount / ROOTFS_MANIFEST_REL
     if not manifest_path.is_file():
         die(f"no /{ROOTFS_MANIFEST_REL} on {mount} -- this rootfs was not "
@@ -1081,6 +1098,9 @@ def main() -> int:
         "verify-rootfs",
         help="re-check a rootfs against its provision manifest")
     vr.add_argument("--rootfs-mount", required=True)
+    vr.add_argument("--unsafe-no-mount-check", action="store_true",
+                    help="skip the root-privilege guard (desk tests against a "
+                         "plain directory)")
     vr.set_defaults(func=cmd_verify_rootfs)
 
     args = ap.parse_args()
