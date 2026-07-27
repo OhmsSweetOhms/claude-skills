@@ -922,7 +922,10 @@ def cmd_provision_rootfs(args) -> int:
             total = 0
             for rel in rels:
                 src = src_dir / rel
-                total += src.stat().st_size
+                # lstat, not stat: a bundle may carry symlinks whose target is
+                # board-only (dangling on the host). Those are reproduced AS
+                # links below, so sizing them must not follow the link.
+                total += src.lstat().st_size
                 copies.append((src, str(Path(to_rel) / rel), None, prov))
             dir_plans.append((entry["from_dir"], entry["to"], len(rels),
                               total, prov))
@@ -949,9 +952,10 @@ def cmd_provision_rootfs(args) -> int:
 
     # FREE SPACE, same rationale as deploy: a copy that dies part-way leaves
     # a rootfs that LOOKS provisioned and fails at first chain start.
-    need = sum(s.stat().st_size for s, _d, _m, _p in copies)
-    replaced = sum((mount / d).stat().st_size
-                   for _s, d, _m, _p in copies if (mount / d).is_file())
+    need = sum(s.lstat().st_size for s, _d, _m, _p in copies)
+    replaced = sum((mount / d).lstat().st_size
+                   for _s, d, _m, _p in copies
+                   if (mount / d).is_symlink() or (mount / d).is_file())
     stat = os.statvfs(mount)
     free = stat.f_bavail * stat.f_frsize
     print(f"  space:   need {need / (1<<20):.0f} MiB, "
@@ -1006,17 +1010,38 @@ def cmd_provision_rootfs(args) -> int:
         return 0
 
     records = []
+    link_records = []
     for src, dest_rel, mode, prov in copies:
-        want = sha256(src)
         target = mount / dest_rel
         target.parent.mkdir(parents=True, exist_ok=True)
+        # An existing symlink at the destination must be REMOVED, never
+        # written through: copying onto it would follow the link and clobber
+        # whatever it points at (on a mounted card that resolves against the
+        # HOST filesystem), and copy2 raises SameFileError when the link
+        # already resolves to the source -- which is what aborted the
+        # 2026-07-27 re-provision of an already-provisioned card.
+        if target.is_symlink():
+            target.unlink()
+        # A symlink in a bundle is reproduced AS a symlink. Dereferencing it
+        # would bake the host's copy of the target into the card, and the
+        # link is usually meant to resolve against the BOARD's filesystem
+        # (e.g. -> /etc/python3.10/sitecustomize.py). Symlinks are recorded
+        # in the manifest's symlinks section, which verify-rootfs already
+        # checks by readlink comparison.
+        if src.is_symlink():
+            link_target = os.readlink(src)
+            os.symlink(link_target, target)
+            link_records.append({"path": "/" + dest_rel,
+                                 "target": link_target,
+                                 "provenance": prov})
+            continue
+        want = sha256(src)
         shutil.copy2(src, target)      # preserves the source mode by default
         if mode is not None:
             os.chmod(target, mode)
         records.append({"path": "/" + dest_rel, "sha256": want,
                         "bytes": src.stat().st_size, "provenance": prov})
 
-    link_records = []
     for link_rel, target, state in link_plans:
         link = mount / link_rel
         link.parent.mkdir(parents=True, exist_ok=True)

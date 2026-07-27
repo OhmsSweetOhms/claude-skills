@@ -127,6 +127,13 @@ class ProvisionRootfsTest(unittest.TestCase):
         (self.bundle / "lib").mkdir()
         (self.bundle / "bin" / "sdrangelsrv").write_bytes(b"fake aarch64 srv")
         (self.bundle / "lib" / "libx.so").write_bytes(b"fake so")
+        # A real bank bundle carries symlinks, some pointing at absolute paths
+        # that only resolve on the BOARD (the plan-06 bundle links
+        # sitecustomize.py -> /etc/python3.10/sitecustomize.py). These must be
+        # reproduced as links, never dereferenced. Deliberately dangling on the
+        # host, which is exactly the case that must not crash the planner.
+        os.symlink("/etc/python3.10/sitecustomize.py",
+                   self.bundle / "lib" / "sitecustomize.py")
 
         # ---- fake rootfs + boot mount -------------------------------------
         self.rootfs = self.tmp / "rootfs"
@@ -275,6 +282,61 @@ class ProvisionRootfsTest(unittest.TestCase):
         self.assertEqual(os.readlink(link),
                          "/etc/systemd/system/gps-live.service")
 
+    def test_bundle_symlink_is_reproduced_not_dereferenced(self):
+        """A symlink inside a bundle tree must land as a symlink.
+
+        Dereferencing it copies the HOST's copy of the target onto the card
+        (the mounted rootfs resolves absolute links against the host), baking
+        host state into the image and destroying a link that was meant to
+        resolve against the board's own filesystem. Bench-found 2026-07-27 on
+        the plan-06 bundle's sitecustomize.py.
+        """
+        rc, out = self.provision()
+        self.assertEqual(rc, 0, out)
+        link = self.rootfs / "root/bundle/lib/sitecustomize.py"
+        self.assertTrue(link.is_symlink(), "must be a link, not a copy")
+        self.assertEqual(os.readlink(link), "/etc/python3.10/sitecustomize.py")
+        # and it is recorded where verify-rootfs looks for links, not as a
+        # file whose sha would be the dereferenced host content
+        man = json.loads(
+            (self.rootfs / "root/provision-manifest.json").read_text())
+        self.assertIn("/root/bundle/lib/sitecustomize.py",
+                      {r["path"] for r in man["symlinks"]})
+        self.assertNotIn("/root/bundle/lib/sitecustomize.py",
+                         {r["path"] for r in man["files"]})
+
+    def test_reprovision_over_existing_bundle_symlink_is_idempotent(self):
+        """Re-provisioning a card that already carries the bundle must work.
+
+        copy2 follows symlinks on both ends, so when the destination already
+        holds the same link both sides resolve to one host file and it raises
+        SameFileError -- aborting mid-run and stranding a half-provisioned
+        card. That is what happened re-provisioning the old card 2026-07-27.
+        """
+        rc, out = self.provision()
+        self.assertEqual(rc, 0, out)
+        rc, out = self.provision()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("SameFileError", out)
+        link = self.rootfs / "root/bundle/lib/sitecustomize.py"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), "/etc/python3.10/sitecustomize.py")
+
+    def test_regular_file_never_written_through_a_stale_symlink(self):
+        """A link squatting on a destination path must be removed, not
+        followed -- otherwise the copy clobbers the link's target."""
+        victim = self.tmp / "victim.txt"
+        victim.write_bytes(b"do not clobber me")
+        dest = self.rootfs / "root/mod.ko"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists() or dest.is_symlink():
+            dest.unlink()
+        os.symlink(victim, dest)
+        rc, out = self.provision()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(dest.is_symlink(), "stale link must be replaced")
+        self.assertEqual(victim.read_bytes(), b"do not clobber me")
+
     def test_manifest_contents(self):
         rc, out = self.provision()
         self.assertEqual(rc, 0, out)
@@ -292,8 +354,14 @@ class ProvisionRootfsTest(unittest.TestCase):
         self.assertIn("run1::r5-firmware-elf", rec["provenance"])
         # tree files are recorded individually
         self.assertIn("/root/capture/linux/capture/sub/nested.h", by_path)
-        self.assertEqual(man["symlinks"][0]["target"],
-                         "/etc/systemd/system/gps-live.service")
+        # by path, not by index: the symlinks list also carries any links
+        # reproduced out of a bundle tree, whose order is not this test's
+        # concern
+        links = {r["path"]: r for r in man["symlinks"]}
+        self.assertEqual(
+            links["/etc/systemd/system/multi-user.target.wants/"
+                  "gps-live.service"]["target"],
+            "/etc/systemd/system/gps-live.service")
 
     def test_verify_green_then_red_after_tamper(self):
         rc, out = self.provision()
