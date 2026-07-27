@@ -1263,6 +1263,106 @@ def stage_kernel(recipe, ctx, ledger):
 
 # ---- Step 3: device tree --------------------------------------------------
 
+def dt_nco_shifts(dts_text):
+    """-> {node path: signed Hz} for every adi,nco-frequency-shift-hz cell of a
+    decompiled DTS. The property is two 32-bit cells carrying one signed 64-bit
+    Hz value; negative shifts are normal (L2 and L5 sit below the CDDC)."""
+    shifts, stack = {}, []
+    cell = re.compile(r"adi,nco-frequency-shift-hz = <(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+)>;")
+    for line in dts_text.split("\n"):
+        s = line.strip()
+        if s.endswith("{"):
+            stack.append(s[:-1].strip())
+            continue
+        if s == "};":
+            if stack:
+                stack.pop()
+            continue
+        m = cell.match(s)
+        if m:
+            raw = (int(m.group(1), 16) << 32) | int(m.group(2), 16)
+            shifts["/".join(stack)] = raw - (1 << 64) if raw >> 63 else raw
+    return shifts
+
+
+def check_dt_operating_point(recipe, dtb_path, ctx, ledger):
+    """Assert the BUILT DT means what the same recipe's operating_point says.
+
+    Why this gate exists (the 2026-07-27 Iridium finding): the DT source was
+    edited on one branch while the DTB of record was built on another, so the
+    board ran a band 1.92 MHz off while every label -- sigmf_writer BANDS[],
+    the recorder's legal centers -- carried the recentered value. The recipe
+    knew the right answer the whole time: operating_point.rx.bands[] declares
+    each offset with error_hz 0. Nothing compared the compiled artifact to it.
+    A dtb_sha gate cannot catch this class at all -- the blob matched its own
+    manifest perfectly; it was the manifest and the blob that were both a
+    branch behind. Reproducibility and meaning are different questions.
+
+    RX ONLY, deliberately. operating_point.rx maps onto this DT one-for-one:
+    cddc_center_hz -> every adi,rx-adcs main-data-path adc@*, and each band's
+    fddc -> the matching channelizer-path channel@<fddc>. The tx block
+    declares a DIFFERENT plan from the DT's quad-band TX mirror
+    (main_nco_shift_hz 1575420000 vs the DT's 1404240000;
+    channel_nco_shift_hz 0 vs four per-band offsets), so gating tx here would
+    manufacture false failures. Reconcile that discrepancy before extending
+    this gate to the TX side -- do not simply add it.
+    """
+    op = (recipe.get("operating_point") or {}).get("rx")
+    if not op or not op.get("bands"):
+        ledger.gate("dt_operating_point", "pass",
+                    evidence="recipe declares no operating_point.rx bands; "
+                             "nothing to cross-check")
+        return
+    decompiled = os.path.join(ctx["tmp"], "dt-operating-point.dts")
+    run_step(ledger, "dt", "dtc -I dtb -O dts (operating-point readback)",
+             sourced(ctx["vitis_settings"],
+                     f"dtc -I dtb -O dts -o {shlex.quote(decompiled)} "
+                     f"{shlex.quote(dtb_path)}"),
+             ctx["root"], os.path.join(ctx["logs"], "dt-operating-point.log"))
+    shifts = dt_nco_shifts(open(decompiled).read())
+
+    def rx(kind, node):
+        for path, hz in shifts.items():
+            if f"adi,rx-adcs/adi,{kind}/{node}" in path:
+                return hz
+        return None
+
+    checks, bad = [], []
+    want_cddc = op.get("cddc_center_hz")
+    if want_cddc is not None:
+        seen = {p: hz for p, hz in shifts.items()
+                if "adi,rx-adcs/adi,main-data-paths/adc@" in p}
+        if not seen:
+            bad.append("no rx main-data-path adc@* nodes found in the built DT")
+        for path, hz in sorted(seen.items()):
+            checks.append(f"{path.rsplit('/', 1)[-1]}={hz}")
+            if hz != want_cddc:
+                bad.append(f"{path.rsplit('/', 1)[-1]} CDDC shift {hz} != "
+                           f"operating_point.rx.cddc_center_hz {want_cddc}")
+    for band in op["bands"]:
+        node = f"channel@{band['fddc']}"
+        hz = rx("channelizer-paths", node)
+        want = band["offset_hz"]
+        checks.append(f"{band['name']}/{node}={hz}")
+        if hz is None:
+            bad.append(f"band {band['name']} declares fddc {band['fddc']} but "
+                       f"the built DT has no rx channelizer {node}")
+        elif hz != want:
+            bad.append(f"{band['name']} ({node}) shift {hz} != declared "
+                       f"offset_hz {want} (delta {hz - want} Hz)")
+    ledger.gate("dt_operating_point", "fail" if bad else "pass",
+                evidence=("; ".join(bad) if bad else
+                          "built DT matches operating_point.rx: " +
+                          ", ".join(checks))[:400])
+    if bad:
+        # A run-stopping FINDING, unlike dtb_sha's reproducibility signal: the
+        # artifact contradicts the operating point this same recipe declares,
+        # so one of the two is wrong and neither may be shipped on a guess.
+        print(f"  dt:        OPERATING-POINT MISMATCH -- {bad[0]}")
+    else:
+        print(f"  dt:        operating point matches ({len(checks)} NCO cells)")
+
+
 def stage_dt(recipe, ctx, ledger):
     """Compile the profile DTS to its DTB and compare against its manifest.
 
@@ -1297,6 +1397,9 @@ def stage_dt(recipe, ctx, ledger):
                     detail=f"FINDING: dtb sha {got} != manifest {expected}"[:200])
     print(f"  dt:        {os.path.basename(out)} sha "
           f"{'== manifest' if ok else 'DIFFERS (finding)'}")
+    # Reproducibility is settled above; now ask whether the artifact MEANS what
+    # the recipe declares. The two questions are independent -- see the gate.
+    check_dt_operating_point(recipe, out, ctx, ledger)
     # Bank under the RECIPE-declared basename, not a generic system.dtb: the
     # deploy set is evidence, and the baseline comparator matches an artifact
     # to its manifest BY FILENAME. Renaming for the board's /boot is a
