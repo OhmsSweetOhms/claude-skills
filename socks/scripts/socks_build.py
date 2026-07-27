@@ -13,9 +13,10 @@ mismatch to police -- a path cannot disagree with itself.
 Modes:
   --plan      (default) Emit the exact commands + tree state per stage.
               No Vivado license needed -- the Codex handback form.
-  --execute   Run on a licensed host (HDL/no-OS wraps the proven
-              apply_recipe + Stage-14 engine; Linux is a defined-interface
-              stub until plan-03 ports the cold_rebuild stages + gates).
+  --execute   Run on a licensed host. HDL/no-OS wraps the proven
+              apply_recipe + Stage-14 engine; Linux builds kernel -> dt ->
+              r5 -> boot assembly, each under its reproducibility gate.
+              --stage all yields the complete six-artifact deploy set.
   --describe  Human-readable "how is this profile built": identity, pins,
               toolchain, operating point + bands, stages, verification --
               including a live mxfe_rate_math re-derivation of every NCO word.
@@ -108,6 +109,15 @@ def plan_linux(recipe):
     print(f"# boot assembly (verbatim; stage_d placeholder substitution contract):")
     print(ba["command"])
     print(f"# output: {ba['output']}")
+
+
+def plan_dt(recipe):
+    """--stage dt: the Linux half's dt stage ALONE (see the --stage help)."""
+    dt = recipe["stages"]["linux"]["dt"]
+    print(f"# stage dt : dtc only -- kernel, r5 and boot assembly are NOT run")
+    print(f"# dt: {dt['source']} -> {dt['dtb']}")
+    print(f"# manifest: {dt['dtb_manifest']} (the dtb_sha gate compares against it)")
+    print(f"# bundle: a SUBSET deploy set -- the device-tree-blob only")
 
 
 # --------------------------------------------------------------- describe
@@ -322,9 +332,8 @@ RE_PHASE = re.compile(r"^(Phase [\d.]+ .+|Starting \w[\w ]* Task|Ending \w[\w ]*
 
 class VivadoTail(threading.Thread):
     """Poll the ADI project's vivado.log and turn milestones into ledger
-    events while the make runs. Poll (not inotify) for the same reason
-    cold_rebuild.stage_b polls: the build is hours long and the log is the
-    only live surface. Note stage14_adi_make.log is NOT usable here -- the
+    events while the make runs. Poll (not inotify) because the build is hours
+    long and the log is the only live surface. Note stage14_adi_make.log is NOT usable here -- the
     Stage-14 runner buffers make's stdout and writes that file only on exit."""
 
     def __init__(self, ledger, log_path, poll_s=20.0):
@@ -476,8 +485,8 @@ RE_TIMING_ROW = re.compile(
 
 
 def gate_routed_timing(ledger, timing_report, root):
-    """WNS/WHS >= 0 off the routed Design Timing Summary. Same report and
-    same row-parse as cold_rebuild.parse_timing_summary -- one authority."""
+    """WNS/WHS >= 0 off the routed Design Timing Summary -- the last
+    table Vivado writes, parsed row-wise with the last row winning."""
     if not os.path.isfile(timing_report):
         ledger.gate("timing_wns", "fail",
                     evidence=f"routed timing report missing: {os.path.relpath(timing_report, root)}")
@@ -873,11 +882,11 @@ def gate_patch_mirror(ledger, apply_result, root):
     invariant is therefore visible as a git diff over the tracked HDL project
     after the apply, and it must be empty.
 
-    Ported from cold_rebuild.stage_a_hdl_roundtrip, which had been checking it
-    by copy-patch-cmp -- and which the plan-02 rehoming of the patches had
-    silently turned into a no-op glob. This form cannot go vacuous: it compares
-    the real tree against the real reconstruction, so there is no list to be
-    empty."""
+    The interim Linux executor this replaced checked the same invariant by
+    copy-patch-cmp over a glob, which the plan-02 rehoming of the patches had
+    silently emptied -- it iterated nothing and passed. This form cannot go
+    vacuous: it compares the real tree against the real reconstruction, so
+    there is no list that can be empty."""
     hdl_dir = apply_result.get("hdl_project_dir")
     if not hdl_dir:
         ledger.gate("patch_mirror", "fail",
@@ -985,8 +994,9 @@ def execute_hdl(recipe, ctx, ledger):
 
 
 # -------------------------------------------------------- execute: linux
-# Ported from platforms/tools/cold_rebuild.py stages C / E-DTB / E-R5 / D
-# (plan-03 Steps 2-5). Every reproducibility gate that guarded a stage there
+# Ported (plan-03 Steps 2-5) from the interim Linux executor that preceded
+# this driver; its stage ids survive in the plan-28 desk-run ledger banked
+# under codex-handoff/. Every reproducibility gate that guarded a stage there
 # is kept, and is now emitted as a ledger gate instead of a private JSON
 # ledger. The traps in each stage's docstring each cost a build or a board
 # cycle to find -- they are load-bearing, not commentary.
@@ -1022,8 +1032,8 @@ def run_step(ledger, stage, name, argv, cwd, log_path, env=None, check=True):
 def sourced(settings, cmd):
     """A DEDICATED clean bash that sources a Xilinx settings64.sh first.
 
-    cold_rebuild ledger E-DTB1: sourcing inside a compound or piped command
-    left dtc unresolved. The settings script exports tool paths into the shell
+    plan-28 desk-run ledger E-DTB1: sourcing inside a compound or piped
+    command left dtc unresolved. The settings script exports tool paths into the shell
     it runs in, so it needs its own shell whose only job is to run this one
     command."""
     return ["bash", "-c", f"source {shlex.quote(settings)} && {cmd}"]
@@ -1034,7 +1044,8 @@ def bank_deployable(source, filename, deploy_dir):
 
     Resume is permitted only when the existing banked file is byte-identical;
     a conflicting file fails closed rather than silently mixing two builds
-    into one deploy directory (cold_rebuild bank_deployable, verbatim rule)."""
+    into one deploy directory (rule carried over verbatim from the interim
+    executor)."""
     if not os.path.isfile(source):
         raise StageFail(f"deployable source is missing: {source}")
     os.makedirs(deploy_dir, exist_ok=True)
@@ -1102,7 +1113,7 @@ def stage_kernel(recipe, ctx, ledger):
     """Build the kernel Image from stages.linux.kernel under the reproducibility
     policy its build-manifest declares.
 
-    Two traps, both from the cold_rebuild ledger, both preserved:
+    Two traps, both from the plan-28 desk-run ledger, both preserved:
       C4  the .config seed is MANDATORY -- `olddefconfig` in a bare O= dir
           produces a DEFAULT config, not the Kuiper baseline. The build would
           succeed and the board would not boot the same kernel.
@@ -1255,7 +1266,7 @@ def stage_kernel(recipe, ctx, ledger):
 def stage_dt(recipe, ctx, ledger):
     """Compile the profile DTS to its DTB and compare against its manifest.
 
-    Trap (cold_rebuild ledger E-DTB1): dtc MUST be invoked with the Vitis
+    Trap (plan-28 desk-run ledger E-DTB1): dtc MUST be invoked with the Vitis
     settings sourced in a dedicated clean bash -- see sourced(). dtc output is
     deterministic, so this artifact is genuinely bit-reproducible and a
     mismatch is a real finding rather than expected build noise."""
@@ -1573,7 +1584,18 @@ def main():
     parser.add_argument("--project-dir", default=None,
                         help="SOCKS project dir; source of the build.recipe default and of "
                              "adi_root/no_os_subtree for --execute")
-    parser.add_argument("--stage", choices=["hdl", "linux", "all"], default="all")
+    parser.add_argument("--stage", choices=["hdl", "linux", "dt", "all"], default="all",
+                        help="hdl | linux | all are the two halves and both. dt is a "
+                             "RE-ENTRY POINT, not a third half: it runs the Linux half's "
+                             "dt stage alone, because the recipe's dt block needs only the "
+                             "DTS and the Vitis dtc. A DT-only correction is a recurring "
+                             "real case (a reserved-memory or NCO cell moves while the "
+                             "board keeps running its current kernel, R5 ELF and BOOT.BIN), "
+                             "and before this existed the smallest flyable unit was the "
+                             "whole Linux half -- which rebuilds all three of those and so "
+                             "cannot describe the image the board is actually booting. "
+                             "Under --stage all the dt stage still runs inside the Linux "
+                             "half; this flag does not double it.")
     parser.add_argument("--ledger", default=None,
                         help="build-ledger.jsonl path (default <project>/build/hil/)")
     parser.add_argument("--no-ledger", action="store_true",
@@ -1605,7 +1627,9 @@ def main():
         print(f"# socks build --plan : {recipe['name']} (stage={args.stage})")
         if stage_selected(args, "hdl"):
             plan_hdl(recipe, recipe_abs, project_dir)
-        if stage_selected(args, "linux"):
+        if args.stage == "dt":
+            plan_dt(recipe)
+        elif stage_selected(args, "linux"):
             plan_linux(recipe)
         return 0
 
@@ -1643,11 +1667,14 @@ def main():
     stage_plan = [s for s in ("apply", "hdl_make") if stage_selected(args, "hdl")]
     stage_plan += [s for s in ("kernel", "dt", "r5", "boot_assembly")
                    if stage_selected(args, "linux")]
+    if args.stage == "dt":
+        stage_plan.append("dt")
     stage_plan.append("gates")
-    if stage_selected(args, "linux"):
+    if stage_selected(args, "linux") or args.stage == "dt":
         # Resolve the Vitis slot BEFORE the hours-long HDL make: the Linux half
         # cannot start without it, and finding that out four hours in is a
-        # wholly avoidable way to lose an evening.
+        # wholly avoidable way to lose an evening. dt needs the same slot --
+        # dtc comes from it (trap E-DTB1) -- so it resolves here too.
         ctx["vitis_settings"] = vitis_settings_for(recipe["toolchain"]["vitis"])
         print(f"  vitis:     {ctx['vitis_settings']}")
     ledger.emit("run_start", recipe_path=os.path.relpath(recipe_abs, root),
@@ -1675,6 +1702,20 @@ def main():
                 recipe, ctx, ledger, xsa=hdl.get("xsa"),
                 xsa_sha=hdl.get("xsa_sha"), no_os_tree=no_os_tree)
             produced += [a for a in (ledger.artifact(p, root) for p in banked) if a]
+        if args.stage == "dt":
+            # Re-entry at dt alone. Deliberately NOT routed through
+            # execute_linux: that function's contract is the four-stage Linux
+            # half, and the whole point here is to fly one stage without the
+            # three that would rebuild artifacts the board is still booting.
+            # The bundle this writes is a SUBSET deploy set -- one
+            # device-tree-blob -- which build-output.schema.json permits by
+            # design ("a stage-scoped run carries the subset it produced").
+            # A subset bundle cannot bind a rootfs on its own: provision-rootfs
+            # needs BOOT.BIN + Image + DTB together, so pair this with the
+            # bundle that carries the other five.
+            produced += [a for a in
+                         (ledger.artifact(p, root)
+                          for p in [stage_dt(recipe, ctx, ledger)]) if a]
     except StageFail as exc:
         ledger.emit("run_done", status="fail", elapsed_s=ledger.elapsed() or 0,
                     summary=ledger.summary(), detail=str(exc)[:400])
