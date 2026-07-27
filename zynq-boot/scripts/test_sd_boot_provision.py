@@ -161,7 +161,85 @@ class ProvisionRootfsTest(unittest.TestCase):
         (self.bootmnt / sd_boot.MANIFEST_NAME).write_text(
             json.dumps({"schema": "sd-deployed/1", "files": files}))
 
+    def second_bundle(self, kind="device-tree-blob", fname="sys2.dtb",
+                      data=b"newer dtb bytes", label="run2",
+                      recipe="platforms/profiles/testprof/build-recipe.json"):
+        """A stage-scoped bundle carrying ONE artifact -- the shape
+        `socks_build.py --execute --stage dt` banks."""
+        run_dir = self.root / "systems" / "builds" / label
+        deploy = run_dir / "deploy"
+        deploy.mkdir(parents=True)
+        (deploy / fname).write_bytes(data)
+        out = run_dir / "build-output.json"
+        out.write_text(json.dumps({
+            "schema": "build-output/1", "run_label": label,
+            "recipe_path": recipe,
+            "deploy": [{"file": fname, "sha256": sha(data),
+                        "bytes": len(data), "kind": kind}]}))
+        return out, sha(data)
+
     # ---- cases ------------------------------------------------------------
+
+    def test_second_bundle_overrides_one_kind_and_binds_the_rest(self):
+        """The board's image is not always one bundle: a full set plus a later
+        DT-only rebuild. Later wins per kind; everything else falls through."""
+        second, dtb_sha = self.second_bundle()
+        rc, out = self.provision("--from-build-output", str(second))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("override: device-tree-blob now from run2", out)
+        self.assertIn("2 build-outputs merged", out)
+        man = json.loads((self.rootfs / sd_boot.ROOTFS_MANIFEST_REL).read_text())
+        # The rootfs binds to the NEW dtb but the ORIGINAL BOOT.BIN and Image.
+        self.assertEqual(man["boot_identity"]["system.dtb"], dtb_sha)
+        self.assertEqual(man["boot_identity"]["BOOT.BIN"],
+                         self.art_sha["boot-image"])
+        self.assertEqual(man["boot_identity"]["Image"],
+                         self.art_sha["kernel-image"])
+        self.assertEqual([s["run_label"] for s in man["sources"]],
+                         ["run1", "run2"])
+
+    def test_override_order_matters(self):
+        """Naming the stage-scoped bundle FIRST must leave the full bundle's
+        artifact in place -- last one wins, not 'the smaller one wins'."""
+        second, dtb_sha = self.second_bundle()
+        argv = ["provision-rootfs", "--rootfs-mount", str(self.rootfs),
+                "--from-build-output", str(second),
+                "--from-build-output", str(self.build_output),
+                "--external", f"bundle={self.bundle}",
+                "--unsafe-no-mount-check", "--write"]
+        rc, out = run_cli(*argv)
+        self.assertEqual(rc, 0, out)
+        man = json.loads((self.rootfs / sd_boot.ROOTFS_MANIFEST_REL).read_text())
+        self.assertEqual(man["boot_identity"]["system.dtb"],
+                         self.art_sha["device-tree-blob"])
+        self.assertNotEqual(man["boot_identity"]["system.dtb"], dtb_sha)
+
+    def test_bundles_with_different_recipes_are_refused(self):
+        """The recipe is the contract for what the card needs; two of them
+        cannot both apply, and silently preferring one builds a half-described
+        card."""
+        second, _ = self.second_bundle(recipe="platforms/profiles/other/build-recipe.json")
+        rc, _out = self.provision("--from-build-output", str(second))
+        self.assertTrue(is_err(rc), rc)
+        self.assertIn("different recipes", rc)
+
+    def test_stage_scoped_bundle_alone_still_cannot_bind(self):
+        """Repeatability must not weaken the binding rule: a DTB-only bundle
+        on its own has no BOOT.BIN or Image to bind the rootfs to."""
+        second, _ = self.second_bundle()
+        argv = ["provision-rootfs", "--rootfs-mount", str(self.rootfs),
+                "--from-build-output", str(second),
+                "--external", f"bundle={self.bundle}",
+                "--unsafe-no-mount-check", "--write"]
+        rc, _out = run_cli(*argv)
+        self.assertTrue(is_err(rc), rc)
+        self.assertIn("cannot bind this rootfs", rc)
+
+    def test_load_build_outputs_refuses_a_bare_string(self):
+        """A string is iterable -- without the guard it walks the path
+        character by character and reports a pile of missing files."""
+        with self.assertRaises(SystemExit):
+            sd_boot.load_build_outputs(str(self.build_output))
 
     def test_dry_run_writes_nothing(self):
         rc, out = self.provision(write=False)

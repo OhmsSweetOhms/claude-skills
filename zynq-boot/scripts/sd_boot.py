@@ -56,6 +56,14 @@ EXAMPLES
       --external sdrangel-plan06-bundle=<path to banked bundle> \\
       --boot-mount /run/media/<user>/BOOT --write
 
+  # An image whose artifacts come from more than one build -- a full bundle
+  # plus a later DT-only rebuild. --from-build-output is REPEATABLE on both
+  # deploy and provision-rootfs; later wins per artifact kind, so this card
+  # gets the full set with the newer DTB substituted:
+  sd_boot.py deploy --boot-mount <mnt> \\
+      --from-build-output systems/builds/<full-run>/build-output.json \\
+      --from-build-output systems/builds/<dt-run>/build-output.json --write
+
   sd_boot.py verify-rootfs --rootfs-mount <mnt>
 
 Part of the zynq-boot skill. Board-specific facts -- boot-mode switches, which
@@ -349,6 +357,78 @@ def verify_written(image: Path, device: str, span: int) -> bool:
 
 # ------------------------------------------------------------------ deploy
 
+def load_build_outputs(entries) -> tuple[dict, dict, Path, list]:
+    """Merge one or more build-output.json bundles into one artifact set.
+
+    -> (by_kind, primary_doc, primary_path, sources)
+       by_kind[kind] = {"art":…, "deploy_dir":…, "label":…, "bundle":…}
+
+    LATER bundles override EARLIER ones per artifact kind, so the last one
+    named wins for anything it carries and everything else falls through.
+
+    WHY MORE THAN ONE. A board's real image is not always one bundle. A
+    DT-only rebuild (`socks_build.py --execute --stage dt`) banks a SUBSET --
+    just the device-tree-blob -- while the kernel, BOOT.BIN, bitstream and R5
+    ELF it boots beside are byte-identical to an earlier full bundle. Naming
+    both is how you describe THAT image. The alternative is what this exists
+    to prevent: provisioning a rootfs from a bundle whose DTB the card has
+    never booted, binding it to the wrong image, and finding out hours later
+    at R5 load or at a band that is silently off frequency.
+
+    All bundles must declare the SAME recipe. The recipe's sd_deploy /
+    rootfs_provision block is the contract for what a card needs; two
+    different contracts cannot both apply, and quietly preferring one is how
+    a half-described card gets built."""
+    if isinstance(entries, (str, Path)):
+        # A bare string is iterable, so without this it would silently walk the
+        # path CHARACTER BY CHARACTER and report a pile of missing files. Any
+        # caller that has not been updated for the repeatable flag lands here.
+        die("load_build_outputs expects a list of build-output paths, not one "
+            f"string ({entries!r}) -- --from-build-output is repeatable now")
+    by_kind, sources = {}, []
+    primary_doc = primary_path = primary_recipe = None
+    for entry in entries:
+        doc_path = Path(entry).expanduser()
+        try:
+            doc = json.loads(doc_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            die(f"cannot read {doc_path}: {exc}")
+        recipe_rel = doc.get("recipe_path")
+        if primary_recipe is None:
+            primary_recipe = recipe_rel
+        elif recipe_rel != primary_recipe:
+            die(f"bundles declare different recipes: {primary_recipe!r} vs "
+                f"{recipe_rel!r} ({doc_path}). The recipe is the contract for "
+                f"what this card needs -- two of them cannot both apply.")
+        label = doc.get("run_label", doc_path.parent.name)
+        deploy_dir = doc_path.parent / "deploy"
+        sources.append({"run_label": label, "build_output": str(doc_path),
+                        "kinds": sorted(a.get("kind") for a in doc.get("deploy", []))})
+        for art in doc.get("deploy", []):
+            kind = art.get("kind")
+            prior = by_kind.get(kind)
+            if prior is not None and prior["label"] != label:
+                print(f"  override: {kind} now from {label} "
+                      f"({art['sha256'][:16]}), was {prior['label']} "
+                      f"({prior['art']['sha256'][:16]})")
+            by_kind[kind] = {"art": art, "deploy_dir": deploy_dir,
+                             "label": label, "bundle": str(doc_path)}
+        primary_doc, primary_path = doc, doc_path
+    if len(sources) > 1:
+        print(f"  bundles: {len(sources)} build-outputs merged, later wins per "
+              f"kind -- " + ", ".join(s["run_label"] for s in sources))
+    return by_kind, primary_doc, primary_path, sources
+
+
+def artifact_source(by_kind, kind):
+    """-> (path, provenance) for one merged artifact kind, or (None, None)."""
+    hit = by_kind.get(kind)
+    if hit is None:
+        return None, None
+    return (hit["deploy_dir"] / hit["art"]["file"],
+            f"{hit['label']}::{kind} sha256 {hit['art']['sha256']}")
+
+
 def resolve_pairs(args) -> list[tuple[Path, str, str]]:
     """-> [(source_path, dest_name, provenance)]. Explicit --set always wins."""
     pairs: list[tuple[Path, str, str]] = []
@@ -366,14 +446,7 @@ def resolve_pairs(args) -> list[tuple[Path, str, str]]:
         pairs.append((Path(src).expanduser(), dest, "explicit --set"))
 
     if args.from_build_output:
-        doc_path = Path(args.from_build_output).expanduser()
-        try:
-            doc = json.loads(doc_path.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            die(f"cannot read {doc_path}: {exc}")
-        deploy_dir = doc_path.parent / "deploy"
-        label = doc.get("run_label", doc_path.parent.name)
-        by_kind = {a.get("kind"): a for a in doc.get("deploy", [])}
+        by_kind, doc, doc_path, _sources = load_build_outputs(args.from_build_output)
 
         # The recipe is the authority on what a bootable card needs. Prefer its
         # declared stages.linux.sd_deploy over the built-in kind map: the map
@@ -390,34 +463,35 @@ def resolve_pairs(args) -> list[tuple[Path, str, str]]:
                 frm, dest = entry["from"], entry["to"]
                 if frm.startswith("artifact:"):
                     kind = frm.split(":", 1)[1]
-                    art = by_kind.get(kind)
-                    if art is None:
+                    src, prov = artifact_source(by_kind, kind)
+                    if src is None:
                         die(f"recipe sd_deploy wants artifact kind {kind!r}, which "
-                            f"this run did not produce. Build with --stage all.")
-                    pairs.append((deploy_dir / art["file"], dest,
-                                  f"{label}::{kind} sha256 {art['sha256']}"))
+                            f"no named bundle produced. Build with --stage all, "
+                            f"or name the bundle that carries it with another "
+                            f"--from-build-output.")
+                    pairs.append((src, dest, prov))
                 else:
                     pairs.append((profile_home / frm, dest,
                                   f"profile {frm}"))
-            for kind, art in by_kind.items():
+            for kind, hit in by_kind.items():
                 if not any(e["from"] == f"artifact:{kind}" for e in declared["files"]):
                     why = ROOTFS_KINDS.get(kind, "not in the recipe's boot set")
-                    print(f"  skip:    {art['file']:38s} ({kind}) -- {why}")
+                    print(f"  skip:    {hit['art']['file']:38s} ({kind}) -- {why}")
             if declared.get("rootfs_note"):
                 print(f"\n  ROOTFS (NOT handled here): {declared['rootfs_note']}\n")
             return pairs
 
         skipped = []
-        for art in doc.get("deploy", []):
-            kind, fname = art.get("kind"), art["file"]
+        for kind, hit in by_kind.items():
+            fname = hit["art"]["file"]
             dest = kind_map.get(kind)
             if dest is None:
                 skipped.append((fname, kind))
                 continue
-            src = deploy_dir / fname
             # Carry the recorded sha so a corrupted bank is caught before the
             # card is touched, not after a failed boot.
-            pairs.append((src, dest, f"{label}::{kind} sha256 {art['sha256']}"))
+            src, prov = artifact_source(by_kind, kind)
+            pairs.append((src, dest, prov))
         for fname, kind in skipped:
             why = ROOTFS_KINDS.get(kind, "no boot-partition destination for this kind")
             print(f"  skip:    {fname:38s} ({kind}) -- {why}")
@@ -578,7 +652,12 @@ def cmd_deploy(args) -> int:
                  "actually on this card before blaming a boot failure."),
     }
     if args.from_build_output:
-        manifest["build_output"] = str(args.from_build_output)
+        # A LIST since --from-build-output became repeatable; the first entry
+        # stays under the old singular key so `verify` and every existing
+        # reader keep working, and the full ordered set is recorded beside it.
+        manifest["build_output"] = str(args.from_build_output[0])
+        if len(args.from_build_output) > 1:
+            manifest["build_outputs"] = [str(p) for p in args.from_build_output]
     (mount / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")
     os.sync()
     print(f"  manifest: {MANIFEST_NAME}")
@@ -705,12 +784,12 @@ def resolve_provision_source(frm: str, declared: dict, by_kind: dict,
     profiles) and external: (banked outside the repo, mapped on the CLI)."""
     if frm.startswith("artifact:"):
         kind = frm.split(":", 1)[1]
-        art = by_kind.get(kind)
-        if art is None:
+        src, prov = artifact_source(by_kind, kind)
+        if src is None:
             die(f"recipe rootfs_provision wants artifact kind {kind!r}, which "
-                f"this run did not produce. Build with --stage all.")
-        return (deploy_dir / art["file"],
-                f"{label}::{kind} sha256 {art['sha256']}")
+                f"no named bundle produced. Build with --stage all, or name "
+                f"the bundle that carries it with another --from-build-output.")
+        return src, prov
     if frm.startswith("repo:"):
         rel = frm.split(":", 1)[1]
         return declared["repo_root"] / rel, f"repo {rel}"
@@ -792,14 +871,9 @@ def cmd_provision_rootfs(args) -> int:
     guard_rootfs_mount(mount, args.unsafe_no_mount_check)
     guard_rootfs_root(args.unsafe_no_mount_check)
 
-    doc_path = Path(args.from_build_output).expanduser()
-    try:
-        doc = json.loads(doc_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        die(f"cannot read {doc_path}: {exc}")
+    by_kind, doc, doc_path, sources = load_build_outputs(args.from_build_output)
     deploy_dir = doc_path.parent / "deploy"
     label = doc.get("run_label", doc_path.parent.name)
-    by_kind = {a.get("kind"): a for a in doc.get("deploy", [])}
     externals = parse_externals(args.external)
 
     declared = recipe_stage_block(doc, doc_path, "rootfs_provision")
@@ -817,12 +891,15 @@ def cmd_provision_rootfs(args) -> int:
     # manifest cannot bind the rootfs to anything and provisioning is moot.
     boot_identity = {}
     for kind, name in BOOT_IDENTITY_KINDS.items():
-        art = by_kind.get(kind)
-        if art is None:
-            die(f"build-output has no {kind!r} artifact, so the provision "
-                f"manifest cannot bind this rootfs to its image. Provision "
-                f"from a full bundle (--stage all), not a partial one.")
-        boot_identity[name] = art["sha256"]
+        hit = by_kind.get(kind)
+        if hit is None:
+            die(f"no named bundle carries a {kind!r} artifact, so the provision "
+                f"manifest cannot bind this rootfs to its image. Provision from "
+                f"a full bundle (--stage all), or name additional bundles with "
+                f"--from-build-output until all of "
+                f"{sorted(BOOT_IDENTITY_KINDS)} are covered -- a stage-scoped "
+                f"bundle alone (say a --stage dt DTB) cannot bind a rootfs.")
+        boot_identity[name] = hit["art"]["sha256"]
 
     def resolve(frm):
         return resolve_provision_source(frm, declared, by_kind, deploy_dir,
@@ -969,7 +1046,11 @@ def cmd_provision_rootfs(args) -> int:
         "schema": "provisioned-rootfs/1",
         "provisioned": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "run_label": label,
-        "build_output": str(args.from_build_output),
+        "build_output": str(doc_path),
+        # Every contributing bundle, in the order given, so a later reader can
+        # reconstruct exactly which build each artifact came from. The board's
+        # image is not always one bundle -- see load_build_outputs().
+        "sources": sources,
         "files": records,
         "symlinks": link_records,
         "boot_identity": boot_identity,
@@ -1053,8 +1134,13 @@ def main() -> int:
 
     d = sub.add_parser("deploy", help="place boot artifacts on the FAT32 BOOT partition")
     d.add_argument("--boot-mount", required=True)
-    d.add_argument("--from-build-output",
-                   help="a socks build-output.json; its deploy/ set is mapped by kind")
+    d.add_argument("--from-build-output", action="append",
+                   help="a socks build-output.json; its deploy/ set is mapped by "
+                        "kind. REPEATABLE: later bundles override earlier ones "
+                        "per artifact kind, which is how you describe an image "
+                        "whose artifacts come from more than one build (e.g. a "
+                        "full bundle plus a later --stage dt DTB rebuild). Every "
+                        "override is printed before anything is written.")
     d.add_argument("--set", action="append", metavar="SRC:DEST",
                    help="explicit source:destination pair (repeatable)")
     d.add_argument("--map", action="append", metavar="KIND=DEST",
@@ -1077,9 +1163,15 @@ def main() -> int:
              "mounted ext4 rootfs partition")
     pr.add_argument("--rootfs-mount", required=True,
                     help="the card's mounted ext4 rootfs partition")
-    pr.add_argument("--from-build-output", required=True,
+    pr.add_argument("--from-build-output", required=True, action="append",
                     help="a socks build-output.json; its recipe's "
-                         "stages.linux.rootfs_provision block is the authority")
+                         "stages.linux.rootfs_provision block is the authority. "
+                         "REPEATABLE: later bundles override earlier ones per "
+                         "artifact kind. The rootfs is bound to BOOT.BIN + Image "
+                         "+ system.dtb together, so when those live in different "
+                         "builds -- a full bundle plus a later --stage dt DTB -- "
+                         "name both, in that order. All bundles must declare the "
+                         "same recipe.")
     pr.add_argument("--external", action="append", metavar="NAME=PATH",
                     help="resolve a recipe external:<NAME> source banked "
                          "outside the repo (repeatable)")
