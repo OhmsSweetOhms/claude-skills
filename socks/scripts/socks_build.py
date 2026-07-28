@@ -1412,6 +1412,28 @@ def stage_dt(recipe, ctx, ledger):
 
 # ---- Step 4: R5 capture firmware ------------------------------------------
 
+def scrubbed_path(path, ctx):
+    """Repo-relative when the path is inside the worktree; a placeholder when
+    it is not.
+
+    The ledger is a TRACKED file, and the project's fingerprint guard refuses
+    any commit carrying an absolute host path or a username. Plain relpath()
+    of an off-tree path produces '../../../../../home/<user>/...', which trips
+    that guard -- and --scratch is DOCUMENTED as belonging on a different
+    filesystem from the worktree, so following this tool's own advice was
+    enough to produce an uncommittable bank (2026-07-27, TX-B image run).
+    Evidence keeps its meaning without the host prefix: what the gate asserts
+    is that the BSP was found, not where the operator's disk is mounted."""
+    root = os.path.abspath(ctx["root"])
+    target = os.path.abspath(path)
+    if target == root or target.startswith(root + os.sep):
+        return os.path.relpath(target, root)
+    scratch = os.path.abspath(ctx.get("scratch") or "")
+    if scratch and (target == scratch or target.startswith(scratch + os.sep)):
+        return os.path.join("<scratch>", os.path.relpath(target, scratch))
+    return os.path.join("<offtree>", os.path.basename(target))
+
+
 def stage_r5(recipe, ctx, ledger, xsa, no_os_tree):
     """Regenerate the R5 BSP from THIS run's XSA and build the capture ELF.
 
@@ -1460,7 +1482,7 @@ def stage_r5(recipe, ctx, ledger, xsa, no_os_tree):
     ledger.gate("r5_bsp_standalone_v8_0", "pass" if (v8 and libxil) else "fail",
                 evidence=f"standalone_v8_0 {'present' if v8 else 'ABSENT'}, "
                          f"lib/libxil.a {'present' if libxil else 'ABSENT'} in "
-                         f"{os.path.relpath(bsp, ctx['root'])}")
+                         f"{scrubbed_path(bsp, ctx)}")
     if not v8:
         raise StageFail(f"generated BSP is not standalone_v8_0: {bsp} -- v9_0 wedges "
                         f"Xil_SetMPURegion/ExceptionEnable under bare-rproc ELFs")
