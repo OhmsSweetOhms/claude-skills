@@ -1,0 +1,41 @@
+{
+  "skill_name": "fpga-timing-closure",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Our ZynqMP IP passes OOC at +0.8 ns, but the full block-design route is -0.35 ns setup on a path from an AXI-domain register through a mux into the IP. Someone suggested set_clock_groups between the clocks or just using ExtraTimingOpt. Diagnose the next steps and give me a running evidence table format. Do not edit files.",
+      "expected_output": "A read-only root-cause workflow that maps the exact path and clock relationship, compares OOC and full architecture/constraints, rejects broad exceptions or directives before classification, and supplies a timing evidence table.",
+      "files": [],
+      "expectations": [
+        "Treats full routed implementation as the release authority and OOC as an architectural comparator rather than assuming equal slack",
+        "Requires exact source, destination, clocks, edges, requirements, exception, logic/route split, fanout, and primitive or register-boundary evidence",
+        "Does not recommend set_clock_groups, false paths, multicycles, phase relaxation, or ExtraTimingOpt before classifying the path",
+        "Provides a running table containing setup WNS, hold WHS, verification state, and notes or classification"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Design a timing-closure plan for a new source-synchronous peripheral attached to the PL of a Zynq-7000. The PS supplies a 100 MHz fabric control clock; the peripheral supplies its own data clock. I need canonical XDC, an OOC implementation loop, CDC checks, and a full-project release gate. Keep board-specific pins and delays as TBD rather than guessing.",
+      "expected_output": "A Zynq-aware plan separating PS-owned and external clocks, canonical XDC rendering, protocol-derived CDC constraints, production-faithful OOC proofs, full routed verification, and explicit TBD board contracts.",
+      "files": [],
+      "expectations": [
+        "Separates the PS fabric clock, external source-synchronous clock, generated or virtual clocks, and avoids duplicate create_clock ownership",
+        "Leaves unknown pin, voltage, I/O delay, and phase values as TBD instead of inventing them",
+        "Explains when scalar false paths, max-delay datapath-only, and bus-skew constraints apply without using a blanket clock group that overrides bounded CDC paths",
+        "Defines routed release gates including setup, hold, unconstrained paths, CDC, clock interaction, bus skew, DRC, methodology, and route status"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "In spin_dr FT600 ExtraNetDelay_high, 21 launch registers stayed inside the OOC bands and one landed at SLICE_X46Y144. Router timing was positive. Is X46 itself a failure, and what exact checks and note should go in the run table before we continue?",
+      "expected_output": "An FT600-specific answer using the reference: X46 is a recorded physical excursion rather than an automatic pblock failure, but it must pass the independent FT600 timing, CDC, constraint, methodology, route, and signature gates.",
+      "files": [],
+      "expectations": [
+        "Uses the FT600 reference and identifies X46 as a physical excursion rather than automatically failing OOC pblock containment",
+        "Distinguishes the router estimate from the independent verifier's final timing result",
+        "Requires all four exact OOC band summaries while retaining full placement and route-delay evidence",
+        "Includes the verified ExtraNetDelay_high result of +1.644 ns setup and +0.010 ns hold and notes one of 22 launch registers at X46"
+      ]
+    }
+  ]
+}
