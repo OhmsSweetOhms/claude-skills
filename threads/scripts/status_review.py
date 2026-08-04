@@ -281,6 +281,16 @@ def _inbox_dirs_for(
 
     def _add(cand: Path) -> None:
         if (cand / "handback.json").exists() and (cand / "handback.md").exists():
+            # Attribution applies to the EXACT-name lookups too, not just the glob
+            # fallback below. A worktree is routinely shared by several threads --
+            # each listing it in codex_worktrees[] -- so `<shared-wt>/codex-handoff/
+            # plan-02/` is claimed by every co-tenant with a plan-02, and the first
+            # one checked wins. Lenient like the project-root inbox: an unattributed
+            # handback cannot be disproved, but one naming a DIFFERENT thread is not
+            # ours. Skipping thread_id here silently attributes another thread's
+            # paperwork, which reads as a resolved flag rather than a wrong one.
+            if thread_id and not _handback_attributed_to(cand / "handback.json", thread_id):
+                return
             if cand not in found:
                 found.append(cand)
 
