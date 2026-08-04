@@ -254,29 +254,60 @@ def handoff_inbox_pair_exists(repo_root: Path, plan_id: str) -> bool:
     return (inbox / "handback.json").exists() and (inbox / "handback.md").exists()
 
 
-def _inbox_dirs_for(repo_root: Path, plan_id: str, inbox_slug: str | None) -> list[Path]:
+def _inbox_dirs_for(
+    repo_root: Path,
+    plan_id: str,
+    inbox_slug: str | None,
+    thread_id: str | None = None,
+) -> list[Path]:
     """Inbox directories under `repo_root` holding a handback pair for this hop.
 
     Checks the file-stem-named dir first (exact), then the bare plan id, then one
     level of sub-grouping (`codex-handoff/smoke/plan-03/`), which some threads use
     to re-home a batch of handbacks absorbed from another branch.
+
+    Last resort, and only with a thread id to check against: a `plan-NN*` glob.
+    Some inboxes are named after the BENCH PACKET rather than the plan file --
+    `plan-20-slow-path-residual-hunt.md` files at `codex-handoff/plan-20-ila-trigger/`,
+    matching neither the plan id nor the file stem. A bare glob is unsafe on its own
+    (one shared worktree inbox serves several threads, so `plan-03*` spans three of
+    them), so every glob hit must clear the handback's own thread attribution.
     """
     found: list[Path] = []
     base = repo_root / "codex-handoff"
     if not base.is_dir():
         return found
     names = [n for n in (inbox_slug, plan_id) if n]
-    for name in names:
-        if handoff_inbox_pair_exists(repo_root, name):
-            cand = base / name
+
+    def _add(cand: Path) -> None:
+        if (cand / "handback.json").exists() and (cand / "handback.md").exists():
             if cand not in found:
                 found.append(cand)
+
+    for name in names:
+        _add(base / name)
     for group in sorted(p for p in base.iterdir() if p.is_dir()):
         for name in names:
-            cand = group / name
-            if (cand / "handback.json").exists() and (cand / "handback.md").exists():
-                if cand not in found:
-                    found.append(cand)
+            _add(group / name)
+
+    if found or not thread_id or not re.fullmatch(r"plan-\d+", plan_id):
+        return found
+    for cand in sorted(base.glob(f"{plan_id}-*")):
+        if not cand.is_dir():
+            continue
+        hb = cand / "handback.json"
+        if not hb.exists() or not (cand / "handback.md").exists():
+            continue
+        # Attribution is mandatory here, not lenient: an unattributed handback in a
+        # shared inbox cannot be claimed by a glob that matched only on plan number.
+        try:
+            owner = json.loads(hb.read_text()).get("thread_id") or json.loads(
+                hb.read_text()
+            ).get("thread")
+        except (OSError, json.JSONDecodeError):
+            continue
+        if owner and str(owner).rstrip("/") == str(thread_id).rstrip("/"):
+            found.append(cand)
     return found
 
 
@@ -334,7 +365,7 @@ def handback_locations(
         for wt_root in _resolve_worktree_paths(raw_path, project_root):
             if not wt_root.is_dir():
                 continue
-            locations.extend(_inbox_dirs_for(wt_root, plan_id, inbox_slug))
+            locations.extend(_inbox_dirs_for(wt_root, plan_id, inbox_slug, thread_id))
             wt_thread_dir = wt_root / ".threads" / thread_id
             if legacy_handback_pair_exists(wt_thread_dir, plan_id):
                 locations.append(wt_thread_dir)
