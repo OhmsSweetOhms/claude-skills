@@ -504,6 +504,12 @@ _NON_CODEX_OUTCOME_MARKERS = (
     "never ran",
     "not executed",
     "superseded before launch",
+    # A Codex hop executes IN a worktree by definition, so an outcome that says
+    # there wasn't one is stating non-delegation outright. Both phrasings are
+    # observed verbatim in the wild ("Executed directly on main (no worktree)").
+    "executed directly on main",
+    "(no worktree)",
+    "no worktree/launch packet",
 )
 
 
