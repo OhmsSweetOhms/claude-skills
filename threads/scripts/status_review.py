@@ -168,11 +168,64 @@ def plan_id_for_hop(hop: dict) -> str:
     return "plan-??"
 
 
-def _resolve_worktree_path(raw_path: str, project_root: Path) -> Path:
-    p = Path(raw_path).expanduser()
+def _workspace_roots(project_root: Path) -> list[Path]:
+    """Directories a sibling worktree may plausibly live in.
+
+    Worktrees are created parallel to the repo they fork (`socks-<slug>/` beside
+    `socks/`, `<project>-<slug>/` beside `<project>/`), and a project may itself
+    sit one level below the workspace root, so both the parent and grandparent
+    are candidate roots.
+    """
+    roots: list[Path] = []
+    for cand in (project_root.parent, project_root.parent.parent):
+        try:
+            if cand.is_dir() and cand not in roots:
+                roots.append(cand)
+        except OSError:
+            continue
+    return roots
+
+
+def _resolve_worktree_paths(raw_path: str, project_root: Path) -> list[Path]:
+    """Return every plausible on-disk location for a recorded worktree path.
+
+    Manifest paths are deliberately SANITIZED -- absolute filesystem paths and
+    usernames must never be written into a tracked file -- so they arrive as
+    `$WORKBASE/socks-<slug>`, `<workspace-root>/<project>-<slug>`, `$HOME/...`,
+    or a plain `../<slug>` relative path. Treating a placeholder-prefixed path as
+    relative resolves it to `<project_root>/$WORKBASE/...`, which never exists;
+    every handback living in such a worktree then reads as missing. Strip the
+    placeholder and probe the real workspace roots instead.
+
+    Returns candidates in preference order; callers test existence.
+    """
+    raw = str(raw_path or "").strip()
+    if not raw:
+        return []
+
+    head, _, rest = raw.partition("/")
+    is_placeholder = (head.startswith("$") and head != "$HOME") or (
+        head.startswith("<") and head.endswith(">")
+    )
+
+    if head in ("$HOME", "~"):
+        return [Path.home() / rest] if rest else [Path.home()]
+
+    if is_placeholder:
+        if not rest:
+            return []
+        return [root / rest for root in _workspace_roots(project_root)]
+
+    p = Path(raw).expanduser()
     if p.is_absolute():
-        return p
-    return (project_root / p).resolve()
+        return [p]
+
+    candidates = [(project_root / p).resolve()]
+    # A bare `<slug>` (no leading `../`) is ambiguous between "under the project"
+    # and "sibling of it"; probe the workspace roots as a fallback.
+    if not raw.startswith(".."):
+        candidates.extend(root / raw for root in _workspace_roots(project_root))
+    return candidates
 
 
 def legacy_handback_pair_exists(thread_dir: Path, plan_id: str) -> bool:
@@ -182,9 +235,49 @@ def legacy_handback_pair_exists(thread_dir: Path, plan_id: str) -> bool:
     )
 
 
+def hop_inbox_slug(hop: dict) -> str | None:
+    """The inbox directory name a hop's handback is filed under, if derivable.
+
+    Inbox dirs are named from the plan FILE stem, not the bare plan id:
+    `plan-03-rtl-kickoff.md` files its handback at `codex-handoff/plan-03-rtl-kickoff/`.
+    Using the bare `plan-03` misses it -- and a `plan-03*` glob is unsafe, because a
+    single shared worktree inbox holds `plan-03`, `plan-03-rtl-kickoff`, and
+    `plan-03-12ch-timing-kickoff` for three DIFFERENT threads. The file stem is the
+    exact, unambiguous key.
+    """
+    stem = Path(str(hop.get("file") or "")).stem
+    return stem or None
+
+
 def handoff_inbox_pair_exists(repo_root: Path, plan_id: str) -> bool:
     inbox = repo_root / "codex-handoff" / plan_id
     return (inbox / "handback.json").exists() and (inbox / "handback.md").exists()
+
+
+def _inbox_dirs_for(repo_root: Path, plan_id: str, inbox_slug: str | None) -> list[Path]:
+    """Inbox directories under `repo_root` holding a handback pair for this hop.
+
+    Checks the file-stem-named dir first (exact), then the bare plan id, then one
+    level of sub-grouping (`codex-handoff/smoke/plan-03/`), which some threads use
+    to re-home a batch of handbacks absorbed from another branch.
+    """
+    found: list[Path] = []
+    base = repo_root / "codex-handoff"
+    if not base.is_dir():
+        return found
+    names = [n for n in (inbox_slug, plan_id) if n]
+    for name in names:
+        if handoff_inbox_pair_exists(repo_root, name):
+            cand = base / name
+            if cand not in found:
+                found.append(cand)
+    for group in sorted(p for p in base.iterdir() if p.is_dir()):
+        for name in names:
+            cand = group / name
+            if (cand / "handback.json").exists() and (cand / "handback.md").exists():
+                if cand not in found:
+                    found.append(cand)
+    return found
 
 
 def _handback_attributed_to(handback_json: Path, thread_id: str) -> bool:
@@ -207,7 +300,13 @@ def _handback_attributed_to(handback_json: Path, thread_id: str) -> bool:
     return str(owner).rstrip("/") == str(thread_id).rstrip("/")
 
 
-def handback_locations(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> list[Path]:
+def handback_locations(
+    threads_path: Path,
+    thread_id: str,
+    thread_data: dict,
+    plan_id: str,
+    inbox_slug: str | None = None,
+) -> list[Path]:
     """Return directories where a handback pair is readable.
 
     New handbacks live at <worktree>/codex-handoff/<plan-id>/.
@@ -232,18 +331,58 @@ def handback_locations(threads_path: Path, thread_id: str, thread_data: dict, pl
         raw_path = wt.get("path")
         if not raw_path:
             continue
-        wt_root = _resolve_worktree_path(raw_path, project_root)
-        if handoff_inbox_pair_exists(wt_root, plan_id):
-            locations.append(wt_root / "codex-handoff" / plan_id)
-        wt_thread_dir = wt_root / ".threads" / thread_id
-        if legacy_handback_pair_exists(wt_thread_dir, plan_id):
-            locations.append(wt_thread_dir)
+        for wt_root in _resolve_worktree_paths(raw_path, project_root):
+            if not wt_root.is_dir():
+                continue
+            locations.extend(_inbox_dirs_for(wt_root, plan_id, inbox_slug))
+            wt_thread_dir = wt_root / ".threads" / thread_id
+            if legacy_handback_pair_exists(wt_thread_dir, plan_id):
+                locations.append(wt_thread_dir)
     return locations
 
 
-def handback_pair_visible(threads_path: Path, thread_id: str, thread_data: dict, plan_id: str) -> bool:
+def triage_search_dirs(threads_path: Path, thread_id: str, thread_data: dict) -> list[Path]:
+    """Directories that may hold a triage record for this thread.
+
+    A triage note is written wherever the reviewer was sitting: beside the thread
+    manifest on main, or inside the worktree that produced the handback. Checking
+    only the main thread dir misses cross-repo hops whose paperwork correctly
+    lives in the sibling repo's worktree.
+    """
+    dirs = [threads_path / thread_id]
+    project_root = threads_path.parent
+    for wt in thread_data.get("codex_worktrees", []) or []:
+        for wt_root in _resolve_worktree_paths(wt.get("path"), project_root):
+            if not wt_root.is_dir():
+                continue
+            for cand in (wt_root / ".threads" / thread_id, wt_root / "codex-handoff"):
+                if cand.is_dir() and cand not in dirs:
+                    dirs.append(cand)
+    return dirs
+
+
+def handback_pair_visible(
+    threads_path: Path,
+    thread_id: str,
+    thread_data: dict,
+    plan_id: str,
+    inbox_slug: str | None = None,
+) -> bool:
     """Return true if a handback pair is readable on main or a recorded worktree."""
-    return bool(handback_locations(threads_path, thread_id, thread_data, plan_id))
+    return bool(handback_locations(threads_path, thread_id, thread_data, plan_id, inbox_slug))
+
+
+def _plan_id_variants(plan_id: str) -> list[str]:
+    """Spellings of a plan id that appear in real triage filenames.
+
+    Date-stamped triage notes drop the hyphen (`triage-2026-05-06-plan04.md`),
+    so `plan-04` must also match `plan04` or those records read as absent.
+    """
+    m = re.fullmatch(r"plan-(\d+)", plan_id)
+    if not m:
+        return [plan_id]
+    num = m.group(1)
+    return [f"plan-{num}", f"plan{num}"]
 
 
 def handback_triage_record_exists(thread_dirs: list[Path], plan_id: str) -> bool:
@@ -254,11 +393,22 @@ def handback_triage_record_exists(thread_dirs: list[Path], plan_id: str) -> bool
     # (`codex-handback-hilbase-plan-06-triage.md`) -- an exact match phantom-flags a
     # hop that was in fact triaged. Callers guard against plan_id == "plan-??"
     # (which carries a glob metachar) before reaching here.
-    return any(
-        (d / "triage.md").exists()
-        or any(d.glob(f"codex-handback-*{plan_id}*-triage.md"))
-        for d in thread_dirs
-    )
+    #
+    # Two naming dialects exist in the wild: the `codex-handback-...-triage.md`
+    # scheme and a date-stamped `triage-<YYYY-MM-DD>[-planNN].md` scheme. Match
+    # both, and treat an undated bare `triage.md` as covering the directory.
+    variants = _plan_id_variants(plan_id)
+    for d in thread_dirs:
+        if (d / "triage.md").exists():
+            return True
+        for v in variants:
+            if any(d.glob(f"codex-handback-*{v}*-triage.md")):
+                return True
+            if any(d.glob(f"triage-*{v}*.md")):
+                return True
+            if any(d.glob(f"*{v}*-triage.md")):
+                return True
+    return False
 
 
 def handback_has_actionable_items(handback: dict) -> bool:
@@ -290,10 +440,32 @@ def load_handback_json(thread_dir: Path, plan_id: str) -> dict | None:
         return None
 
 
+# Phrases an outcome uses to say the hop was NOT delegated to Codex. A bare
+# substring test for "codex" matches the negation as readily as the assertion --
+# `"PASS (main-session-driven hardware run; not a Codex hop)"` was flagged as
+# owing a handback precisely because it mentions Codex in order to deny it.
+_NON_CODEX_OUTCOME_MARKERS = (
+    "not a codex hop",
+    "not a codex",
+    "not codex",
+    "no codex",
+    "without codex",
+    "main-session-driven",
+    "main session driven",
+    "executed in-session",
+    "run in-session",
+    "inline hop",
+)
+
+
 def hop_expected_codex_handback(hop: dict) -> bool:
     """Heuristic guard to avoid flagging non-Codex historical plan hops."""
     outcome = str(hop.get("outcome") or "").lower()
-    return "codex" in outcome or "worktree" in outcome
+    if "codex" not in outcome and "worktree" not in outcome:
+        return False
+    if any(marker in outcome for marker in _NON_CODEX_OUTCOME_MARKERS):
+        return False
+    return True
 
 
 def flag_triage(
@@ -407,16 +579,19 @@ def flag_triage(
                 plan_id = plan_id_for_hop(hop)
                 if plan_id == "plan-??":
                     continue
-                # A triage record on main proves the handback existed and was
-                # consumed -- you cannot triage a handback that never existed --
-                # even when the raw json/.md pair stayed behind in a cross-repo
-                # or since-removed worktree (sanitized worktree paths in the
-                # manifest are unresolvable, so handback_pair_visible() can never
-                # see those). Mirror the untriaged-flag's triage-awareness below
-                # so an already-processed hop is not re-surfaced as "missing".
-                if handback_triage_record_exists([threads_path / tid], plan_id):
+                # A triage record proves the handback existed and was consumed --
+                # you cannot triage a handback that never existed -- even when the
+                # raw json/.md pair stayed behind in a since-removed worktree.
+                # Search the worktrees too, not just the thread dir on main: a
+                # cross-repo hop correctly writes its paperwork in the sibling
+                # repo's worktree, and a main-only lookup reads that as absent.
+                if handback_triage_record_exists(
+                    triage_search_dirs(threads_path, tid, worktree_thread_data), plan_id
+                ):
                     continue
-                if not handback_pair_visible(threads_path, tid, worktree_thread_data, plan_id):
+                if not handback_pair_visible(
+                    threads_path, tid, worktree_thread_data, plan_id, hop_inbox_slug(hop)
+                ):
                     flags.append({
                         "id": tid,
                         "kind": "missing_codex_handback",
@@ -443,8 +618,19 @@ def flag_triage(
                 plan_id = plan_id_for_hop(hop)
                 if plan_id == "plan-??":
                     continue
-                locations = handback_locations(threads_path, tid, worktree_thread_data, plan_id)
-                if not locations or handback_triage_record_exists(locations, plan_id):
+                locations = handback_locations(
+                    threads_path, tid, worktree_thread_data, plan_id, hop_inbox_slug(hop)
+                )
+                if not locations:
+                    continue
+                # The triage note is written where the REVIEWER sat -- normally
+                # beside the thread manifest on main -- not inside the handback
+                # inbox it adjudicates. Searching only `locations` reports an
+                # adjudicated hop as untriaged.
+                if handback_triage_record_exists(
+                    locations + triage_search_dirs(threads_path, tid, worktree_thread_data),
+                    plan_id,
+                ):
                     continue
                 handback = load_handback_json(locations[0], plan_id)
                 if handback and handback_has_actionable_items(handback):
