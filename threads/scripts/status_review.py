@@ -486,6 +486,14 @@ _NON_CODEX_OUTCOME_MARKERS = (
     "executed in-session",
     "run in-session",
     "inline hop",
+    # A hop that was superseded or abandoned BEFORE it ever ran owes no
+    # handback -- there was no execution to hand back. These read as missing
+    # paperwork otherwise, indistinguishable from work whose record was lost.
+    "never executed",
+    "never launched",
+    "never ran",
+    "not executed",
+    "superseded before launch",
 )
 
 
