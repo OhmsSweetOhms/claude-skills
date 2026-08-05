@@ -321,6 +321,99 @@ def _inbox_dirs_for(
     return found
 
 
+_GATE_PHRASES = (
+    "gated on", "gate:", "hard gate", "blocked on", "blocked by",
+    "resume after", "resume when", "waiting on", "waits on",
+    "unblocks when", "park", "parked",
+)
+
+_THREAD_REF = re.compile(r"([a-z_]+(?:[-_][a-z0-9]+)*)/(\d{8}-[a-z0-9][a-z0-9-]*)")
+
+
+def expired_park_gates(
+    threads_path: Path, thread_id: str, status_by_id: dict[str, str]
+) -> list[tuple[str, str]]:
+    """Threads this one says it is waiting on that have since closed.
+
+    A park records what you are waiting for; nothing re-evaluates whether the wait
+    ended. In one 127-thread pass three threads sat blocked on gates that had
+    closed 74, 74 and 28 days earlier -- one of them made "verify the gate" its own
+    cold-start step 1, and that step was never run, because the single moment you
+    read a park's resume condition is the moment you have already decided to work
+    on it.
+
+    The claim lives in `handoff.md` prose (measured: 41 handoffs carry gate
+    language vs 7 thread.json files referencing another thread), so this reads the
+    Current-truth block -- bounded, forward-facing, and the part a cold reader
+    lands on. Only lines carrying gate language are considered, so an incidental
+    "see also <thread>" does not register.
+
+    Returns (referenced_thread_id, its_status) for referenced threads that are now
+    closed or superseded. Deliberately conservative: a hit is a prompt to re-read
+    the gate, not proof the thread is actionable.
+    """
+    hp = threads_path / thread_id / "handoff.md"
+    try:
+        text = hp.read_text()
+    except OSError:
+        return []
+    head = text.split("## Session log", 1)[0]
+    out: list[tuple[str, str]] = []
+    for line in head.splitlines():
+        low = line.lower()
+        if not any(p in low for p in _GATE_PHRASES):
+            continue
+        for m in _THREAD_REF.findall(line):
+            ref = f"{m[0]}/{m[1]}"
+            if ref == thread_id:
+                continue
+            st = status_by_id.get(ref)
+            if st in ("closed", "superseded") and (ref, st) not in out:
+                out.append((ref, st))
+    return out
+
+
+def ambiguous_inbox_candidates(
+    threads_path: Path, thread_id: str, thread_data: dict, plan_id: str
+) -> list[Path]:
+    """Inbox dirs that hold a handback pair for `plan_id` but cannot be attributed.
+
+    A worktree is routinely shared by several threads, and a handback that carries
+    no `thread_id` cannot be claimed by plan number alone -- so `_inbox_dirs_for`
+    correctly declines it. Declining SILENTLY is the problem: "a pair is sitting
+    right there but nobody can prove whose it is" then looks identical to "nothing
+    was ever written", and the two want opposite remedies (write a triage note
+    pointing at it, vs. accept the gap).
+
+    Measured on a 127-thread tree, 8 of 60 handbacks carry no attribution, so this
+    class is real rather than theoretical. Returns the unattributable candidates so
+    the caller can surface them instead of swallowing them.
+    """
+    out: list[Path] = []
+    if not re.fullmatch(r"plan-\d+", plan_id):
+        return out
+    project_root = threads_path.parent
+    for wt in thread_data.get("codex_worktrees", []) or []:
+        for wt_root in _resolve_worktree_paths(wt.get("path"), project_root):
+            base = wt_root / "codex-handoff"
+            if not base.is_dir():
+                continue
+            for cand in sorted(base.glob(f"{plan_id}*")):
+                if not cand.is_dir():
+                    continue
+                hb = cand / "handback.json"
+                if not hb.exists() or not (cand / "handback.md").exists():
+                    continue
+                try:
+                    data = json.loads(hb.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                owner = data.get("thread_id") or data.get("thread") or data.get("thread_path")
+                if not owner and cand not in out:
+                    out.append(cand)
+    return out
+
+
 def _handback_attributed_to(handback_json: Path, thread_id: str) -> bool:
     """True unless the handback provably belongs to a *different* thread.
 
@@ -514,7 +607,28 @@ _NON_CODEX_OUTCOME_MARKERS = (
 
 
 def hop_expected_codex_handback(hop: dict) -> bool:
-    """Heuristic guard to avoid flagging non-Codex historical plan hops."""
+    """Does this plan hop owe a structured Codex handback?
+
+    Prefers the hop's DECLARED execution mode over inference. `execution` is an
+    optional per-hop field:
+
+      "codex"  -- delegated to a Codex worktree session; owes a handback pair.
+      "inline" -- executed in the main session, or by an agent worktree, or
+                  never executed at all; owes nothing.
+
+    A declared value is authoritative and ends the guessing. Everything below it
+    is the legacy heuristic, kept for hops that predate the field: it reads the
+    outcome prose for "codex"/"worktree" and then tries to exclude the many ways
+    an outcome says the opposite. That marker list has grown once per newly-
+    observed phrasing ("not a Codex hop", "never launched", "executed directly
+    on main", "(no worktree)") and will keep growing, because prose is unbounded
+    -- which is exactly why the declared field exists. Stamp `execution` on new
+    hops; the heuristic is a compatibility path, not the contract.
+    """
+    declared = str(hop.get("execution") or "").strip().lower()
+    if declared in ("codex", "inline"):
+        return declared == "codex"
+
     outcome = str(hop.get("outcome") or "").lower()
     if "codex" not in outcome and "worktree" not in outcome:
         return False
@@ -534,6 +648,7 @@ def flag_triage(
     flags = []
     seen_ids = set()
     valid_ids = {t["id"] for t in threads}
+    status_by_id = {t["id"]: t.get("status") for t in threads}
 
     for t in threads:
         tid = t["id"]
@@ -579,6 +694,24 @@ def flag_triage(
         worktree_thread_data = dict(thread_data)
         if "codex_worktrees" in t:
             worktree_thread_data["codex_worktrees"] = t.get("codex_worktrees") or []
+
+        # Park expiry: this thread says it waits on a thread that has since closed.
+        # Catches the failure mode where a gate opens and nobody re-checks, which is
+        # invisible to every other signal here -- the thread looks merely stale.
+        if t["status"] in ("active", "blocked"):
+            for ref, ref_status in expired_park_gates(threads_path, tid, status_by_id):
+                flags.append({
+                    "id": tid,
+                    "kind": "expired_park_gate",
+                    "days": days,
+                    "summary": (
+                        f"Current-truth says this thread waits on `{ref}`, which is now "
+                        f"`{ref_status}`. The blocker may have cleared — re-read the gate and "
+                        f"either resume, or correct the stale claim so the pause reads as "
+                        f"deliberate. A park records what you wait for; nothing re-checks "
+                        f"whether the wait ended."
+                    ),
+                })
 
         # superseded_by sanity (top-level field, optional)
         sb = t.get("superseded_by")
@@ -647,6 +780,32 @@ def flag_triage(
                 if not handback_pair_visible(
                     threads_path, tid, worktree_thread_data, plan_id, hop_inbox_slug(hop)
                 ):
+                    # A pair may be sitting in a shared inbox that carries no thread
+                    # attribution -- present but unclaimable. That is a different
+                    # problem from "never written" and wants a different remedy, so
+                    # report it as its own class rather than as missing.
+                    ambiguous = ambiguous_inbox_candidates(
+                        threads_path, tid, worktree_thread_data, plan_id
+                    )
+                    if ambiguous:
+                        rel = ", ".join(
+                            f"`{c.parent.name}/{c.name}`" for c in ambiguous[:3]
+                        )
+                        flags.append({
+                            "id": tid,
+                            "kind": "ambiguous_inbox",
+                            "days": days,
+                            "summary": (
+                                f"Plan hop `{plan_id}` has no attributable handback, but a "
+                                f"complete handback pair for that plan number IS present in a "
+                                f"shared worktree inbox ({rel}) carrying no `thread_id`. It "
+                                f"cannot be claimed by plan number alone -- a shared inbox "
+                                f"serves several threads. Confirm ownership by reading it, then "
+                                f"record a triage note pointing at its location (or add "
+                                f"`thread_id` to the handback). Do NOT loosen the matcher."
+                            ),
+                        })
+                        continue
                     flags.append({
                         "id": tid,
                         "kind": "missing_codex_handback",
