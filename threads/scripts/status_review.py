@@ -329,6 +329,18 @@ _GATE_PHRASES = (
 
 _THREAD_REF = re.compile(r"([a-z_]+(?:[-_][a-z0-9]+)*)/(\d{8}-[a-z0-9][a-z0-9-]*)")
 
+# A line that RESOLVES a gate necessarily restates it -- "no longer blocked on X",
+# "GATE OPEN since ...", "~~gated on X~~" -- so it carries both a gate phrase and
+# the thread reference and would re-flag forever. Skip lines that assert the wait
+# has ended; the whole point of correcting a stale gate in place is that the
+# correction stays readable next to the claim it fixes.
+_GATE_RESOLVED_MARKERS = (
+    "no longer blocked", "no longer *blocked*", "not blocked", "gate open",
+    "gate is open", "gate cleared", "gate correction", "blocker has cleared",
+    "blocker cleared", "unblocked", "~~", "closed 2", "since closed",
+    "which is now `closed`", "is now `closed`",
+)
+
 
 def expired_park_gates(
     threads_path: Path, thread_id: str, status_by_id: dict[str, str]
@@ -362,6 +374,8 @@ def expired_park_gates(
     for line in head.splitlines():
         low = line.lower()
         if not any(p in low for p in _GATE_PHRASES):
+            continue
+        if any(r in low for r in _GATE_RESOLVED_MARKERS):
             continue
         for m in _THREAD_REF.findall(line):
             ref = f"{m[0]}/{m[1]}"
