@@ -198,12 +198,36 @@ def main() -> int:
                         help="JSON signal map for selective VCD logging (used with --vcd)")
     parser.add_argument("--timeout", type=int, default=600,
                         help="Simulation timeout in seconds (default: 600)")
+    parser.add_argument("--debug", type=str, default="typical",
+                        choices=["off", "typical", "all"],
+                        help="xelab -debug level. Default 'typical' (signal "
+                             "visibility for debug). Self-checking gate runs "
+                             "that dump no waveform should pass 'off' "
+                             "(~1.2x+ sim speedup, measured).")
     parser.add_argument("--plusarg", action="append", default=[],
                         metavar="NAME=VALUE",
                         help="Forward a plusarg to xsim as -testplusarg "
                              "(repeatable). TB reads it via $value$plusargs; "
                              "enables case sharding for parallel vector gates")
+    parser.add_argument("--job-slot", type=str, default="auto",
+                        choices=["auto", "off"],
+                        help="Sim-class job slot (scripts/socks_jobs.py). "
+                             "'auto' re-execs this run through the governor "
+                             "unless SOCKS_JOB_HELD is already set; 'off' "
+                             "runs unguarded and touches no slot dir.")
     args = parser.parse_args()
+
+    # Re-exec through the job governor so concurrent xsim runs share a
+    # core budget instead of contending blindly. See references/jobs.md.
+    if args.job_slot == "auto" and not os.environ.get("SOCKS_JOB_HELD"):
+        jobs_py = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "socks_jobs.py")
+        if os.path.exists(jobs_py):
+            wrapper = [sys.executable, jobs_py, "run", "--class", "sim",
+                       "--weight", "2", "--label", args.top or "xsim", "--"]
+            os.execv(sys.executable,
+                     wrapper + [sys.executable, os.path.abspath(__file__)]
+                     + sys.argv[1:] + ["--job-slot", "off"])
 
     project_dir = os.path.abspath(args.project_dir)
 
@@ -367,7 +391,7 @@ def main() -> int:
 
         # Elaborate
         print(f"\n  Elaborating...")
-        elab_cmd = f"xelab -debug typical {args.top} -s {sim_name}"
+        elab_cmd = f"xelab -debug {args.debug} {args.top} -s {sim_name}"
         if has_dpi:
             elab_cmd += " -sv_lib dpi"
         ok, _ = run_tool(

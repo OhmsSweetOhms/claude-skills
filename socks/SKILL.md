@@ -282,6 +282,16 @@ authoring checklist for BD-destined module packets.
 
 **When a synthesis timing gate fails (or before any retime work) on an authored DSP datapath:** read `references/dsp/timing-closure.md`. This covers family-histogram triage from the full failing-path list, the latency-only invariant under bit-exact gating, the squeeze ladder (BRAM output regs → DSP pipelining → look-ahead index registration → lookup stages → FSM product-capture states), the `to_integer`-arithmetic synthesis crash class, and OOC-vs-in-context margin discipline.
 
+**Concurrency / job slots:** long Vivado builds and xsim runs go through the
+weighted-slot governor `scripts/socks_jobs.py` (`run --class {sim,build}`,
+`status`, `wait`) so concurrent jobs share a core/RAM budget instead of
+contending blindly. `scripts/xsim.py` takes a slot automatically
+(`--job-slot auto`, the default; `off` opts out). Read `references/jobs.md`
+before launching parallel gates, sharding a testbench suite, or wiring a new
+runner script — it carries the budgets and their rationale, the
+`SOCKS_JOB_HELD` reentrancy rule for sharded runners, the legacy build-class
+lock migration note, and the interaction-versus-independent sharding pattern.
+
 **VCD-based trigger plan generation:** If `ila_trigger_plan.json` doesn't exist
 or needs regeneration, run `scripts/hil/gen_trigger_plan.py` to auto-generate
 from VCD data (see `references/hil.md` § "Auto-Generating Trigger Plans from VCD").
