@@ -30,8 +30,14 @@ the child whenever it does acquire.
 
 Back-compat: `run --class build` also takes the legacy advisory flock on
 ${SOCKS_BUILD_CLASS_LOCK:-/tmp/socks-build-class.lock} for the child's
-lifetime, so new-style and old-style build jobs still exclude each other
-while callers migrate.
+lifetime — SHARED among new-style jobs (so the weighted budget, not the
+flock, sets build concurrency) but still mutually exclusive against an
+old-style caller's exclusive flock while callers migrate.
+
+Second-build RAM gate (operator ruling 2026-08-13): the budget admits 2
+concurrent builds, but the 2nd+ build job is only admitted when
+MemAvailable >= ${SOCKS_BUILD_RAM_MIN_GB:-24} GB, re-checked every poll.
+The first build is never RAM-gated (it must always be able to run).
 
 Usage:
     socks_jobs.py run --class sim --weight 2 --label mytb -- xsim ...
@@ -84,6 +90,24 @@ def budget_for(cls: str) -> int:
         return int(raw) if raw else 16
     raw = os.environ.get("SOCKS_SIM_BUDGET")
     return int(raw) if raw else default_sim_budget()
+
+
+def build_ram_min_gb() -> float:
+    raw = os.environ.get("SOCKS_BUILD_RAM_MIN_GB")
+    return float(raw) if raw else 24.0
+
+
+def mem_available_gb() -> float:
+    """MemAvailable from /proc/meminfo, in GiB. Returns +inf if unreadable
+    (non-Linux / test envs) so the gate fails open rather than wedging."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024.0 * 1024.0)
+    except (OSError, ValueError, IndexError):
+        pass
+    return float("inf")
 
 
 # --------------------------------------------------------------------------
@@ -205,8 +229,10 @@ def describe(slots, cls):
 # --------------------------------------------------------------------------
 
 class LegacyLock:
-    """Advisory flock on the legacy build-class lock file. Held for the
-    child's lifetime so pre-migration callers still exclude us."""
+    """Advisory flock on the legacy build-class lock file, held for the
+    child's lifetime. New-style jobs take it SHARED so they run
+    concurrently under the weighted budget; a pre-migration caller's
+    exclusive flock still excludes us (and ours excludes it)."""
 
     def __init__(self):
         self.fd = None
@@ -214,7 +240,7 @@ class LegacyLock:
     def try_acquire(self) -> bool:
         fd = os.open(legacy_lock_path(), os.O_RDWR | os.O_CREAT, 0o666)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
         except OSError:
             os.close(fd)
             return False
@@ -264,14 +290,29 @@ def acquire(directory, cls, weight, label, cmd, timeout, take_legacy,
         with MetaLock(directory):
             slots, _ = scan_slots(directory)
             used = used_weight(slots, cls)
-            if used + weight <= budget:
-                if reserve:
+            if used + weight > budget:
+                blocked = (f"{used}/{budget} cores in use, need {weight}; "
+                           f"holders: {describe(slots, cls)}")
+            elif cls == "build" and any(s.get("class") == "build"
+                                        for s in slots):
+                # Second-build RAM gate: a build is already running; admit
+                # another only if the box has headroom for it right now.
+                avail = mem_available_gb()
+                need = build_ram_min_gb()
+                if avail < need:
+                    blocked = (f"RAM gate: MemAvailable {avail:.1f} GiB < "
+                               f"{need:.1f} GiB required for a 2nd "
+                               f"concurrent build "
+                               f"(SOCKS_BUILD_RAM_MIN_GB overrides)")
+                elif reserve:
                     slot_path = write_slot(directory, cls, weight, label, cmd)
                 else:
                     slot_path = ""
             else:
-                blocked = (f"{used}/{budget} cores in use, need {weight}; "
-                           f"holders: {describe(slots, cls)}")
+                if reserve:
+                    slot_path = write_slot(directory, cls, weight, label, cmd)
+                else:
+                    slot_path = ""
 
         if slot_path is not None and legacy is not None:
             if not legacy.try_acquire():
@@ -416,12 +457,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Weighted job-slot governor for Vivado build/sim jobs.",
         epilog=(
             "Budgets (cores): build = $SOCKS_BUILD_BUDGET (default 16) at "
-            "weight 8/job -> 2 concurrent; the cap is RAM-driven, since a "
-            "synth+impl run peaks near 10-12 GB and three at once thrash a "
-            "30 GB box. sim = $SOCKS_SIM_BUDGET (default nproc-4) at weight "
-            "2/job. State dir: $SOCKS_JOBS_DIR (default /tmp/socks-jobs). "
-            "Set SOCKS_JOB_HELD=<class> to short-circuit acquisition inside "
-            "a job that already holds a slot."),
+            "weight 8/job -> 2 concurrent; a 2nd concurrent build is also "
+            "gated on MemAvailable >= $SOCKS_BUILD_RAM_MIN_GB (default 24) "
+            "GiB, re-checked every poll. sim = $SOCKS_SIM_BUDGET (default "
+            "nproc-4) at weight 2/job. State dir: $SOCKS_JOBS_DIR (default "
+            "/tmp/socks-jobs). Set SOCKS_JOB_HELD=<class> to short-circuit "
+            "acquisition inside a job that already holds a slot."),
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="subcmd", required=True)
 
