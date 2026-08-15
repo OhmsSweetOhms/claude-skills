@@ -245,7 +245,7 @@ ENV_SKELETON = """\
 # comes and goes, so synth_design silently falls back to an older feature
 # line and fails with "license version is not valid ... requires <ver>".
 # Verify BEFORE any Vivado run (needs root to set — cannot be sandboxed):
-#   want=$(grep -hoiE 'HOSTID=[0-9a-f]{12}' "$HOME"/.Xilinx/*.lic | head -1 | cut -d= -f2)
+#   want=$(grep -hoiE 'HOSTID=[0-9a-f]{{12}}' "$HOME"/.Xilinx/*.lic | head -1 | cut -d= -f2)
 #   have=$(cat /sys/class/net/*/address | tr -d ':')
 #   grep -qi "$want" <<<"$have" || echo "licensed MAC $want ABSENT — set it:"
 #   #   sudo ip link set dev <nic> address $(sed 's/../&:/g;s/:$//' <<<"$want")
