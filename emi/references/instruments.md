@@ -1,5 +1,7 @@
 # Instrument Reference
 
+> Verb-by-verb flags for everything below: repo `docs/cli-cookbook.md`.
+
 Use the EMI repo for exact driver behavior and command implementations:
 
 - `emi/instruments/rsa5000.py`

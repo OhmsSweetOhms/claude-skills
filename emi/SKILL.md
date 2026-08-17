@@ -37,8 +37,10 @@ repo files and safe workflows.
    in force; it names which `.threads/` hand-offs to poll for live state).
    Then `CLAUDE.md` / `AGENTS.md` (identical harness note) for layout, test
    command, and bench-safety invariants. Do not bulk-read anything else first.
-2. Read `README.md` for current command examples, bench hosts, and known
-   working paths.
+2. Read `README.md` for bench hosts and known working paths, and
+   `docs/cli-cookbook.md` for every CLI verb by task (pre-flight, system
+   checks, campaign get-ready/go/finalize, ranking, GNSS). The management
+   view (phases, gates, roles) is `docs/program-playbook.md`.
 3. Check `git status --short` before editing so user changes are not
    overwritten.
 4. Identify the measurement class:
@@ -217,6 +219,8 @@ unless the user has defined a separate engineering criterion.
 | Instruments and analyzer substitution | `references/instruments.md` | RSA vs FPH behavior, SDG/SMA generator checks, safe trace export paths |
 | Data layout | `references/data-layout.md` | Organizing `data/uuts/`, `data/characterization/`, calibration runs, manifests |
 | Calibration workflows | `docs/calibration_workflows.md` | RSA tracking-generator cable loss, CE102 calibration runs, system-check artifact layout |
+| CLI cookbook (repo) | `docs/cli-cookbook.md` | Any "which verb / which flags" question — read before restating a command from memory |
+| Program playbook (repo) | `docs/program-playbook.md` | Gates, phases, who decides, what counts as evidence |
 
 ## Initializers
 

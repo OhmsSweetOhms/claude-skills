@@ -1,5 +1,7 @@
 # GNSS RF Environment Survey Reference
 
+> Verb-by-verb flags for everything below: repo `docs/cli-cookbook.md`.
+
 GNSS work in the EMI repo is an RF environment/noise survey for GPS L1/L2. It
 is not MIL-STD-461 RE102 or CE102.
 
