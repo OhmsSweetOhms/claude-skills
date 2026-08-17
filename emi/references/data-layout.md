@@ -110,42 +110,20 @@ shape the same, but make the non-UUT role explicit in `campaign.json`,
 
 ## Initializer
 
-Use the skill helper to scaffold a new test group without touching hardware:
+Use the repo CLI to scaffold a new test group without touching hardware; it
+creates the campaign directories, run folders, and manifests itself:
 
 ```bash
-python ~/.claude/skills/emi/scripts/init_emi_test_group.py next 2026-05-08 \
-  --root <EMI_REPO>/data \
-  --kind uut \
-  --method ce102 \
-  --method re102 \
-  --site-condition indoor \
-  --site-condition outdoor \
-  --attenuator-loss-db 20 \
-  --cable-loss-db 0
+.venv/bin/python tools/emi_control.py re102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --role <role> --config <N>
+.venv/bin/python tools/emi_control.py ce102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N>
 ```
 
-`next` allocates the next unused provisional UUT directory under `data/uuts`
-(`uut_001`, then `uut_002`, and so on). For a known UUT, pass that known ID
-instead of `next`.
-
-The helper creates:
-
-- `campaign.json`
-- one method folder per `--method`
-- method-level `measurement.json`
-- empty `calibration/`, `runs/`, and `plots/`
-
-For non-UUT data:
-
-```bash
-python ~/.claude/skills/emi/scripts/init_emi_test_group.py bench_validation 2026-05-08 \
-  --root <EMI_REPO>/data \
-  --kind characterization \
-  --method rsa \
-  --method ce102 \
-  --method re102 \
-  --site-condition direct_rsa_smoke
-```
+For a known UUT pass its ID; for a provisional UUT allocate the next unused
+`uut_NNN` under `data/uuts/` (`ls data/uuts`) and pass that. For non-UUT
+subjects (bench validation, smoke checks, ambient references) pass
+`--data-root data/characterization/<dataset_id>` so nothing lands under
+`data/uuts`; `rsa tg-cable-loss-init` already defaults to
+`data/characterization/cable_loss`.
 
 After initialization, add calibration/system-check artifacts under
 `<method>/calibration/<run_id>/` and EUT/ambient/hot acquisitions under

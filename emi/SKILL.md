@@ -210,36 +210,22 @@ unless the user has defined a separate engineering criterion.
 | Data layout | `references/data-layout.md` | Organizing `data/uuts/`, `data/characterization/`, calibration runs, manifests |
 | Calibration workflows | `docs/calibration_workflows.md` | RSA tracking-generator cable loss, CE102 calibration runs, system-check artifact layout |
 
-## Bundled Scripts
+## Initializers
 
-Scripts live in `scripts/`. They should be deterministic helpers that work with
-plain files and JSON. Keep live instrument control in the EMI project unless a
-script is intentionally made portable.
-
-New-work initializer (`init_re102_measurement.py` targets the retired flat
-`data/re102/measurements` layout — do not use it for new work):
+There are no bundled scripts. Scaffold new work with the repo CLI, which
+creates the campaign tree (`data/uuts/<uut_id>/<date>/<method>/` with
+`runs/`, `calibration/`, `plots/`, manifests) without touching hardware:
 
 ```bash
-python ~/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 2026-05-08 \
-  --root <EMI_REPO>/data \
-  --kind uut \
-  --method ce102 \
-  --method re102 \
-  --site-condition indoor \
-  --site-condition outdoor \
-  --attenuator-loss-db 20 \
-  --cable-loss-db 0 \
-  --note "Created before bench acquisition; site labels live in JSON."
+.venv/bin/python tools/emi_control.py re102 init-run --uut <uut_id> --date <YYYY-MM-DD> ...
+.venv/bin/python tools/emi_control.py re102 init-engineering-run --uut <uut_id> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N>
+.venv/bin/python tools/emi_control.py ce102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N>
+.venv/bin/python tools/emi_control.py rsa tg-cable-loss-init <run_id> --date <YYYY-MM-DD>
 ```
 
-This creates `campaign.json` plus method-level `measurement.json`,
-`calibration/`, `runs/`, and `plots/` folders. It does not touch hardware.
-For a provisional UUT, pass `next` as the subject ID; the helper allocates the
-next unused `uut_NNN` directory under `data/uuts/`.
-
-For non-UUT characterization data, use `--kind characterization`; the helper
-will scaffold under `data/characterization/` and write `subject` metadata
-instead of `uut` metadata.
+Use `--data-root data/characterization/<dataset_id>` for non-UUT subjects.
+Provisional UUT IDs are allocated by hand (`uut_NNN`, next unused) until the
+CLI grows that helper (repo `docs/emi_tracker.json`).
 
 ## Expected Working Style
 
