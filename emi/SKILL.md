@@ -118,10 +118,11 @@ For CE102 iterative tuning, use the two-step bench loop:
 
 - `get ready` / `init`: use the repo CLI instead of hand-curating campaign
   JSON whenever possible:
-  `.venv/bin/python tools/emi_control.py ce102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
+  `.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> [--profile lf-clipped-100k] --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
   This creates the next run folder, `run.json`, planned scan command, scan
   plan, optional ping precheck, and rolling-manifest ready entry. Report the
-  generated run ID/settings and do not acquire.
+  generated run ID/settings and do not acquire. Ask which kind the operator
+  wants if it is not stated; do not default it.
 - `go`: run the reviewed `ce102 scan` command from `run.json`, then use
   `.venv/bin/python tools/emi_control.py ce102 finalize-run <run.json> --uut <uut_id>`.
   Finalization updates `run.json`, computes summary/margins, generates per-run
@@ -132,8 +133,10 @@ For RE102 UUT vault engineering scans with the RSA, use the matching staged
 campaign loop rather than one-off `re102 scan` commands:
 
 - `get ready` / `init`: use
-  `.venv/bin/python tools/emi_control.py re102 init-engineering-run --uut <uut_id> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> --ping`.
-  The current vault profile is 30-45 MHz at 300 Hz RBW/VBW, then 45-1730 MHz
+  `.venv/bin/python tools/emi_control.py re102 init-run --kind tailored --profile vault-full --uut <uut_id> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> --ping`
+  (or `--kind engineering --profile vault-low-30-100` / `--f-start-hz --f-stop-hz`
+  for a debug slice; `init-engineering-run` is the deprecated alias).
+  The `vault-full` profile is 30-45 MHz at 300 Hz RBW/VBW, then 45-1730 MHz
   at 1 kHz RBW/VBW in 50 MHz segments, one sweep per segment, RSA CSV export,
   preamp on, 0 dB attenuation, and -30 dBm reference level unless the bench
   setup changes. For the PE300-72 plus PE300-36 path, use the repo's current
@@ -145,11 +148,16 @@ campaign loop rather than one-off `re102 scan` commands:
   `.venv/bin/python tools/emi_control.py re102 finalize-run <run.json>` and
   regenerate the campaign/report SVGs requested by the user. Keep ambient,
   config, combined-summary, and ambient-delta views distinct.
-- Run bookkeeping: `re102 init-run` (non-engineering runs), `re102 set-tag`
-  and `re102 reset-run` (report-tag / cable-loss provenance edits),
-  `re102 rank-runs` (rank a UUT's campaign runs by spectral content above an
-  ambient/limit reference; markdown/html/json/csv output). Use these instead
-  of hand-editing `run.json`.
+- Run bookkeeping: `re102 init-run --kind record` (standard antenna-bounded
+  profile), `re102 set-tag` and `re102 reset-run` (report-tag / cable-loss
+  provenance edits), `re102 rank-runs [--kinds ...]` (rank a UUT's campaign
+  runs by spectral content above an ambient/limit reference; rows are labelled
+  with their run kind; markdown/html/json/csv output). Use these instead of
+  hand-editing `run.json`.
+
+Run kinds (`record` / `tailored` / `engineering`) are provenance, not
+evidence class: see `references/re102.md` "Run kinds". Never present a
+non-record run's margin as pass/fail.
 
 For RSA tracking-generator cable-loss checks, keep work under
 `data/characterization/cable_loss/<campaign_date>/<run_id>/` and use the repo
@@ -217,9 +225,8 @@ creates the campaign tree (`data/uuts/<uut_id>/<date>/<method>/` with
 `runs/`, `calibration/`, `plots/`, manifests) without touching hardware:
 
 ```bash
-.venv/bin/python tools/emi_control.py re102 init-run --uut <uut_id> --date <YYYY-MM-DD> ...
-.venv/bin/python tools/emi_control.py re102 init-engineering-run --uut <uut_id> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N>
-.venv/bin/python tools/emi_control.py ce102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N>
+.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --date <YYYY-MM-DD> --site <site> --role <ambient|noise_floor|hot_config> [--config <N>] [--profile <id>]
+.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N> [--profile <id>]
 .venv/bin/python tools/emi_control.py rsa tg-cable-loss-init <run_id> --date <YYYY-MM-DD>
 ```
 
