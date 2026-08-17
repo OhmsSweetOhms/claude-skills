@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Set up a new RE102 measurement folder for RM300 with horizontal noise-floor and UUT-on runs, using the TBMA1B antenna at 1 m and 1.5 dB cable loss.",
-      "expected_output": "Creates or proposes the measurement-set layout under data/re102/measurements/RM300, with measurement.json and run-level raw/derived/plots folders. Uses JSON metadata instead of relying on filenames.",
+      "expected_output": "Creates or proposes the campaign layout under data/uuts/<uut_id>/<campaign_id>/re102/ (or data/characterization/ for a non-UUT subject) with campaign.json, measurement.json, and run-level raw/derived/plots folders. Uses JSON metadata instead of relying on filenames.",
       "files": []
     },
     {
@@ -15,7 +15,7 @@
     },
     {
       "id": 3,
-      "prompt": "What do we need to do for CE102 with the TBL5016-1 50 uH LISN, a 20 dB attenuator before the RSA, and the SDG2042X at 192.168.0.2?",
+      "prompt": "What do we need to do for CE102 with the TBL5016-1 50 uH LISN, a 20 dB attenuator before the RSA, and the SDG2042X on the bench LAN?",
       "expected_output": "Describes CE102 as dBuV conducted voltage, uses the TBL5016-1 50uh correction plus dBm + 106.9897 + attenuator/cable corrections, avoids antenna factors, keeps 50uh-only as the active LISN configuration, and uses the SDG2042X system-check commands before UUT scans.",
       "files": []
     },
@@ -52,7 +52,7 @@
     {
       "id": 9,
       "prompt": "Run a CE102 calibration run with the SDG2000 and RSA.",
-      "expected_output": "Stages or runs a CE102 calibration/system-check under data/ce102/calibration/<run_id>, uses the four tones 10 kHz, 100 kHz, 2 MHz, and 10 MHz, records SDG/RSA settings, injection path, losses, tone_plan.json, raw/derived/plots plus optional formal reports, and distinguishes direct-RSA smoke from the LISN-path measurement-system check.",
+      "expected_output": "Stages or runs a CE102 calibration/system-check under <subject_root>/<campaign_id>/ce102/calibration/<run_id>, uses the four tones 10 kHz, 100 kHz, 2 MHz, and 10 MHz, records SDG/RSA settings, injection path, losses, tone_plan.json, raw/derived/plots plus optional formal reports, and distinguishes direct-RSA smoke from the LISN-path measurement-system check.",
       "files": []
     },
     {

@@ -25,15 +25,20 @@ repo files and safe workflows.
 - Prefer repo commands and docs over recreated snippets:
   `tools/emi_control.py`, `emi/`, `tests/`, `docs/`, `antennas/`, and `LISN/`.
 - Keep session-specific run IDs, exact bench results, and local data paths in
-  `handoff.md` or project docs. Keep reusable procedure in this skill.
+  the owning `.threads/` hand-off or project docs. Keep reusable procedure in
+  this skill.
 - Use `docs/emi_tracker.json` for skill/workflow gaps discovered during real
   bench work. Classify each lesson as repo code, repo reference, skill
   guidance, eval material, handoff-only, or local data.
 
 ## Start Here
 
-1. Read the newest handoff first: `handoff.md` if present, then `HANDOFF.md`.
-2. Read `README.md` for current command examples and known working paths.
+1. Read `ORCHESTRATOR-CACHE.md` at the repo root first (pointers + decisions
+   in force; it names which `.threads/` hand-offs to poll for live state).
+   Then `CLAUDE.md` / `AGENTS.md` (identical harness note) for layout, test
+   command, and bench-safety invariants. Do not bulk-read anything else first.
+2. Read `README.md` for current command examples, bench hosts, and known
+   working paths.
 3. Check `git status --short` before editing so user changes are not
    overwritten.
 4. Identify the measurement class:
@@ -48,6 +53,7 @@ repo files and safe workflows.
    - `emi/instruments/fph.py`
    - `emi/instruments/sdg2000x.py`
    - `emi/instruments/sma100a.py`
+   - `emi/instruments/ngp800.py`, `emi/instruments/owon_odp.py` (power supplies)
    - `docs/Rigol_RSA5000_Programming_Guide.md`
    - `docs/FPH_User_Manual_en_21.md`
    - `docs/Siglent_SDG2042X_User_Manual.md`
@@ -74,9 +80,13 @@ live hardware.
   acquire a through-reference trace and a DUT trace, preserve both raw CSVs,
   and derive `loss_db = reference_thru_dbm - dut_dbm`.
 - For CE102 signal-generator checks, use the project CLI instead of ad hoc SCPI:
-  `ce102 system-check-plan` and `ce102 system-check-tone`. The SDG2042X was
-  observed at `192.168.0.2`; turn output off before moving equipment or ending
-  a bench session.
+  `ce102 system-check-plan` and `ce102 system-check-tone`. Bench hosts are
+  listed in the repo `README.md`; turn generator output off before moving
+  equipment or ending a bench session.
+- Power supplies (`ngp800`, `odp` CLI groups) are deliberately scoped to
+  identity/snapshot queries and per-channel output on/off. Do not add
+  setpoint writes or SCPI passthrough; widening the scope is the operator's
+  decision, recorded in the repo cache.
 - Direct SDG-to-RSA runs are smoke tests for control/export/correction
   plumbing only. They do not replace the MIL-STD-461F LISN measurement-system
   check.
@@ -93,6 +103,14 @@ live hardware.
 - If front-panel control is locked out, note that ESC restored local control in
   the 2026-05 bench session. Do not claim a SCPI local-unlock command unless it
   has been verified against the RSA5000 programming guide and this unit.
+  RSA LAN-service recovery and other unit quirks are in
+  `references/instruments.md`.
+- Method-validity gates: the repo `.threads/precompliance/` threads currently
+  hold the RE102 scan profile (fixed 801-point segments violate MIL-STD-461F
+  point spacing in 500 MHz–1 GHz) and the CE102 LISN path (10 kHz system
+  check failed) as **not released**. A finalized run is engineering evidence
+  only until the owning thread's Current truth says the gate is released;
+  never present it as compliance data. Check the cache before reporting.
 
 ## Workflow Patterns
 
@@ -127,6 +145,11 @@ campaign loop rather than one-off `re102 scan` commands:
   `.venv/bin/python tools/emi_control.py re102 finalize-run <run.json>` and
   regenerate the campaign/report SVGs requested by the user. Keep ambient,
   config, combined-summary, and ambient-delta views distinct.
+- Run bookkeeping: `re102 init-run` (non-engineering runs), `re102 set-tag`
+  and `re102 reset-run` (report-tag / cable-loss provenance edits),
+  `re102 rank-runs` (rank a UUT's campaign runs by spectral content above an
+  ambient/limit reference; markdown/html/json/csv output). Use these instead
+  of hand-editing `run.json`.
 
 For RSA tracking-generator cable-loss checks, keep work under
 `data/characterization/cable_loss/<campaign_date>/<run_id>/` and use the repo
@@ -184,7 +207,7 @@ unless the user has defined a separate engineering criterion.
 | CE102 conducted emissions | `references/ce102.md` | LISN/attenuator measurements, SDG2042X system checks, dBuV correction, CE102 scans/plots |
 | GNSS RF environment survey | `references/gnss.md` | GPS L1/L2 survey planning, active antenna safety, non-MIL reporting |
 | Instruments and analyzer substitution | `references/instruments.md` | RSA vs FPH behavior, SDG/SMA generator checks, safe trace export paths |
-| Data layout | `references/data-layout.md` | Organizing `data/re102`, `data/ce102`, `data/gnss`, calibration runs, manifests |
+| Data layout | `references/data-layout.md` | Organizing `data/uuts/`, `data/characterization/`, calibration runs, manifests |
 | Calibration workflows | `docs/calibration_workflows.md` | RSA tracking-generator cable loss, CE102 calibration runs, system-check artifact layout |
 
 ## Bundled Scripts
@@ -193,20 +216,8 @@ Scripts live in `scripts/`. They should be deterministic helpers that work with
 plain files and JSON. Keep live instrument control in the EMI project unless a
 script is intentionally made portable.
 
-Current script:
-
-```bash
-python ~/.claude/skills/emi/scripts/init_re102_measurement.py RM255 \
-  --root <EMI_REPO>/data/re102/measurements \
-  --uut RM255 \
-  --antenna-model TBMA1B \
-  --distance-m 1 \
-  --cable-loss-db 1.5 \
-  --screen-room no \
-  --note "Ambient lab scan; not compliance data."
-```
-
-Preferred new-work initializer:
+New-work initializer (`init_re102_measurement.py` targets the retired flat
+`data/re102/measurements` layout — do not use it for new work):
 
 ```bash
 python ~/.claude/skills/emi/scripts/init_emi_test_group.py UUT123 2026-05-08 \

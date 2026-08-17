@@ -1,8 +1,8 @@
 # EMI Data Layout Reference
 
 Use subject/test-group directories for new scan data. Avoid adding more flat
-files directly under method-first paths such as `data/re102` or
-`data/ce102/measurements`.
+files directly under retired method-first paths (`data/re102`,
+`data/ce102/...`).
 
 There are two first-class subject classes:
 
@@ -151,19 +151,13 @@ After initialization, add calibration/system-check artifacts under
 `<method>/calibration/<run_id>/` and EUT/ambient/hot acquisitions under
 `<method>/runs/<run_id>/`.
 
-## Legacy Method-First Layout
+## Retired Method-First Layout
 
-The older layout grouped first by method:
-
-```text
-data/ce102/measurements/<test_id>/
-data/re102/
-```
-
-Treat this as legacy. When migrating, keep old source paths in
-`legacy_source_path`, `legacy_source_prefix`, or a migration manifest. Choose
-the live destination based on subject class: actual UUT work goes under
-`data/uuts`; non-UUT smoke/reference/calibration datasets go under
+The original method-first tree (`data/ce102/measurements/<test_id>/`,
+`data/re102/`) was migrated on 2026-05-08; the repo's
+`data/migration_manifest_20260508_*.json` files record every source path.
+Nothing should be created there. Subject class decides the destination:
+actual UUT work under `data/uuts`; smoke/reference/calibration datasets under
 `data/characterization`.
 
 ## RE102 Layout
@@ -284,23 +278,12 @@ Example run directory names:
 reports/<test_id>_re102_fixed_wing_internal_lt25m.svg
 ```
 
-## Existing Flat Data
+## RM255 Note
 
-Legacy flat `data/re102` directories can contain early bring-up artifacts:
-
-- Direct signal-generator calibration.
-- Full TBMA1B scans.
-- Narrow debug checks.
-- RM255 aliases/manifests/reports.
-
-Do not treat those flat names as the schema. When migrating, copy or move them
-into measurement-set directories with a manifest that records the source paths.
-
-RM255 note:
-
-- Actual polarization: horizontal.
-- Some source filenames contain `vertical`; trust corrected metadata instead.
-- No screen room was used, so it is not compliance data.
+The RM255 ambient-lab RE102 scan (migrated into `data/characterization/`) has
+filenames containing `vertical`; the actual polarization was horizontal and the
+corrected metadata is authoritative. No screen room was used, so it is not
+compliance data.
 
 ## CE102 Layout
 

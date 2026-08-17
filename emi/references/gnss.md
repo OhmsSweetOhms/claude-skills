@@ -143,5 +143,5 @@ After raw CSVs exist:
 ```
 
 For review, broad-vs-focused L1/L2 overlays are useful when multiple survey
-runs exist. Keep exact local run IDs in `handoff.md`, not in this reusable
-reference.
+runs exist. Keep exact local run IDs in the repo's owning `.threads/` hand-off
+or campaign JSON, not in this reusable reference.
