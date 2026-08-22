@@ -20,7 +20,7 @@
   ],
   "properties": {
     "schema_version": { "const": "2" },
-    "plan_id": { "type": "string", "pattern": "^plan-[0-9]+" },
+    "plan_id": { "type": "string", "pattern": "^plan-[0-9a-z]", "description": "The plan stem: numbered hops (plan-NN-slug) or named packets (plan-<slug>, e.g. plan-a2-daemon-all-four-bands, plan-board-leg-day2-l2c). Widened from ^plan-[0-9]+ on 2026-08-22 after two non-numbered packets tripped it (operator ruling)." },
     "thread_id": { "type": "string" },
     "session_date": { "type": "string", "format": "date" },
     "status": {
