@@ -14,6 +14,37 @@ boot device, different FSBL provenance, different SW6 setting.)
 - **Boot device:** SD card (FAT32 BOOT partition + ext4 rootfs)
 - **Login:** `root` / `analog`; `iiod` runs by default (libiio network backend, TCP 30431)
 
+## Network connection (the GPS appliance) — read BEFORE diagnosing "board unreachable"
+
+Canonical connection facts for the GPS-appliance ZCU102. This section exists
+because two sessions (2026-08-10 board swap, 2026-08-24 host-machine move)
+burned time re-deriving them from old ssh transcripts.
+
+- **Address:** `192.168.0.200` (static, PS GEM; host historically at
+  `192.168.0.100` on the same wired segment). MAC is Xilinx-OUI `00:0a:35:…`.
+- **Login:** `ssh root@192.168.0.200` (password `analog`, Kuiper default) —
+  key auth preferred; each HOST MACHINE needs its own keypair installed once:
+  `ssh-keygen -t ed25519` then `ssh-copy-id root@192.168.0.200`.
+- **SSH banner:** `SSH-2.0-OpenSSH_8.4p1 Raspbian-5+deb11u3` (Kuiper is
+  Raspbian-based — this banner is a cheap identity check via
+  `exec 3<>/dev/tcp/192.168.0.200/22; head -1 <&3`).
+- **Host key (ED25519, observed 2026-08-24, original SD):**
+  `SHA256:HcH4RtAqbun+2Mlx9+S/lwVO3FMtqhG5fuvJ6YTzEz0`
+- **Recommended alias** (`~/.ssh/config`), so sessions type `ssh gps-board`:
+
+  ```
+  Host gps-board
+      HostName 192.168.0.200
+      User root
+  ```
+
+**The lesson (don't re-diagnose the board first):** on a NEW or moved host
+machine, "host key changed" + "publickey denied" is almost always the HOST —
+no keypair yet, and a stale hashed `known_hosts` entry for `.200` from that
+machine's own past network. Check `ls ~/.ssh/id_*` and the banner BEFORE
+touching the board. A genuinely wrong host key with the banner also wrong is
+the boot-source problem (SW6 / QSPI fallback) — see the symptoms table below.
+
 ## Boot-mode switches — SD boot (this is the hard-won one)
 
 > **Set SW6 = `1-ON, 2-OFF, 3-OFF, 4-OFF` for SD boot on this Rev1.0 board.**
