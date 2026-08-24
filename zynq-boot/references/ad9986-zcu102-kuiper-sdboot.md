@@ -22,28 +22,29 @@ burned time re-deriving them from old ssh transcripts.
 
 - **Address:** `192.168.0.200` (static, PS GEM; host historically at
   `192.168.0.100` on the same wired segment). MAC is Xilinx-OUI `00:0a:35:…`.
-- **Login:** `ssh root@192.168.0.200` (password `analog`, Kuiper default) —
-  key auth preferred; each HOST MACHINE needs its own keypair installed once:
-  `ssh-keygen -t ed25519` then `ssh-copy-id root@192.168.0.200`.
+- **CANONICAL REACH (agents/sessions): the paramiko bench tools**, not
+  manual `ssh`. Config: `platforms/boards/zcu102-ad9986/bench-access.json`
+  in the socks tree (host/user/password/`bench_known_hosts`); runner:
+  `platforms/tools/bench/ssh_run.py --profile <that json> -- '<cmd>'`
+  (siblings: `bench_put.py`, `reboot_board.py`). They embed the password
+  (`analog` — the public Kuiper stock default, not a secret) and
+  auto-accept+persist the host key, so they never stall on interactive
+  prompts. **No `~/.ssh` setup is needed or used.**
+- **Manual `ssh root@192.168.0.200` (operator, interactive):** password
+  `analog`; expect a host-key prompt on first use per machine.
 - **SSH banner:** `SSH-2.0-OpenSSH_8.4p1 Raspbian-5+deb11u3` (Kuiper is
-  Raspbian-based — this banner is a cheap identity check via
+  Raspbian-based — a cheap identity check via
   `exec 3<>/dev/tcp/192.168.0.200/22; head -1 <&3`).
 - **Host key (ED25519, observed 2026-08-24, original SD):**
   `SHA256:HcH4RtAqbun+2Mlx9+S/lwVO3FMtqhG5fuvJ6YTzEz0`
-- **Recommended alias** (`~/.ssh/config`), so sessions type `ssh gps-board`:
 
-  ```
-  Host gps-board
-      HostName 192.168.0.200
-      User root
-  ```
-
-**The lesson (don't re-diagnose the board first):** on a NEW or moved host
-machine, "host key changed" + "publickey denied" is almost always the HOST —
-no keypair yet, and a stale hashed `known_hosts` entry for `.200` from that
-machine's own past network. Check `ls ~/.ssh/id_*` and the banner BEFORE
-touching the board. A genuinely wrong host key with the banner also wrong is
-the boot-source problem (SW6 / QSPI fallback) — see the symptoms table below.
+**The lesson (2026-08-24, learned the embarrassing way):** a manual `ssh`
+failure ("publickey denied", "host key changed") on a host with no
+`~/.ssh` keypair proves NOTHING about the board — the project's bench
+reach is paramiko-with-password and has its own `bench_known_hosts`.
+Try `ssh_run.py` FIRST; if the bench tools work, nothing is broken. A
+wrong host key WITH a wrong banner is the boot-source problem (SW6 / QSPI
+fallback) — see the symptoms table below.
 
 ## Boot-mode switches — SD boot (this is the hard-won one)
 
