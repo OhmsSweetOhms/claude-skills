@@ -241,6 +241,55 @@ section opening:
   (`REG_CAPTURE_STAMP` is latched at job completion) and reads ±350 ppm
   under the four-band mux config.
 
+- **A measurement tool must prove its source MOVED (decision 131, board
+  leg 2026-09-04).** The plan-16 `ref-offset` bring-up stage (position 6)
+  samples the S2MM block counters before `t0-live-fanout` (position 8)
+  drives `CONTROL` bit 0, fits a flat line, and publishes a well-formed
+  ACCEPTed record of −1 000 000 ppm that passes every guard — monotonic,
+  ZERO residual, rails agreeing to 0.000 ppm, sign consistent, the
+  consumers' own `load_record` — because a stopped rail out-scores a live
+  one on every statistic. The detached 900 s continuation launched from
+  stage 6 always straddles the fanout restart; the restart RESETS the drop
+  counters, the direction-agnostic health gate (`pre != post`) reads it as
+  a drop, the final never publishes, and `status.json` keeps a live
+  `final_pid` with `refusal: null`. Same defect class as the dead
+  `REG_FOLD_PORT_BEATS` instrument. Until the fix lands: hand-fire the
+  installed tool on a serving board (a tool artefact, never a hand-written
+  record) and gate it against an independent measurement.
+- **The daemon's published servo ppm is SIGN-INVERTED (decision 132):**
+  `acq.json engine.offset_servo.ref_offset_ppm` carries the
+  received-carrier sign under the reference-minus-nominal convention
+  string (record −21.662 vs servo +21.264 on one boot; `estimate_hz`
+  +33 500 proves the record — a LOW LO shows a nominal signal HIGH).
+  Nothing in the daemon consumes it; the Iridium channel resolver does
+  (69 kHz = 1.66 channel steps if consumed raw). Read the decision-125
+  record, or negate the servo, until the fix lands. Whether decision 60's
+  +21.66 on the old unit was the same inversion is OPEN.
+- **The F9P TPV arrival-stamp board-vs-GPS term is load-sensitive** (board
+  leg 2026-09-04): −3.5 ppm idle vs +8.1 ppm under ~12 k jobs/15 min on
+  the same tool and cabling while rail-vs-board moved 0.78 ppm; the loaded
+  slice bulges mid-window (CPU-load signature) and χ² cannot see it. The
+  sky window's composed −22.172 inherits the caveat. Only a
+  contemporaneous, idle-board slice is usable, and only as a bound.
+- **The record's σ is precision, not accuracy:** the board's NTP peer is
+  a public pool server at a 2048 s poll (RootDelay ~10 ms, jitter 0.5 ms,
+  kernel correction −1.27 ppm), so a 900 s window can fall entirely
+  between polls and the usual offset-corral rate bound does not apply
+  (0.25–2.4 ppm reference uncertainty, unpublished). The only accuracy
+  statement is the record-vs-servo cross-check, two instruments sharing
+  no reference (0.517 ppm on the 2026-09-04 boot).
+- **No warm-up transient is visible from uptime ~205 s on a cold boot**
+  (off overnight; Δχ² flat-vs-exponential 0.17–0.45 against 7.8 at 95 %):
+  a bound, not a null — the rails only count once the chain is `serving`
+  (~160 s), and a τ ≈ 125 s transient is 19 % of amplitude by then.
+  Decision 71's 900 s hold is neither contradicted nor confirmed; a 120 s
+  window's quantisation floor (6.67 ppm) exceeds the transient's amplitude
+  (3.94 ppm), so single-width ladders are vacuous — use a width ladder
+  and a window-mean forward model.
+- **`sftp_xfer.py --sha256` is GET-only** — a push with it fails `RC=2`
+  and a watcher grepping for its own pattern in `ssh_run`'s echo fires
+  instantly (use the `[b]racket` idiom and check the artefact).
+
 ## Vectors and gating
 
 - **Freezing a vector tree after a split must be a metadata STAMP; a
