@@ -96,3 +96,73 @@ rules, in tension order:
   changed thread state, in that same commit; a session may deliberately
   defer the registry when it would aggregate another session's
   in-flight state — note it, and let the next regen self-heal.
+
+### Long-idle packets: mailbox watcher without worker polling
+
+A build-day / RTL / xsim packet can spend hours in a gate with no question.
+That quiet interval is not a reason to wake its worker. Before handing the
+launch command to the operator, arm the one-shot launch watcher
+(`watch_codex_worker_launch.py --inbox <inbox>`) outside the model loop. The
+operator then fires the foreground TUI through `launch_codex_worker.py`, which
+atomically creates schema-validated `worker-state.json` and causes the watcher
+to return `WORKER_LAUNCHED <path>`. The orchestrator consumes the file, never a
+prose launch claim. A harness that cannot re-enter on watcher completion still
+reads this live receipt on its next resume; the operator may relay the same
+pointer once, but no cross-agent content leaves the mailbox.
+
+The worker binds its actual Codex session ID into the receipt before its first
+mailbox job. A `codex-self` job verifies that binding at launch and again before
+ringing; a wrong or stale session ID fails closed while `result.json` remains
+authoritative.
+
+After launch, arm the questions watcher
+(`watch_codex_questions.sh <inbox> 3600 20`) and require
+every long command to run through `launch_codex_mailbox_job.py`. The detached
+supervisor retains logs, writes `jobs/<job-name>/<run-key>/result.json`
+atomically on terminal state, and may send only a path-only self-doorbell to
+the same Codex worker. Claude↔Codex content still travels only through the
+mailbox; neither agent directly messages the other.
+
+Only the external command is detached. The Codex TUI worker stays interactive
+and may be redirected at any time. A redirect that invalidates an active job
+writes `control.json` through the launcher's `--cancel <run-dir> --reason ...`
+path. The supervisor owns a transient systemd user scope and kills the complete
+cgroup. `cancelled` is valid only when every command reports
+`cleanup_verified: true` and the cgroup is empty or removed; otherwise the
+packet is blocked on an unverified cleanup. A redirect unrelated to the active
+job leaves it running.
+
+If the operator wants periodic visibility, an orchestrator-side loop may read
+the branch tip, governor state and mailbox locally and report them without
+asking or waking the worker. Unchanged state never creates a worker turn.
+When no compatible doorbell exists, the terminal result remains authoritative
+and the operator resumes the worker manually. `REPLY_READY` still ends any
+orchestrator-side status display.
+
+Three files own three different facts; never merge them into prose or duplicate
+their fields:
+
+- `worker-state.json` — foreground worker process/lifecycle, launcher-owned.
+- `progress.json` — plan checkpoint and next action, worker-owned.
+- `jobs/<job-name>/<run-key>/result.json` — detached command terminal result,
+  mailbox-supervisor-owned.
+
+---
+
+## Hard-won facts from the gps_design program
+
+Moved verbatim from that project's `CLAUDE.md` (2026-09-04).
+
+- **A Codex/Opus worktree's pre-commit guard reserves `.threads/` for the
+  main checkout**, so every packet's thread-dir deliverable (a memo, a format
+  pin) arrives UNCOMMITTED in the worktree; the orchestrator promotes it. This
+  is correct behaviour, not a failed handback. **An in-process Opus agent
+  cannot `SendMessage` its parent session** ("is this process's own main
+  session") — its RETURN is the doorbell; put that in the launch prompt
+  instead of a ring instruction.
+- **A Claude-session packet worker ends its turn on `OPEN_QUESTION` and
+  does not resume when the answer file lands** — `ListAgents` and
+  `SendMessage` it by name after `answer_question.py`, or it idles
+  (plan-16 lost ~4 h). The question watcher rings only on `q-NN.md`; poll
+  for `handback.json` separately; check every operator rider has a metric
+  key before accepting.

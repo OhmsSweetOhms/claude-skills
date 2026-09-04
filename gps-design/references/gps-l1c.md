@@ -336,3 +336,29 @@ handoff.md/findings, not this file, for the point-in-time picture.
   `pseudorange-anchoring.md` (t_rx/TOW conventions the L1C anchor
   extends), `gps-acquisition.md` (PCPS semantics the aided L1C search
   inherits).
+
+---
+
+## Hard-won facts (moved from the project CLAUDE.md)
+
+Verbatim, moved 2026-09-04.
+
+- **The generated L1C-O overlay must be anchored to the GPS week, not the
+  run's 6 s LNAV grid** (IS-GPS-800: 1800 chips / 18 s, 604800/18 exact;
+  decision 115, landed `b3173b41`). The two anchors coincide only when the
+  epoch is an 18 s multiple — every shipped root was — so the defect was
+  latent until a re-pin to the Iridium anchor instant put the generator
+  1200 chips (12 s) out and cost the fold 6.25 dB. `l1c_epoch_anchor_s =
+  tow_start mod 18` feeds only the 100 Hz L1C epoch index; LNAV indexing
+  stays on `tow_start`. Any new L1C scenario at an arbitrary epoch depends
+  on it; `tests/test_l1c_overlay_week_anchor.py` fails on the old code.
+- **One IBC frame + one L1C pilot = absolute GPS time from one SV (seed
+  consumer, decision 119, measured):** 1800 overlay hypotheses → a 5–10
+  window (`loose-window-seed`), truth in set 21/21, 8/8 on-air, 0.238 µs
+  once verified. The seed is a RECEPTION time (transit 67–84 ms, 4× its
+  σ); the relative "winner beats runner-up" rule alone accepted wrong
+  phases 77/504 — the absolute rule (fold shows its 20·log10(N) gain within
+  1.5 dB) is the sufficient one, and it needs fold **N ≥ 12** for a
+  separability guarantee (`FOLD_N_MAX` is the silicon dependency). An 18 s
+  anchor slip is invisible to the consumer by construction; containment is
+  the producer's 3σ tripwire + a HOW-TOW cross-check.

@@ -1976,3 +1976,82 @@ After Stage 19 completes (whether pass or fail), Claude updates `CLAUDE.md`
 with HIL results. Read `references/claude_notes.md` § "Post-HIL Update" for
 the required content: HIL pass/fail, capture count, ILA observations, and
 any debug notes.
+
+---
+
+## Hard-won facts from the gps_design program
+
+Measured on the ZCU102 GPS/Iridium program and moved here verbatim
+(2026-09-04) because they are Vivado / gate-methodology facts, not
+project facts.
+
+- **A setup multicycle must be proven on BOTH sides, and scoped by
+  endpoint (build day 3 packet 4b, 2026-08-29).** `set_multicycle_path
+  -setup N` asserts the destination is not consumed for N cycles AND the
+  source is stable for N cycles before the capture edge. Proving the read
+  side (≥ 4096 accumulator writes of slack) said nothing about the capture
+  side: `ST_BIN_SETUP` is a single-cycle state entered on the edge after
+  `doppler_idx_r` changes, loading once with no re-capture — the exception
+  would have latched a mid-settle value on every row. And the startpoint
+  that broke it never appeared in the timing report's sixteen worst paths
+  (scoped from `job_fold_r_reg[3]`, the report's name, not from the cone).
+  The fix was already in the design: `fold_n` is refused unless a power of
+  two and `n` is `2^log2n`, so the variable divide is a shift on
+  `job_fold_log2_r` and the modulo is the existing mask — exact identities
+  (320/320), 87 CARRY8 gone, WNS −15.98 → +2.59 ns with no exception
+  (ADR-PL-B2_L1C-022/-023).
+- **An ILA core's LUT cost is per-CORE, not per-bit (routed netlist,
+  2026-08-29):** 2,283 LUTs for a 3-bit core vs 2,580 for 157 bits; probe
+  width buys BRAM (0.5 vs 4.5 tiles). A drop ladder ordered by width is
+  right for BRAM and nearly arbitrary for LUTs/congestion. The build-day-3
+  image routes at WNS +0.002 ns on a route-dominated PS-AXI-Lite→CSR path
+  (`HPM0` write FIFO → `cfg_center_q25_ok_r`, 62 % route) — the lever is
+  physical (directive/seed), not RTL, and the board leg reads marginal
+  symptoms knowing it.
+- **A resource bar for a refactor that moves module boundaries must be
+  written against functional resources per instance (BRAM / DSP / LUTRAM /
+  URAM) and timing, never per-hierarchy LUT counts.** Vivado's hierarchical
+  utilization report is cumulative and re-homes boundary logic when a level
+  is inserted (`(u_datapath)` −771 against children +1,315 is arithmetically
+  forced); untouched sibling modules moved ±100–255 LUT beside a −1,681
+  parent residue. Ruled a documented mapping deviation; a
+  `-flatten_hierarchy none` control is the proof, registered, not run.
+- **Vivado 2022.2 silently ignores `rom_style="distributed"` on an
+  array-of-arrays ROM read inside a loop** and builds a replicated mux ROM
+  in RAMB18; one-dimensional ROM entities (UG901 shape) map as asked.
+- **Gate-driver traps (all hit this hop):** a bench that opens vectors
+  relative to the simulator cwd fails from an inbox work dir while `xsim.py`
+  prints `RESULT: PASS` — the bench's own `[FAIL]` lines are the verdict; a
+  gate driver importing a golden in-process must run under the venv
+  `$PYTHON`, never system `python3` (scipy against NumPy 2 aborts); `xsim`
+  exits 0 after a time-0 failure, so refusal tests are judged by error text;
+  a `-quiet` timing query that matches nothing is indistinguishable from
+  one that matches; an XDC is not a Tcl script (`if`/`error` are rejected
+  and SKIPPED); a green module OOC proves a CDC query RESOLVES, never that
+  the constraint does work (the harness's own clock groups override every
+  inter-domain exception).
+- **A gate driver re-executed by the sim governor runs under SYSTEM Python**
+  — importing the golden there aborts on `numpy.dtype size changed`. Every
+  golden call, driver included, is a `"$PYTHON"` subprocess from `env.sh`.
+- **The instrumented `system_project.tcl` build flow implements in
+  memory and never writes `impl_1/runme.log`**; the implementation log
+  of an image is the session `vivado.log` + `system_top_{opt,place,route}.rds`
+  + `timing_impl.log` (retain those + the routed dcp; a module OOC pass
+  proves a CDC query RESOLVES, never that the constraint works —
+  in-context `report_exceptions` must show the rows PRESENT in the plain
+  inventory). Found in-image: the acquisition module's un-anchored
+  gray-pointer / bus-skew globs also match `gps_tx_replay`'s FIFO
+  (equal 4.000 ns today) — anchor to the instance.
+- **The mailbox job runner's `timeout_seconds` counts from LAUNCH,
+  including any build-class lock wait**, and the supervisor deadline
+  cannot be extended on a running job (only `cancel` is honoured) —
+  size the contract for wait + run, or take the lock outside it. A
+  wrapped script that fails reports `exit_code: None`; judge on markers.
+- **`codex-handoff/**/jobs/` receipts embed the absolute worktree path
+  and username and are gitignored repo-wide since `973aa667`; a MERGE
+  re-tracks any receipts a branch tracked before the rule** (tracked
+  beats ignored) — `git rm --cached` them in the merge pass. Scanning
+  the working tree finds ignored files; scan `git archive HEAD` to test
+  what a push would carry. `git rebase main --exec '<sed + amend>'` is
+  a fine in-place scrub of an UNPUSHED branch, but it also moves the
+  branch onto the current main — state it.

@@ -196,3 +196,24 @@ Reusable when relaxing any lock/detect threshold for weak signal:
   schedule questions.
 - Weak-signal / cislunar acquisition sizing (Doppler ceiling, soak).
 - B2→B3 seeding bugs (code-phase convention, rational seed advance).
+
+---
+
+## Hard-won facts (moved from the project CLAUDE.md)
+
+Verbatim, moved 2026-09-04.
+
+- **The detector's per-run 59-bin window is sufficient for every event's
+  `peak_bin` and extents (0 of 290 moved) but NOT for the golden's
+  quarter-power `t_start_sample`** (10 of 32 burst events move with the
+  14 pre-open rows present, 277 of 289 with them withheld as a deployed PS
+  would see them). Ruled (lane decision 61): the golden's profile moves to the
+  opening block and its cost is MEASURED per stratum before any RTL pre-open
+  window is built; do not quote the golden's `t_start` accuracy for silicon
+  until that number exists.
+
+### Acquisition engine on silicon (durable facts, measured 2026-08-22)
+
+Hard-won on the ZCU102 appliance across the day-2 image board legs and the
+A2 daemon hop. Live state lives in `.threads/fpga/*multiband-acquisition-
+engine/` and the PL thread's board block, **not here**.
