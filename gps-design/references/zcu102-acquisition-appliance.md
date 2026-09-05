@@ -290,6 +290,52 @@ section opening:
   and a watcher grepping for its own pattern in `ssh_run`'s echo fires
   instantly (use the `[b]racket` idiom and check the artefact).
 
+### Facts from the plan-17 board leg (2026-09-04/05, socks `daemon-ref-offset-fix`)
+
+- **The board runs the 252-slot LIBRARY code-lib staging** (`bundle_set
+  library`, whole-node `78c6b771…`; `$STAGED` = a symlink into
+  `/root/capture/linux/codelib/staged`, same bytes as `$SHARE`,
+  `code_map_path null`). The 12-slot corner map in `codelib/code-lib-map.json`
+  is the anchor test's set, NOT the deployed artifact.
+- **`install.sh` from a clone installs NO blobs** (`staged-full/regions/` is
+  gitignored build output) and its no-blobs branch (`:114`) overwrites
+  `$SHARE/code-lib-map.json` with the 12-slot corner map — the running
+  daemon's map drops from 252 to 12 slots. Never clear `$STAGED/regions`
+  from a clone (the blobs are the only copies; the frozen 12-slot bundle-set
+  cannot restage). Deploy = install.sh with the daemon DOWN, then re-install
+  the correct 252-slot map to `$SHARE` and verify `sha($SHARE) == sha($STAGED)`
+  before anything starts the daemon. The L1C relabel (`l1cd` → `l1cp_boc11`)
+  was applied by byte-identical COPY of the 63 blobs plus a scripted
+  127-field map transform, old files left in place (315 blobs after).
+- **`jq` is not installed on the board** (rc 127). Read JSON fields with
+  `python3 -c`; a `$(jq …)` in a command string yields an empty argument
+  silently.
+- **`RefOffsetGate` (pre plan-18) never re-checks a held FINAL's expiry**:
+  `valid_until` is evaluated only in the loader on the re-read path, so the
+  daemon arms indefinitely on an expired record (`refused_rounds 0`,
+  `reads 1`) and a record hand-fired to the live path is never read until a
+  restart (one restart recovers in ~109 s). Fix = plan-18
+  `ref-offset-gate-freshness`. Until it lands, a running daemon's record can
+  only be replaced by a restart.
+- **The 120 s hand-run of `ref_offset_measure.py` is 6× noisier than the
+  900 s stage final** (σ ≈ 7 vs ≈ 1.2 ppm); it confirms, it does not
+  tighten. Both measure rail-vs-BOARD-clock; on a fresh boot the kernel's
+  NTP frequency correction is still settling (+12 → +4 ppm applied over the
+  first ~40 min) and moves both — the record's `sigma_note` term. The tool
+  is non-intrusive under a running daemon.
+- **`record_vs_servo_ppm` is not a clock-vs-clock check**: the servo's
+  estimate is a median over its current fresh-PRN set and moved 2750 Hz
+  (1.75 ppm at L1) as that set grew 4 → 9 during a 12-min soak. A bar of
+  `σ_record + 0.16 ppm` was mis-specified; observed 1.8–3.5 ppm on a good
+  boot.
+- **Power-cycle stamps:** when the operator sits at the worker's own
+  terminal, their direct "go" is the stamp (host UTC at the word); a relay
+  from another session is confirmation only. A warm `reboot` wedges this
+  unit intermittently — power cycle, ≥ 60 s off.
+- **Evidence dir:** `/mnt/nvme/gps-acq/ref-offset` does not exist on the
+  board and `engine.ref_offset_evidence_dir` is null, so the stage falls
+  back to `RUN_DIR` (tmpfs) with a logged warning — one `mkdir`/key.
+
 ## Vectors and gating
 
 - **Freezing a vector tree after a split must be a metadata STAMP; a

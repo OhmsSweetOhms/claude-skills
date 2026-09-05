@@ -126,6 +126,8 @@ drift; the inbox keeps it self-contained.
 <worktree>/codex-handoff/<plan-id>/
   README.md            (main-session-written: inbox description, who writes what)
   prompt.md            (main-session-written: curated launch prompt; Codex's input)
+  worker-state.json    (launcher-written: foreground worker lifecycle authority)
+  progress.json        (Codex-written, optional: plan checkpoint state)
   handback.json        (Codex-written: machine-readable closure record)
   handback.md          (Codex-written: human-readable companion)
   scripts/             (Codex-written: throwaway probes, debug tests, helpers)
@@ -164,6 +166,25 @@ Codex. The emitter writes its output to
 `<worktree>/codex-handoff/<plan-id>/prompt.md` when `--out` is
 supplied; without `--out`, it prints the packet to stdout for
 inspection or direct paste.
+
+The fire boundary populates `worker-state.json`. The operator launches the
+foreground TUI through `scripts/launch_codex_worker.py`, never through a raw
+`codex` command. The launcher writes schema v2 atomically before starting
+Codex, records the actual PID/model/branch/SHA, refuses a duplicate live
+worker, and prints only `WORKER_LAUNCHED <path>` after the process exists.
+The state file is governed by
+`assets/schemas/codex-worker-state.schema.json`. Plan checkpoint detail belongs
+in `progress.json`; external-command lifecycle belongs under `jobs/`. Keeping
+those three authorities separate prevents a worker's progress prose from
+masquerading as proof that a process was fired.
+
+At the worker's first turn it binds its actual `$CODEX_THREAD_ID` into the
+receipt with `launch_codex_worker.py bind-session`. A `codex-self` mailbox job
+then verifies the environment thread ID against that receipt both when it is
+launched and immediately before ringing. A missing, stale, or mismatched v2
+binding fails closed instead of waking another Codex session. Packets already
+running with the manual v1 receipt are the one migration exception; their
+request records are labeled `legacy-v1` and disappear when those packets end.
 
 Codex writes the handback and session-created material during the
 run. Main session reads after Codex exits, runs
@@ -283,6 +304,9 @@ codex worktree on X", "spawn codex on X", "run codex on X".
        --main-repo . \
        --thread-id <subsystem/YYYYMMDD-slug> \
        --plan-id <plan-NN> \
+       --codex-model gpt-5.6-sol \
+       --reasoning-effort high \
+       --auto-compact-token-limit 300000 \
        --out <worktree>/codex-handoff/<plan-NN>/prompt.md
    ```
 
@@ -301,7 +325,8 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    - **Environment file** — the emitter also stages
      `<worktree>/codex-handoff/<plan-id>/env.sh` and the packet's launch
      command becomes `cd <worktree> && source codex-handoff/<plan-id>/env.sh
-     && codex`, so the hop's toolchain environment (license files, version
+     && launch_codex_worker.py launch ...`, so the hop's
+     toolchain environment and worker profile (license files, version
      pins, vendor settings scripts) is set in the terminal BEFORE Codex
      launches and is inherited by every command Codex runs. Priority:
      `--env-file <path>` copies verbatim (explicit replace); an existing
@@ -351,7 +376,8 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    The emitted packet opens with a **"Copy-paste — Codex turn 1 (short
    prompt)"** fenced block. The **first thing in that block is a "WORKING
    CONTEXT" header**: (1) where Codex is launched from — the worktree cwd
-   (`cd <worktree> && source codex-handoff/<plan-id>/env.sh && codex`) —
+   (`cd <worktree> && source codex-handoff/<plan-id>/env.sh &&
+   launch_codex_worker.py launch ...`) —
    and (2) where this
    thread's bookkeeping (the "main thread": plan, ADRs, findings, handback
    inbox) lives, stated both as an absolute path and **relative to that
@@ -367,7 +393,7 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    the short prompt, not the long packet. The long-form context follows
    it for reference.
 
-   Plus three generic operational rules baked into the script's output:
+   Plus five generic operational rules baked into the script's output:
 
    - **Don't push the branch.** Worktree merge-back is a single terminal
      event at thread close, not at plan close.
@@ -375,20 +401,59 @@ codex worktree on X", "spawn codex on X", "run codex on X".
      it.** If the plan/ADRs/golden vectors don't pin a decision Codex
      needs (interface widths, storage semantics, register behavior,
      golden intent), Codex must stop, pose the question with candidate
-     readings + evidence, and wait; the user relays it to the main
-     session and pastes back a resolution. The exchange is recorded in
-     the handback's `investigations[]`. A handed-back question that
+     readings + evidence in the mailbox, and launch the detached answer wait;
+     the main session resolves the same file. No cross-agent content is pasted
+     through a second channel. The exchange is recorded in the handback's
+     `investigations[]`. A handed-back question that
      catches a contract drafting error is a success, not a stall.
    - **Write structured handback** per `references/codex-handback.md` to
      `<worktree>/codex-handoff/<plan-id>/handback.{json,md}` with the
      required gates / discoveries / follow_ons / blockers / investigations
-     / handoff_artifacts shape.
+   / handoff_artifacts shape.
+
+   - **Keep waits outside the model loop.** Commands that can outlive one tool
+     return and all ambiguity-mailbox waits run through
+     `scripts/launch_codex_mailbox_job.py`. The worker ends its turn after
+     launch. The detached supervisor writes the full log and an atomic
+     `jobs/<job-name>/<run-key>/result.json`; only that terminal record or a
+     manual resume re-enters the worker. Cross-agent content remains in the
+     mailbox. An optional `codex-self` doorbell is pointer-only, targets the
+     same worker that launched the job, and is never a Claude↔Codex message.
+
+     The worker TUI stays foregrounded and redirectable; only the command is
+     detached. When an operator redirect invalidates a running job, the worker
+     runs `launch_codex_mailbox_job.py --cancel <run-dir> --reason <text>`.
+     That atomically writes `control.json`; the external supervisor kills the
+     complete transient systemd user-scope cgroup. Cancellation is terminal
+     only when `result.json` says `cancelled` and every command has
+     `cleanup_verified: true`. A surviving or unverifiable descendant is a
+     blocker, never a successful cancellation.
+
+   - **Record the foreground worker at fire.** `launch_codex_worker.py`
+     atomically owns `worker-state.json`; the worker updates semantic
+     blocked/completed/failed transitions through the same script and never
+     hand-edits the receipt. The worker receipt has no cancellation claim:
+     external jobs are cancelled only through their verified systemd-cgroup
+     mailbox contract, while an exited TUI is merely `exited` or `failed`.
+     Exit code zero without a conforming handback becomes `exited`, not
+     `completed`.
 
    Any plan-specific operational rules live in the plan file's "Hard
    constraints" section (the tiered template's Codex add-on sections).
-   **The plan file IS the launch prompt.** Codex reads it directly when
-   given the absolute path; the launch packet only carries mechanical
-   facts pointing at it.
+   **The plan file IS what Codex executes** — Codex reads it directly
+   when given the absolute path; the launch packet only carries
+   mechanical facts pointing at it. **It is NOT where the launch framing
+   goes (two-file rule, ruled 2026-08-17):** the launch-contract chart,
+   the role/reporting line, one-channel escalation and turn-1 pointers
+   live in a sibling `kickoff-<planNN>-<slug>.md` in the thread dir. A
+   plan that carries the chart made a worker read producer framing and
+   act as the orchestrator. `emit_codex_launch_packet.py` enforces it:
+   it REFUSES a plan file containing the chart's `| **Packet** |` row,
+   REFUSES to run without a kickoff file (override `--allow-no-kickoff`
+   for legacy hops), REFUSES to guess when `thread.json` lists more than
+   one live worktree (`--worktree-path` required), and names the inbox
+   by the FULL plan-file stem (flat namespace, launch contract). Turn 1
+   names the kickoff file first, then the plan.
 
    The plan must be fleshed out before launch per
    `assets/templates/plan-01-template.md`'s tiered template: base
@@ -403,15 +468,30 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 
    If the same hop is launched a second time (e.g. after a Codex
    crash), regenerate the packet — the SHA will have moved forward if
-   Codex committed anything, and the regen captures that.
+   Codex committed anything, and the regen captures that. Inspect the existing
+   receipt, prove its recorded launcher/worker PIDs are dead, then append
+   `--relaunch`; the wrapper archives the terminal/stale receipt and still
+   refuses to replace a live worker.
 
-5. **You (the user) open a sidecar terminal** — a separate
+5. **Arm the launch-receipt watcher before yielding.** The orchestrator runs
+   this one-shot wait outside the model loop:
+   ```bash
+   python3 ~/.claude/skills/threads/scripts/watch_codex_worker_launch.py \
+       --inbox <worktree>/codex-handoff/<plan-id>
+   ```
+   Run it with the environment's background-tool facility. It emits one
+   pointer-only `WORKER_LAUNCHED <path>` event and exits; it never carries
+   cross-agent content. If the orchestrator is already stopped or its harness
+   cannot re-enter on background completion, the file still provides durable
+   awareness on the next resume and the operator may relay that pointer once.
+
+6. **You (the user) open a sidecar terminal** — a separate
    tab, window, or pane in your terminal app on this same machine —
-   and run codex interactively in the worktree:
+   and run the emitted foreground launcher in the worktree:
    ```bash
    cd <worktree>
-   source .envrc
-   codex
+   source codex-handoff/<plan-id>/env.sh
+   python3 ~/.claude/skills/threads/scripts/launch_codex_worker.py launch ...
    ```
    Then paste the launch packet from step 4 as the first turn (the
    plan-file absolute path is the first line of the packet so it can
@@ -422,16 +502,16 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    Claude (the main session) cannot launch this terminal for you —
    spawning an interactive TTY isn't possible from inside its own
    shell. The bootstrap script's final stdout block prints the
-   exact `cd / source / codex` invocation; copy-paste it into the
+   exact `cd / source / launch_codex_worker.py` invocation; copy-paste it into the
    sidecar terminal.
 
-6. **Watch + steer.** As codex works, the TUI shows every event
+7. **Watch + steer.** As codex works, the TUI shows every event
    (tool calls, file edits, agent messages, tool results). Approve
    gates as they fire. If codex goes off track, type a redirect
    message — that fires a `turn/start` against the same thread
    without losing context.
 
-7. **Commit the codex output to the worktree branch.** When codex
+8. **Commit the codex output to the worktree branch.** When codex
    stops at a sensible checkpoint (or you intervene to pause it),
    review `git -C <worktree> diff` and either:
    - let codex commit on the worktree branch via the TUI (it has
@@ -461,6 +541,9 @@ codex worktree on X", "spawn codex on X", "run codex on X".
   prints the symlinked path (proves the link resolves).
 - `thread.json.codex_worktrees[0].status == "active"` and
   `path` / `branch` match what bootstrap printed.
+- `<worktree>/codex-handoff/<plan-id>/worker-state.json` validates against
+  `assets/schemas/codex-worker-state.schema.json` and records the actual
+  worker process as `running` before any first-turn tool call.
 
 ## Retroactive handback
 
@@ -549,17 +632,82 @@ repo-relative (fingerprint discipline).
 1. Write `questions/q-NN.md` with `status: open`, the candidate
    readings, and the evidence for each. Do not proceed on an assumed
    reading.
-2. Block on
-   `bash ~/.claude/skills/threads/scripts/await_codex_answer.sh <file> 3600`
-   — exits 0 on `answered` (read `## Resolution`, proceed);
-   `escalated` means a user decision is in flight, keep waiting.
+2. Put `await_codex_answer.sh <file> 3600` in a mailbox-job JSON contract,
+   launch it through `launch_codex_mailbox_job.py`, then end the model turn.
+   Never run the wait directly in a model-visible tool call. Exit 0 means
+   `answered` (read `## Resolution`, proceed);
+   `escalated` means a user decision is in flight. Do not use model-visible
+   `write_stdin` calls to watch the wait.
 3. On timeout (exit 3): set `status: timeout`, record the question as
    a `blockers[]` entry AND an `investigations[]` entry, write the
    handback (`gate-incomplete`/`blocked`), end the session.
 4. Every mailbox exchange — answered or not — is duplicated into the
    handback's `investigations[]`.
 
-**Main-session protocol:**
+**Doorbell transport (Claude↔Claude sessions, ruled 2026-08-17).**
+The file is the RECORD; peer messaging (`SendMessage`/`ListAgents`) is
+the DOORBELL. Measured: a message wakes an idle peer session at once,
+lands mid-turn between tool calls, and queues behind a long foreground
+tool call (delivered at its next tool round); it reaches Claude
+sessions only (NOT Codex) and does not survive a dead peer — which is
+exactly why the file stays the record. Rules, both legs:
+
+- **Write first, ring second, pointer only.** The message body is a
+  verb + repo-relative path and nothing else: `OPEN_QUESTION <path>`,
+  `ANSWERED <path>`, `ESCALATED <path>`, `HANDBACK <path>`. Content
+  never travels in the message; history stays 100 % in the file.
+- Asker (a Claude worker): write `q-NN.md` (`status: open`, add
+  `asked_by: <its ListAgents session name>`), ring the orchestrator,
+  then launch `await_codex_answer.sh` through the detached mailbox-job
+  supervisor and end the model turn. The await is the fallback, not the
+  transport, and never runs as a model-visible foreground wait.
+- Answerer: `## Resolution` body FIRST, `status` flip LAST (unchanged),
+  and the body must LAND: a Codex worker's later question files may carry
+  NO `## Resolution` heading at all — a writer that anchors on the heading
+  writes nothing while the status flip still persists; the await script
+  then (correctly) refuses the empty body and the worker times out into a
+  `gate-incomplete` handback (2026-09-05, plan-25 q-08…q-10). APPEND the
+  heading + body, flip status, then run `await_codex_answer.sh <file> 5 1`
+  and require exit 0 before any doorbell. To re-enter a Codex worker that
+  blocked on such a timeout, launch a short re-wait contract (the same
+  `await_codex_answer.sh <file> 60 5` under `codex-self`) — its
+  `JOB_TERMINAL` doorbell resumes the worker.
+  add `answered_by: <session name>`, then ring `ANSWERED <path>` (or
+  `ESCALATED <path>` so the worker knows a user decision is in flight
+  and does not time out into a blocker).
+- Handback leg: the worker writes and commits the handback per the
+  owning contract, then rings `HANDBACK <path>`. The orchestrator runs
+  verify-before-accept on the FILE; the ring is only the wake.
+- Session names are session-bound: put the orchestrator's name in the
+  worker's launch prompt ("ring `<name>`"), learn the worker's from its
+  first message, record both in the question/handback frontmatter,
+  never in the resume cache. Unnamed in-process subagents ring `from`
+  their agent TYPE — name them or reply by agentId.
+- ONE channel. A worker escalates through the mailbox only; it must
+  not ALSO pose the question to the operator (AskUserQuestion) — two
+  channels can return two rulings, and the file would record only one.
+  The orchestrator owns the user-facing escalation and rings
+  `ESCALATED` while it is in flight.
+- Codex cannot ring. Codex→orchestrator stays file + fallback; the
+  fallback is armed MECHANICALLY (next paragraph), never by memory.
+
+**Mechanical fallback (hook scan, ruled 2026-08-17).**
+`scripts/scan_open_questions.py` runs as a `SessionStart` +
+`UserPromptSubmit` hook (installed in `~/.claude/settings.json`; zero
+tokens when quiet). On every prompt/boot it scans the cwd repo, every
+`codex_worktrees[].path` of every `.threads/**/thread.json`, and every
+worktree of the cwd repo for `codex-handoff/*/questions/q-*.md` with
+`status: open|escalated`, skips packets that already have a handback
+(closed — their questions are record), dedups the same tracked file
+across worktrees, and injects `OPEN_QUESTION <path>` /
+`ESCALATED_QUESTION <path>` lines into the turn. Nothing to arm, nothing
+to relaunch. Its gap: it fires on prompts, not on its own — an
+orchestrator idle with nobody typing waits for the doorbell (Claude
+askers) or the optional 1 h watcher below (Codex askers).
+
+**Main-session protocol (watcher — now OPTIONAL for Claude askers, still
+recommended for a running Codex packet when the orchestrator will sit
+idle):**
 
 1. At Codex launch, start the watcher in the background
    (`run_in_background`):
@@ -574,9 +722,20 @@ repo-relative (fingerprint discipline).
    boundary is load-bearing:
    - **`answered`** — only when the resolution is derivable from
      already-pinned authority (ADR text, golden source, committed
-     vectors, plan prose). Write the `## Resolution` **body FIRST**
-     citing the authority, **then flip `status: open → answered`
-     LAST** — the two edits are not atomic and the Codex-side
+     vectors, plan prose). **Use the atomic writer — do not hand-edit
+     the flip:**
+     ```bash
+     python3 ~/.claude/skills/threads/scripts/answer_question.py <q-file> \
+         --status answered --body-file <resolution.md> --by <session-name>
+     # or: --status escalated --note "<why>" --by <session-name>
+     ```
+     It writes the body and flips `status` in ONE `os.replace`, refuses
+     an empty body, refuses to re-answer, keeps escalation notes as
+     history, and handles both frontmatter styles. A PreToolUse guard
+     (`~/.claude/hooks/mailbox-flip-guard.py`, Edit|Write) DENIES any
+     hand edit that would produce `status: answered` on a `q-*.md`
+     without a Resolution body, and prints the command above. Rationale
+     (kept for history): the two edits were not atomic and the Codex-side
      `await_codex_answer.sh` keys on `status`, so a status-first edit
      can be read as an "answered" question with an empty Resolution
      body (observed twice, each burning a duplicate q-NN round trip;
