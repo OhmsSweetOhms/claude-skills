@@ -59,6 +59,28 @@ This plan should close or hand off to a successor hop when:
 
 1. {{Numbered run-specific invariants. Typical 4-10. Include don't-push, no-bypass, additive-only, baseline-deletion discipline, hardware preflight as appropriate.}}
 
+## Execution budget and mailbox job contract
+
+**Worker model / effort:** {{explicit model and reasoning effort}}
+**Automatic compaction threshold:** {{token threshold}}
+**Fresh-session checkpoints:** {{completed-step boundaries and progress.json path}}
+
+Any command that can outlive one tool return — especially Vivado, Xsim,
+synthesis, implementation, a long replay, or a mailbox wait — runs through
+`~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py`. Its JSON
+contract names terminal success/failure markers, expected artifacts, timeout,
+retry bounds, concurrency and bounded returned output. The worker ends its
+turn after launch and reads `result.json` only after a mailbox event or manual
+resume. Cross-agent content travels only through mailbox files; any supported
+doorbell is path-only and write-first/ring-second.
+
+The worker TUI remains foregrounded and redirectable; only the external job is
+detached. If a redirect invalidates an active job, write its atomic cancellation
+control with `launch_codex_mailbox_job.py --cancel <run-dir> --reason <text>`
+and end the turn. Do not claim cancellation until the terminal result says
+`cancelled` and every command's systemd-cgroup containment reports
+`cleanup_verified: true`.
+
 ## Counter tolerance / acceptance metrics
 
 {{Table or bullets for numerical gates. Omit if not applicable.}}

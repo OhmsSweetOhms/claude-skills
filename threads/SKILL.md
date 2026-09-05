@@ -1,6 +1,6 @@
 ---
 name: threads
-description: Manage debug-thread directories for hypothesis-driven investigations that span multiple sessions. Use this skill whenever the user wants to start a new debug thread, add a plan hop to an existing thread, capture a findings snapshot, register a diagnostic script, import external review feedback (from Codex, claude.ai, or a colleague), promote a diagnostic into a permanent regression test, close a thread, or link a thread to a `/research` session. Also use it to process a Codex handback end-to-end — the self-healing triage→reconcile→ADR→commit→kickoff lifecycle, including superseded/zombie-thread detection against actual worktree state, identifier-collision scrubbing, provenance-checked ADRs, and bash-safety/fingerprint commit linting. Also triggers on any mention of `threads/`, `thread.json`, "debug thread", "plan hop", "findings snapshot", "promote this diagnostic", "external comment", "process a handback", "handback lifecycle", "superseded thread", "zombie thread", or when the user is working inside a `threads/<subsystem>/<slug>/` directory. This skill plays nice with `/research`: it maintains the bidirectional link (`thread.json.linked_research[]` ↔ `session-manifest.json.spawning_thread`). Do NOT use for sprint boards, feature planning, or one-off debug commands — this is specifically for multi-hop investigations that accrete plans, data, and diagnostics over time.
+description: Manage debug-thread directories for hypothesis-driven investigations across sessions. Use for new threads, plan hops, findings snapshots, diagnostic registration or promotion, external-review imports, thread closure and research links. Also use for Codex handback triage, reconciliation, ADR provenance, closeout and kickoff lifecycle, stale or superseded thread detection, and multi-session orchestration. Triggers on threads/, thread.json, debug thread, plan hop, findings snapshot, handback lifecycle, and investigation status review. Not for sprint boards, feature planning or one-off debug commands. Also triggers on "process a handback", "zombie thread", "promote this diagnostic", and "external comment".
 ---
 
 # threads — Debug Investigation Container Pattern
@@ -77,10 +77,17 @@ lives in `references/codex-handoff.md`, with templates under
 README, `codex-handback-template.md` for handback.md,
 `codex-question-template.md` for mailbox questions,
 `codex-handback-retroactive-prompt.md` for recovery cases), the JSON
-schema at `assets/schemas/codex-handback.schema.json`, and supporting
+schemas at `assets/schemas/codex-handback.schema.json` and
+`assets/schemas/codex-worker-state.schema.json`, and supporting
 scripts at `scripts/` (`bootstrap_codex_worktree.sh`,
-`emit_codex_launch_packet.py`, `watch_codex_questions.sh` +
-`await_codex_answer.sh` for the mailbox, `triage_codex_handback.py`,
+`emit_codex_launch_packet.py`, `launch_codex_worker.py`,
+`watch_codex_worker_launch.py`, `launch_codex_mailbox_job.py`,
+`watch_codex_questions.sh` +
+`await_codex_answer.sh` + `scan_open_questions.py` (the SessionStart /
+UserPromptSubmit hook that surfaces open questions mechanically) +
+`answer_question.py` (the ONLY sanctioned way to flip a question to
+answered/escalated — atomic body+status write; a PreToolUse guard denies
+hand-edited flips) for the mailbox, `triage_codex_handback.py`,
 `merge_codex_worktree_back.sh`). The mailbox: when Codex hits an
 architecture/contract decision the plan/ADRs/vectors don't pin, it
 writes `questions/q-NN.md` (`status: open`) into the inbox and blocks
@@ -92,15 +99,36 @@ degrades to the manual handback-as-blocked flow.
 **The plan file IS the launch prompt.** When a plan hop launches Codex,
 the plan file at `.threads/<thread-id>/<plan-NN>-*.md` is the design
 artifact Codex consumes as turn 1. No separate prompt scaffold exists.
-`scripts/emit_codex_launch_packet.py` packages the six mechanical
+`scripts/emit_codex_launch_packet.py` packages the mechanical
 facts (plan-file absolute path, worktree, branch, base SHA, handback
-inbox, thread/plan IDs) plus three generic operational rules (don't
+inbox, thread/plan IDs) plus five generic operational rules (don't
 push; stop on architecture/contract ambiguity — write a
 `questions/q-NN.md` mailbox file and block on the answer, never infer
-through it; write structured handback) that the user pastes into
+through it; write structured handback; keep waits outside the model loop;
+record foreground-worker lifecycle at the fire boundary)
+that the user pastes into
 Codex's sidecar terminal at turn 1. The plan must be fleshed out per the tiered
 template before launch — base sections always filled, Codex add-ons
 below the divider filled when the hop is a Codex hop.
+
+Every emitted worker also inherits the canonical no-model-polling contract
+from `references/codex-handoff.md` and
+`scripts/launch_codex_mailbox_job.py`. Long commands and mailbox waits run in
+detached systemd user-scope containment, report through atomic mailbox JSON,
+and leave the interactive worker foregrounded and redirectable. Do not copy
+that mechanism into individual plans; plans carry only their concrete worker
+profile, checkpoint boundaries and gate-specific terminal markers.
+
+Every foreground Codex worker is fired through
+`scripts/launch_codex_worker.py`, never a raw `codex` command. The launcher
+atomically creates the inbox's schema-validated `worker-state.json` before
+the TUI starts, refuses a duplicate live worker, and records process exit
+without pretending that exit code zero proves plan completion. Before the
+operator fires, the orchestrator arms `scripts/watch_codex_worker_launch.py`
+outside the model loop; its only successful output is the pointer event
+`WORKER_LAUNCHED <path>`. The lifecycle receipt is live state, not cached
+status: orchestrators read it on every resume, while plan checkpoints and
+external-job status remain in `progress.json` and `jobs/` respectively.
 
 **Discipline:** when authoring a plan doc that includes Codex
 execution steps, *reference this workflow rather than restating its

@@ -24,7 +24,11 @@ answered: null
        open -> escalated    requires a NEW decision; the user is deciding.
                             Stays escalated until decided, then -> answered.
        open -> timeout      set by Codex when its wait cap expires.
-     ORDER MATTERS: write THIS Resolution body FIRST, then flip the
+     USE THE ATOMIC WRITER — do not hand-edit the flip:
+       python3 ~/.claude/skills/threads/scripts/answer_question.py <this file> \
+           --status answered --body-file <resolution.md> --by <session-name>
+     (a PreToolUse guard denies a status flip without a body). History:
+     write THIS Resolution body FIRST, then flip the
      frontmatter `status:` to answered LAST. The two edits are not
      atomic and await_codex_answer.sh keys on `status`; a status-first
      edit is a question that reads "answered" with an empty body. (The

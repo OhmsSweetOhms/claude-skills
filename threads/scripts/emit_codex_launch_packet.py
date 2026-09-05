@@ -6,7 +6,7 @@ enumerated, hard constraints listed, focused tests + regression baseline
 written), the plan file itself IS the launch prompt. Codex just needs an
 absolute path to it plus a handful of run-specific operational facts.
 
-This script emits those six mechanical facts plus two generic operational
+This script emits those mechanical facts plus five generic operational
 rules in a human-readable format ready to paste into Codex's turn 1.
 
 The copy-paste short prompt always OPENS with a "WORKING CONTEXT" header
@@ -30,7 +30,8 @@ Environment file (staged alongside the packet):
 
     The packet also stages <worktree>/codex-handoff/<plan-id>/env.sh and
     the launch command becomes
-        cd <worktree> && source codex-handoff/<plan-id>/env.sh && codex
+        cd <worktree> && source codex-handoff/<plan-id>/env.sh && python3 \
+            "$HOME/.claude/skills/threads/scripts/launch_codex_worker.py" launch ...
     so toolchain environment (license files, version pins, vendor
     settings scripts) is set in the terminal BEFORE Codex launches and
     is inherited by every command Codex runs. Content priority:
@@ -56,6 +57,11 @@ Generic operational rules emitted:
       scripts/await_codex_answer.sh (1 h cap); the main session's
       background watcher (scripts/watch_codex_questions.sh) answers in
       the same file. See codex-handoff.md §"Ambiguity mailbox".
+    - Keep long commands and mailbox waits outside the model loop using
+      launch_codex_mailbox_job.py; keep the worker interactive and require
+      verified whole-cgroup cleanup on cancellation.
+    - Launch the foreground worker through launch_codex_worker.py so the
+      launcher atomically records worker-state.json before Codex starts.
 
 Plan-specific operational rules (cross-repo edits, regression-baseline
 specifics, no-simulation constraints, etc.) live in the plan file's
@@ -67,12 +73,16 @@ Usage:
     python3 emit_codex_launch_packet.py \\
         --main-repo . \\
         --thread-id receiver/20260427-chi-square-raim-design \\
-        --plan-id plan-03b
+        --plan-id plan-03b \\
+        --codex-model gpt-5.6-sol \\
+        --reasoning-effort high \\
+        --auto-compact-token-limit 300000
 
 The plan file is the launch prompt. This script produces a copy-paste
 launch packet inline that points Codex at the plan file and states the
-three generic operational rules (don't push, write structured handback,
-stop on architecture/contract ambiguity).
+five generic operational rules (don't push, write structured handback,
+stop on architecture/contract ambiguity, keep waits outside the model loop,
+record the foreground worker lifecycle at the fire boundary).
 """
 
 from __future__ import annotations
@@ -81,6 +91,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -140,6 +151,47 @@ def find_plan_file(thread_dir: Path, plan_id: str) -> Path:
     return candidates[0]
 
 
+CHART_MARKER = "| **Packet** |"
+
+
+def find_kickoff_file(thread_dir: Path, plan_id: str, plan_file: Path) -> Path:
+    """The two-file rule (kickoff skill invariant 8, ruled 2026-08-17):
+    the plan file is WHAT Codex executes; the launch chart, role and
+    turn-1 framing live in a sibling kickoff file. Accepted names:
+    kickoff-<plan-id>*.md, kickoff-<planNN>*.md, <plan-id>*-kickoff.md,
+    <planNN>*-kickoff.md (planNN = plan-id without the hyphen)."""
+    nodash = plan_id.replace("plan-", "plan", 1)
+    pats = [f"kickoff-{plan_id}*.md", f"kickoff-{nodash}*.md",
+            f"{plan_id}*-kickoff.md", f"{nodash}*-kickoff.md"]
+    cands: list[Path] = []
+    for pat in pats:
+        cands += [c for c in thread_dir.glob(pat) if c not in cands]
+    if not cands:
+        die(
+            f"no kickoff file for {plan_id} in {thread_dir}.\n"
+            f"  Two-file rule: the plan file ({plan_file.name}) carries only the plan;\n"
+            f"  author kickoff-{nodash}-<slug>.md with the launch-contract chart, the\n"
+            f"  role/reporting line, one-channel escalation and turn-1 pointers, then re-run.\n"
+            f"  (Override for legacy hops: --allow-no-kickoff)"
+        )
+    if len(cands) > 1:
+        warn(f"multiple kickoff files matched {plan_id}; using {cands[0].name}")
+    return cands[0]
+
+
+def refuse_chart_in_plan(plan_file: Path) -> None:
+    try:
+        text = plan_file.read_text()
+    except OSError:
+        return
+    if CHART_MARKER in text:
+        die(
+            f"{plan_file.name} carries the launch-contract chart ('{CHART_MARKER}' row).\n"
+            f"  The chart belongs in the kickoff file, not the plan (two-file rule,\n"
+            f"  2026-08-17). Move the chart + role framing to kickoff-*.md and re-run."
+        )
+
+
 def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | None]:
     """Return (worktree_path, branch_from_json) from thread.json.
 
@@ -155,6 +207,15 @@ def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | N
         die(f"failed to parse {thread_json}: {exc}")
 
     worktrees = data.get("codex_worktrees", [])
+    live = [w for w in worktrees if w.get("status") not in ("merged",) and w.get("path")]
+    if len(live) > 1:
+        # Silent first-match picked the WRONG worktree once (2026-08-17,
+        # plan-11 landed in socks-pl-block-verification instead of
+        # socks-acq-daemon). Ambiguity is an error, not a guess.
+        listing = "\n".join(f"    - {w.get('path')}  (branch {w.get('branch')})" for w in live)
+        die(
+            f"{thread_json} lists {len(live)} live codex worktrees — pass --worktree-path:\n{listing}"
+        )
     ranked = sorted(
         worktrees,
         key=lambda w: 0 if w.get("status") not in ("merged",) else 1,
@@ -223,7 +284,8 @@ ENV_SKELETON = """\
 # Source this from the WORKTREE ROOT in the terminal BEFORE launching
 # codex, so every command Codex runs inherits it:
 #
-#     cd {worktree} && source codex-handoff/{plan_id}/env.sh && codex
+#     cd {worktree} && source codex-handoff/{plan_id}/env.sh && python3 \
+#         "$HOME/.claude/skills/threads/scripts/launch_codex_worker.py" launch ...
 #
 # Fill in the per-hop toolchain section below (license files, version
 # pins, vendor settings scripts) from the plan's toolchain block.
@@ -285,6 +347,33 @@ def stage_env_file(
     return dest, "skeleton written — EDIT the per-hop toolchain section"
 
 
+def build_worker_launch_command(
+    *,
+    handback_inbox: Path,
+    thread_id: str,
+    plan_id: str,
+    branch: str,
+    base_sha: str,
+    codex_model: str,
+    reasoning_effort: str,
+    auto_compact_token_limit: int,
+) -> str:
+    parts = [
+        "python3",
+        '"$HOME/.claude/skills/threads/scripts/launch_codex_worker.py"',
+        "launch",
+        "--inbox", shlex.quote(str(handback_inbox)),
+        "--thread-id", shlex.quote(thread_id),
+        "--plan-id", shlex.quote(plan_id),
+        "--expected-branch", shlex.quote(branch),
+        "--expected-head", shlex.quote(base_sha),
+        "--model", shlex.quote(codex_model),
+        "--reasoning-effort", shlex.quote(reasoning_effort),
+        "--auto-compact-token-limit", str(auto_compact_token_limit),
+    ]
+    return " ".join(parts)
+
+
 def emit_packet(
     *,
     plan_file: Path,
@@ -295,13 +384,33 @@ def emit_packet(
     handback_inbox: Path,
     thread_id: str,
     plan_id: str,
+    codex_model: str,
+    reasoning_effort: str,
+    auto_compact_token_limit: int,
+    kickoff_file: Path | None = None,
 ) -> str:
+    kickoff_line = (
+        f"You are the {plan_id} Codex WORKER — read your role, reporting line and\n"
+        f"boundaries FIRST from the kickoff file (tracked framing; do not re-plan or\n"
+        f"emit further packets):\n{kickoff_file}\n\n"
+        if kickoff_file else ""
+    )
     # Where the thread's bookkeeping lives (the "main thread"), and how to
     # reach it from the worktree Codex is launched in. In the same-repo case
     # this is a sibling (../<repo>/.threads/...); in a cross-repo handoff
     # (thread in repo A, worktree in repo B) relpath still resolves it.
     thread_dir = main_repo / ".threads" / thread_id
     rel_thread = os.path.relpath(thread_dir, worktree)
+    launch_command = build_worker_launch_command(
+        handback_inbox=handback_inbox,
+        thread_id=thread_id,
+        plan_id=plan_id,
+        branch=branch,
+        base_sha=base_sha,
+        codex_model=codex_model,
+        reasoning_effort=reasoning_effort,
+        auto_compact_token_limit=auto_compact_token_limit,
+    )
     return f"""\
 {plan_file}
 
@@ -312,34 +421,57 @@ Paste this whole block into Codex's first turn:
 ```
 WORKING CONTEXT — set this up FIRST:
 - Launch Codex from (cwd):  {worktree}
-      cd {worktree} && source codex-handoff/{plan_id}/env.sh && codex
+      cd {worktree} && source codex-handoff/{plan_id}/env.sh && {launch_command}
   (env.sh carries the hop's toolchain environment — license files,
   version pins, vendor settings — and chains the worktree .envrc.
   It was staged with this packet; the operator sources it BEFORE
-  launching so every command you run inherits it.)
+  launching so every command you run inherits it. The launch wrapper
+  atomically creates worker-state.json before the Codex TUI starts.)
 - This thread's bookkeeping (plan, ADRs, findings, handback inbox) lives in the
   MAIN checkout — read it from there, do NOT edit .threads/:
       {thread_dir}
       (relative to your cwd: {rel_thread})
 - You EDIT source in the worktree (your cwd); the thread/plan docs are read-only.
 
-Execute this plan from start to finish:
+{kickoff_line}Execute this plan from start to finish:
 {plan_file}
 
 Worktree: {worktree} (branch {branch}) — do NOT push or merge.
+This is a fresh worker session: do not resume or fork the packet-authoring session.
+Effective worker profile: {codex_model} / {reasoning_effort}; automatic compaction
+threshold: {auto_compact_token_limit} tokens.
+The launch wrapper owns {handback_inbox}/worker-state.json. Do not overwrite it.
+Before launching any mailbox job, bind this foreground session once with:
+python3 "$HOME/.claude/skills/threads/scripts/launch_codex_worker.py" bind-session --inbox {handback_inbox} --session-id "$CODEX_THREAD_ID"
+Use launch_codex_worker.py update for blocked/completed/failed transitions;
+put plan checkpoints in progress.json, not in the lifecycle receipt.
 Read the plan's "Hard constraints" section before running anything.
 If executing the plan requires inferring an architecture or contract decision
 the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Write the
 question (candidate readings + evidence) to {handback_inbox}/questions/q-NN.md
 with frontmatter "status: open" per
-~/.claude/skills/threads/assets/templates/codex-question-template.md, then block on
-  bash ~/.claude/skills/threads/scripts/await_codex_answer.sh <that-file> 3600
+~/.claude/skills/threads/assets/templates/codex-question-template.md. Run the
+answer wait through ~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py
+and END YOUR MODEL TURN; never poll it with write_stdin. The mailbox file is the
+cross-agent content channel. An optional doorbell is self-directed and path-only.
 Exit 0 = answered: read "## Resolution" and proceed. Exit 3 = 1 h timeout: set
 "status: timeout", record the question as a blocker + investigations[] entry,
 write the handback (gate-incomplete) and end. Every mailbox exchange is also
 recorded in investigations[].
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
 per ~/.claude/skills/threads/references/codex-handback.md.
+
+WAITING IS NOT REASONING. Any Vivado/Xsim/synthesis/implementation command,
+mailbox wait, or other command that can outlive one tool return MUST use a JSON
+contract with launch_codex_mailbox_job.py. After launch, end the model turn.
+The Codex TUI worker remains foregrounded and redirectable; only the command is
+detached. If a redirect invalidates an active job, use
+launch_codex_mailbox_job.py --cancel <run-dir> --reason <text>, then end the
+turn. Cancellation is complete only when result.json says cancelled and every
+command reports cleanup_verified=true; no descendant may survive.
+Read result.json only after JOB_TERMINAL or manual resume. Do not run pgrep,
+socks_jobs.py status, tail logs, or write_stdin merely to observe unchanged
+state. Full logs stay in the inbox; return at most 40 lines / 8192 bytes.
 ```
 
 (Everything below is the long-form context behind that short prompt —
@@ -386,6 +518,9 @@ handback.json + handback.md + scripts/ + temp/ + artifacts/ per
 
 **Thread / Plan IDs:** `{thread_id}` / `{plan_id}`
 
+**Worker profile:** `{codex_model}` / `{reasoning_effort}`; fresh session;
+automatic compaction at `{auto_compact_token_limit}` tokens.
+
 **Environment file** (staged with this packet; the operator sources it
 in the launch terminal so Codex inherits the hop's toolchain env —
 review/extend its per-hop section before launching):
@@ -394,7 +529,7 @@ review/extend its per-hop section before launching):
 {handback_inbox}/env.sh
 ```
 
-## Three generic operational rules to state at Codex turn 1
+## Five generic operational rules to state at Codex turn 1
 
 1. **Don't push the branch.** `{branch}` is long-lived across the
    thread's plan hops; merge-back to `main` is a single terminal
@@ -412,10 +547,11 @@ review/extend its per-hop section before launching):
      to `{handback_inbox}/questions/q-NN.md` (NN sequential) with
      frontmatter `status: open`, scaffolded from
      `~/.claude/skills/threads/assets/templates/codex-question-template.md`.
-   - Block on
-     `bash ~/.claude/skills/threads/scripts/await_codex_answer.sh <file> 3600`.
-     `answered` → read `## Resolution` in the same file and proceed.
-     `escalated` → a user decision is in flight; keep waiting.
+   - Put `await_codex_answer.sh <file> 3600` in a mailbox-job JSON contract,
+     launch it through `launch_codex_mailbox_job.py`, and end the model turn.
+     On the terminal record, `answered` → read `## Resolution` and proceed;
+     `escalated` → a user decision is in flight and the next wait is another
+     detached mailbox job, never a model-visible poll.
    - On the 1 h timeout: set `status: timeout`, record the question
      as a `blockers[]` AND `investigations[]` entry, write the
      handback (`gate-incomplete`), end the session.
@@ -461,6 +597,52 @@ review/extend its per-hop section before launching):
    artifact promotion recommendations) — read it before writing, but
    conform the JSON shape to the schema, not to the prose.
 
+4. **Keep waiting outside the model loop.** Use the mailbox completion-job
+   contract for any command that can outlive one tool return. It records the
+   source SHA, contract digest, terminal markers, artifacts, timeout, retry
+   bound, full logs and a bounded summary under:
+
+   ```
+   {handback_inbox}/jobs/<job-name>/<run-key>/
+   ```
+
+   Launch with:
+
+   ```
+   python3 ~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py --contract <job-contract.json> --inbox {handback_inbox}
+   ```
+
+   Then end the model turn. `result.json` is authoritative. A supported
+   `codex-self` doorbell is write-first/ring-second, carries only
+   `JOB_TERMINAL <path>`, and targets the same Codex thread; it is not a
+   Claude↔Codex content channel. If no doorbell exists or it fails, remain
+   idle until the operator manually resumes the worker.
+
+   The worker TUI remains interactive while the job runs. For a redirect that
+   invalidates the job, request contained cancellation with:
+
+   ```
+   python3 ~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py --cancel <run-dir> --reason <operator-redirect>
+   ```
+
+   The launcher writes `control.json`; the supervisor kills the whole transient
+   systemd user-scope cgroup. Do not claim cancellation until `result.json`
+   reports `cancelled` and every command reports `cleanup_verified: true`.
+
+5. **Keep worker lifecycle in the mailbox.** The operator fires this packet
+   through `launch_codex_worker.py`, never a raw `codex` command. The wrapper
+   writes `worker-state.json` atomically before the TUI starts and prints a
+   pointer-only `WORKER_LAUNCHED <path>` event. Do not hand-edit that file or
+   mix gate progress into it; use `progress.json` for plan checkpoints. Before
+   the first mailbox job, bind `$CODEX_THREAD_ID` through
+   `launch_codex_worker.py bind-session`; `codex-self` jobs refuse an absent or
+   mismatched v2 binding rather than ringing the wrong worker. Before
+   ending blocked or after writing a terminal handback, record the semantic
+   transition with `launch_codex_worker.py update`. The worker receipt has no
+   cancellation claim: external jobs are cancelled only through their verified
+   systemd-cgroup mailbox contract, while an exited TUI is merely `exited` or
+   `failed`. The wrapper never treats exit code zero as proof of plan completion.
+
 ## Plan-specific operational rules
 
 Read the plan file's "Hard constraints" section. The plan file
@@ -473,11 +655,10 @@ when it opens the plan as turn 1.
 ```bash
 cd {worktree}
 source codex-handoff/{plan_id}/env.sh
-codex
+{launch_command}
 ```
 
-Then paste the plan file path + the two operational rules above as
-turn 1.
+Then paste the complete short-prompt block above as turn 1.
 """
 
 
@@ -513,6 +694,11 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--allow-no-kickoff",
+        action="store_true",
+        help="Legacy hops only: skip the two-file check (plan + kickoff-*.md).",
+    )
+    parser.add_argument(
         "--out",
         default=None,
         help="Output path for the launch packet. Default: stdout",
@@ -527,7 +713,27 @@ def main() -> None:
             "skeleton to fill in."
         ),
     )
+    parser.add_argument(
+        "--codex-model",
+        required=True,
+        help="Exact model to pin in the generated fresh-worker launch command",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        required=True,
+        choices=("none", "low", "medium", "high", "xhigh", "max"),
+        help="Reasoning effort to pin in the generated launch command",
+    )
+    parser.add_argument(
+        "--auto-compact-token-limit",
+        required=True,
+        type=int,
+        help="Positive automatic-compaction threshold for the worker session",
+    )
     args = parser.parse_args()
+
+    if args.auto_compact_token_limit <= 0:
+        die("--auto-compact-token-limit must be positive")
 
     main_repo = Path(args.main_repo).resolve()
     if not main_repo.exists():
@@ -539,6 +745,13 @@ def main() -> None:
 
     thread_json = thread_dir / "thread.json"
     plan_file = find_plan_file(thread_dir, args.plan_id)
+    refuse_chart_in_plan(plan_file)
+    kickoff_file: Path | None = None
+    if not args.allow_no_kickoff:
+        kickoff_file = find_kickoff_file(thread_dir, args.plan_id, plan_file)
+    # Inbox = the FULL plan stem (codex-handoff/ is a flat namespace shared
+    # across threads on a worktree; a bare plan-NN collides — launch contract).
+    inbox_stem = plan_file.stem
 
     worktree: Path
     branch_json: str | None = None
@@ -564,25 +777,29 @@ def main() -> None:
             f"  is git installed and the worktree initialized?"
         )
 
-    handback_inbox = worktree / "codex-handoff" / args.plan_id
+    handback_inbox = worktree / "codex-handoff" / inbox_stem
 
     env_path, env_how = stage_env_file(
         handback_inbox,
         env_file=Path(args.env_file) if args.env_file else None,
         worktree=worktree,
         thread_id=args.thread_id,
-        plan_id=args.plan_id,
+        plan_id=inbox_stem,
     )
 
     packet = emit_packet(
         plan_file=plan_file,
+        kickoff_file=kickoff_file,
         worktree=worktree,
         main_repo=main_repo,
         branch=branch,
         base_sha=base_sha,
         handback_inbox=handback_inbox,
         thread_id=args.thread_id,
-        plan_id=args.plan_id,
+        plan_id=inbox_stem,
+        codex_model=args.codex_model,
+        reasoning_effort=args.reasoning_effort,
+        auto_compact_token_limit=args.auto_compact_token_limit,
     )
 
     if args.out:
@@ -600,8 +817,33 @@ def main() -> None:
         print()
         print(f"Environment file: {env_path}")
         print(f"  ({env_how})")
+        launch_command = build_worker_launch_command(
+            handback_inbox=handback_inbox,
+            thread_id=args.thread_id,
+            plan_id=inbox_stem,
+            branch=branch,
+            base_sha=base_sha,
+            codex_model=args.codex_model,
+            reasoning_effort=args.reasoning_effort,
+            auto_compact_token_limit=args.auto_compact_token_limit,
+        )
         print(f"  Launch: cd {worktree} && "
-              f"source codex-handoff/{args.plan_id}/env.sh && codex")
+              f"source codex-handoff/{inbox_stem}/env.sh && {launch_command}")
+        if kickoff_file:
+            print(f"Kickoff file (tracked framing; turn 1 names it): {kickoff_file}")
+        print(f"Handback inbox: {handback_inbox}")
+        print()
+        print("ARM (orchestrator, before yielding; one terminal event, no model polling):")
+        print("  python3 \"$HOME/.claude/skills/threads/scripts/"
+              "watch_codex_worker_launch.py\" "
+              f"--inbox {shlex.quote(str(handback_inbox))}")
+        print()
+        print("FIRE (operator, a NEW terminal — reading the packet in an existing session is NOT a launch):")
+        print(f"  Codex vehicle : cd {worktree} && source codex-handoff/{inbox_stem}/env.sh && {launch_command}")
+        print(f"  Claude vehicle: cd {worktree} && claude")
+        print(f"  then paste the 'Copy-paste — Codex turn 1' block from {out_path} as turn 1.")
+        print(f"  Fired when {handback_inbox}/worker-state.json records state=running;")
+        print("  a first tool call is progress, not the launch authority.")
     else:
         print(f"# Environment file: {env_path} ({env_how})",
               file=sys.stderr)

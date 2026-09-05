@@ -1,6 +1,6 @@
 ---
 name: code-survey
-description: Multi-lens parallel-agent survey of a codebase that produces a prioritized, risk-classified, verification-policy-aware refactor recommendation list. Use this skill whenever the user wants a code-review pass, refactor scout, monolith scan, dedupe scan, code audit, "find long files," "are these files monolithic," "review this codebase for refactor opportunities," or asks for "the kind of analysis we ran on <prior project>." Also triggers on /code-survey, /code-review, /refactor-scout, "refactor sprint," "before-refactor analysis," or any request that asks for a coordinated cross-cutting code-quality scan rather than a single-file edit. Do not use for security audits (route to /security-review), performance profiling, or single-function inspection.
+description: Multi-lens parallel-agent codebase survey producing prioritized, risk-classified refactor recommendations with verification policy. Use for code-review passes, refactor scouting, monolith or duplicate scans, code audits, finding long files, and coordinated cross-cutting code-quality analysis. Triggers on code-survey, refactor-scout, refactor sprint, and before-refactor analysis. Not for security audits, performance profiling or single-function inspection.
 ---
 
 # code-survey

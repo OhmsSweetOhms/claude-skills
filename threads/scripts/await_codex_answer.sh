@@ -7,7 +7,10 @@
 #   await_codex_answer.sh <question-file> [timeout-s] [interval-s]
 #
 #   timeout-s   default 3600 (1 h cap, matching the main-session
-#               watcher; a blocked shell costs Codex zero tokens)
+#               watcher). The blocked shell itself uses no model tokens, but
+#               model-visible write_stdin polling DOES. Launch this script
+#               through launch_codex_mailbox_job.py, end the model turn, and
+#               resume only from its terminal mailbox record.
 #   interval-s  default 30
 #
 # Status semantics:

@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Codex mailbox completion job",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_name",
+    "working_directory",
+    "timeout_seconds",
+    "max_parallel",
+    "containment",
+    "commands"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "job_name": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "working_directory": {"type": "string", "minLength": 1},
+    "timeout_seconds": {"type": "integer", "minimum": 1},
+    "max_parallel": {"type": "integer", "minimum": 1},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tail_lines": {"type": "integer", "minimum": 0, "maximum": 200},
+        "max_bytes": {"type": "integer", "minimum": 256, "maximum": 32768}
+      }
+    },
+    "doorbell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {"enum": ["none", "codex-self"]}
+      }
+    },
+    "containment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {"const": "systemd-user-scope"}
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "argv"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+          "argv": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "success_markers": {"type": "array", "items": {"type": "string"}},
+          "failure_markers": {"type": "array", "items": {"type": "string"}},
+          "expected_artifacts": {"type": "array", "items": {"type": "string"}},
+          "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3}
+        }
+      }
+    }
+  }
+}

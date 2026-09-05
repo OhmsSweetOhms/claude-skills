@@ -7,14 +7,12 @@ description: >-
   this skill whenever the user wants to build or rebuild a Zynq/ZynqMP boot
   image, regenerate a boot.mcs or boot.bin, flash a board over JTAG/QSPI, work
   with bootgen BIF files, run program_flash, set up an FSBL debug session, or
-  pick up bring-up work on a specific board (e.g. ZCU102, AD9081 no-OS). Trigger
-  it even when the user names only the artifact or tool ("regen the mcs", "flash
-  the zcu102", "rebuild the boot image", "the bootgen line is broken") rather
-  than saying "skill". Also covers SD-card boot of ADI Kuiper Linux on ZCU102
+  pick up board bring-up (e.g. ZCU102, AD9081 no-OS), even when only an artifact
+  or tool is named ("regen the mcs", "flash the zcu102"). Also covers SD-card boot of ADI Kuiper Linux on ZCU102
   (AD9986 / AD9081 FMC), BOOT.BIN deployment, and the ZCU102 SW6 boot-mode switch
   settings (QSPI vs SD vs JTAG), including the Rev1.0 UG1182 polarity gotcha.
   Project-specific paths, BIFs, switch tables, and quirks live in
-  references/<project>.md — consult the matching one. This is a personal
+  project reference files — consult the matching one. This is a personal
   reference that grows: new boards get added as references/ files.
 ---
 

@@ -81,7 +81,7 @@ def _bind_paths(project_root: Path) -> None:
     THREADS_INDEX_PATH = THREADS_DIR / "threads.json"
     RESEARCH_INDEX_PATH = RESEARCH_DIR / "INDEX.json"
 
-SESSION_ID_RE = re.compile(r"session-\d{8}-\d{6}")
+SESSION_ID_RE = re.compile(r"session-\d{8}-(?:\d{6}|[a-z0-9][a-z0-9-]*)")  # HHMMSS or a slug
 THREAD_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*/\d{8}-[a-z0-9-]+$")
 
 

@@ -12,10 +12,17 @@ Main session writes here BEFORE Codex launch:
 - `README.md` — this file (inbox description, who writes what)
 - `prompt.md` — launch packet from `~/.claude/skills/threads/scripts/emit_codex_launch_packet.py`;
   the plan file at `.threads/{{THREAD_ID}}/<plan-NN>-*.md` IS the launch prompt,
-  and this packet carries the six mechanical facts that point Codex at it
+  and this packet carries the mechanical facts that point Codex at it
+
+The fire launcher writes here BEFORE the Codex first turn:
+
+- `worker-state.json` — schema-validated foreground worker lifecycle receipt,
+  written atomically by `launch_codex_worker.py`; do not hand-edit it
 
 Codex writes here DURING/AFTER the run:
 
+- `progress.json` — optional plan checkpoint and next-action state; never a
+  substitute for the launcher-owned worker lifecycle receipt
 - `handback.json` — machine-readable session handback
 - `handback.md` — human-readable companion report
 - `scripts/` — throwaway probes, debug tests, and helper scripts

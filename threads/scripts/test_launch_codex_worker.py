@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+
+HERE = Path(__file__).resolve().parent
+LAUNCHER = HERE / "launch_codex_worker.py"
+WATCHER = HERE / "watch_codex_worker_launch.py"
+SCHEMA = HERE.parent / "assets" / "schemas" / "codex-worker-state.schema.json"
+EMITTER = HERE / "emit_codex_launch_packet.py"
+
+
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class WorkerLaunchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp.name) / "worker"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
+        (self.repo / "source.txt").write_text("baseline\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "source.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "baseline"], check=True)
+        self.branch = subprocess.check_output(
+            ["git", "-C", str(self.repo), "branch", "--show-current"], text=True
+        ).strip()
+        self.head = subprocess.check_output(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"], text=True
+        ).strip()
+        self.inbox = self.repo / "codex-handoff" / "plan-test-worker"
+        self.inbox.mkdir(parents=True)
+        self.fake_codex = self.repo / "fake-codex"
+        self.fake_codex.write_text(
+            """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import time
+
+inbox = pathlib.Path(os.environ["FAKE_INBOX"])
+state = json.loads((inbox / "worker-state.json").read_text())
+if state["state"] != "running" or state["process"]["state"] != "running":
+    raise SystemExit(91)
+(inbox / "child-observed-state.json").write_text(json.dumps(state))
+status = os.environ.get("FAKE_HANDBACK_STATUS")
+if status:
+    handback = {
+        "schema_version": "2",
+        "plan_id": state["plan_id"],
+        "thread_id": state["thread_id"],
+        "session_date": "2026-01-01",
+        "status": status,
+        "worktree": {
+            "branch": state["launch"]["branch"],
+            "base_at_hop_start": state["source_head"],
+            "head_at_handback": state["source_head"],
+            "diff_stat": {"files_changed": 0, "insertions": 0, "deletions": 0}
+        },
+        "commits": [],
+        "gates": [],
+        "discoveries": [],
+        "investigations": [],
+        "follow_ons": [],
+        "plan_hindsight": "Nothing notable"
+    }
+    if os.environ.get("FAKE_INVALID_HANDBACK"):
+        handback = {"status": status}
+    (inbox / "handback.json").write_text(json.dumps(handback))
+time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
+raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
+""",
+            encoding="utf-8",
+        )
+        self.fake_codex.chmod(0o755)
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def command(self, *extra: str) -> list[str]:
+        return [
+            sys.executable,
+            str(LAUNCHER),
+            "launch",
+            "--inbox", str(self.inbox),
+            "--thread-id", "fpga/20260101-test-worker",
+            "--plan-id", "plan-test-worker",
+            "--expected-branch", self.branch,
+            "--expected-head", self.head,
+            "--model", "gpt-test",
+            "--reasoning-effort", "high",
+            "--auto-compact-token-limit", "300000",
+            "--codex-bin", str(self.fake_codex),
+            *extra,
+        ]
+
+    def environment(self, **updates: str) -> dict[str, str]:
+        env = os.environ.copy()
+        env["FAKE_INBOX"] = str(self.inbox)
+        env.update(updates)
+        return env
+
+    def read_state(self) -> dict:
+        return json.loads((self.inbox / "worker-state.json").read_text(encoding="utf-8"))
+
+    def wait_for_running(self, process: subprocess.Popen[str]) -> dict:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail(f"launcher exited early: {process.communicate()}")
+            try:
+                state = self.read_state()
+            except (FileNotFoundError, json.JSONDecodeError):
+                time.sleep(0.02)
+                continue
+            if state["state"] == "running" and state["process"]["state"] == "running":
+                return state
+            time.sleep(0.02)
+        self.fail("worker did not reach running state")
+
+    def assert_schema_valid(self, state: dict) -> None:
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest("jsonschema is unavailable")
+        jsonschema.Draft7Validator(schema).validate(state)
+
+    def test_completed_requires_handback_and_validates_schema(self) -> None:
+        result = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(FAKE_HANDBACK_STATUS="complete"),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.read_state()
+        self.assertEqual(state["state"], "completed", state["events"][-1])
+        self.assertEqual(state["process"]["state"], "exited")
+        self.assertTrue((self.inbox / "child-observed-state.json").exists())
+        self.assertIn("WORKER_LAUNCHED", result.stdout)
+        self.assertIn("WORKER_COMPLETED", result.stdout)
+        self.assert_schema_valid(state)
+
+    def test_clean_process_exit_is_not_plan_completion(self) -> None:
+        result = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.read_state()
+        self.assertEqual(state["state"], "exited")
+        self.assertEqual(state["events"][-1]["event"], "WORKER_EXITED")
+        self.assert_schema_valid(state)
+
+    def test_invalid_handback_is_not_plan_completion(self) -> None:
+        result = subprocess.run(
+            self.command(), cwd=self.repo,
+            env=self.environment(
+                FAKE_HANDBACK_STATUS="complete", FAKE_INVALID_HANDBACK="1"
+            ),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.read_state()
+        self.assertEqual(state["state"], "exited")
+        self.assertIn("not schema-valid", state["events"][-1]["detail"])
+        self.assert_schema_valid(state)
+
+    def test_duplicate_live_worker_is_refused_and_watcher_rings_once(self) -> None:
+        first = subprocess.Popen(
+            self.command(), cwd=self.repo, env=self.environment(FAKE_SLEEP="30"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.wait_for_running(first)
+        bind = subprocess.run(
+            [sys.executable, str(LAUNCHER), "bind-session", "--inbox", str(self.inbox),
+             "--session-id", "test-session-id"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(bind.returncode, 0, bind.stderr)
+        self.assertEqual(self.read_state()["session_id"], "test-session-id")
+        watch = subprocess.run(
+            [sys.executable, str(WATCHER), "--inbox", str(self.inbox),
+             "--timeout-seconds", "2", "--interval-seconds", "0.02"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(watch.returncode, 0, watch.stderr)
+        self.assertEqual(watch.stdout.strip(), f"WORKER_LAUNCHED {self.inbox / 'worker-state.json'}")
+
+        duplicate = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(duplicate.returncode, 2)
+        self.assertIn("refusing duplicate live worker", duplicate.stderr)
+        first.terminate()
+        first.communicate(timeout=5)
+
+    def test_relaunch_archives_prior_terminal_receipt(self) -> None:
+        first = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        first_state = self.read_state()
+        second = subprocess.run(
+            self.command("--relaunch"), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+        archive = self.inbox / "worker-state-history" / f"{first_state['worker_run_id']}.json"
+        self.assertTrue(archive.exists())
+        self.assertNotEqual(self.read_state()["worker_run_id"], first_state["worker_run_id"])
+
+    def test_terminal_lifecycle_cannot_transition_back_to_running(self) -> None:
+        first = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        update = subprocess.run(
+            [sys.executable, str(LAUNCHER), "update", "--inbox", str(self.inbox),
+             "--state", "running"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(update.returncode, 2)
+        self.assertIn("illegal worker transition exited -> running", update.stderr)
+
+    def test_validate_rejects_schema_invalid_state(self) -> None:
+        first = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        state = self.read_state()
+        state["unexpected"] = True
+        (self.inbox / "worker-state.json").write_text(json.dumps(state))
+        validate = subprocess.run(
+            [sys.executable, str(LAUNCHER), "validate", "--inbox", str(self.inbox)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(validate.returncode, 2)
+        self.assertIn("not schema-valid", validate.stderr)
+
+    def test_watcher_preserves_fast_launch_event_after_exit(self) -> None:
+        first = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        watch = subprocess.run(
+            [sys.executable, str(WATCHER), "--inbox", str(self.inbox),
+             "--timeout-seconds", "2", "--interval-seconds", "0.02"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(watch.returncode, 0, watch.stderr)
+        self.assertEqual(watch.stdout.strip(), f"WORKER_LAUNCHED {self.inbox / 'worker-state.json'}")
+
+    def test_emitter_builds_lifecycle_owning_launch_command(self) -> None:
+        emitter = load_module(EMITTER, "emit_codex_launch_packet_test")
+        command = emitter.build_worker_launch_command(
+            handback_inbox=Path("/worktree/codex-handoff/plan-test-worker"),
+            thread_id="fpga/20260101-test-worker",
+            plan_id="plan-test-worker",
+            branch="test-worker",
+            base_sha="0123456",
+            codex_model="gpt-test",
+            reasoning_effort="high",
+            auto_compact_token_limit=300000,
+        )
+        self.assertIn("launch_codex_worker.py", command)
+        self.assertIn("--expected-head 0123456", command)
+        self.assertNotIn(" codex --model ", command)
+        syntax = subprocess.run(
+            ["bash", "-n", "-c", command], capture_output=True, text=True
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+        packet = emitter.emit_packet(
+            plan_file=Path("/main/.threads/fpga/thread/plan-test-worker.md"),
+            kickoff_file=Path("/main/.threads/fpga/thread/kickoff-plan-test-worker.md"),
+            worktree=Path("/worktree"),
+            main_repo=Path("/main"),
+            branch="test-worker",
+            base_sha="0123456",
+            handback_inbox=Path("/worktree/codex-handoff/plan-test-worker"),
+            thread_id="fpga/thread",
+            plan_id="plan-test-worker",
+            codex_model="gpt-test",
+            reasoning_effort="high",
+            auto_compact_token_limit=300000,
+        )
+        self.assertIn("launch_codex_mailbox_job.py --contract", packet)
+        self.assertNotIn("\\       --contract", packet)
+        self.assertNotIn("Block on\n     `bash", packet)
+
+
+if __name__ == "__main__":
+    unittest.main()
