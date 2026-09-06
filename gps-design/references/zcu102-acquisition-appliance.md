@@ -211,8 +211,18 @@ section opening:
   it by NTP (timesyncd stratum 3, ~100 µs)** — measured 2026-08-27 after a
   ~19 h gap. Do NOT hand-set the clock over the paramiko channel (its
   asymmetry is ~1 s and a later NTP step can land inside a tape). The
-  "no RTC battery" belief was wrong; the mechanism (battery / supercap /
-  rail-powered RTC) is uninvestigated.
+  "no RTC battery" belief was wrong — re-refuted 2026-09-06 under
+  instruments: `rtc_zynqmp ffa60000.rtc` set the system clock correct to
+  ≲ 3 s across a 72.2 min (4 331 s) unpowered gap BEFORE any network time,
+  with `fake-hwclock` rejected as stale and `htpdate` failed, so neither
+  alternative explains it. The mechanism (battery / supercap / rail-powered
+  RTC) is still uninvestigated — it is backed, not why. Wall-clock is for
+  EVENT STAMPING only, never for ppm (decision 138 as amended).
+- **A warm-measured `sky-servo` prior is usable from cold:** after 72 min
+  off, the crystal had walked 750 Hz = 0.476 ppm from the card's warm final
+  — 15.9 % of the 3.0 ppm prior floor and 4.3 % of the armed 5-rung C/A
+  ladder — and the daemon declared 14.3 s after warm-up on the prior ladder
+  with `refused_rounds 0` (plan-19 board leg continuation, one sample).
 - **The board's reference offset is one number across bands:** the GPS
   engine's decision-60 value (21.66 ppm at L1) reproduces on Iridium
   carriers at 1621.2 MHz to 0.1 % (21.68 ppm, lane measurement
@@ -256,15 +266,35 @@ section opening:
   `REG_FOLD_PORT_BEATS` instrument. Until the fix lands: hand-fire the
   installed tool on a serving board (a tool artefact, never a hand-written
   record) and gate it against an independent measurement.
-- **The daemon's published servo ppm is SIGN-INVERTED (decision 132):**
-  `acq.json engine.offset_servo.ref_offset_ppm` carries the
-  received-carrier sign under the reference-minus-nominal convention
-  string (record −21.662 vs servo +21.264 on one boot; `estimate_hz`
-  +33 500 proves the record — a LOW LO shows a nominal signal HIGH).
-  Nothing in the daemon consumes it; the Iridium channel resolver does
-  (69 kHz = 1.66 channel steps if consumed raw). Read the decision-125
-  record, or negate the servo, until the fix lands. Whether decision 60's
-  +21.66 on the old unit was the same inversion is OPEN.
+- **The daemon's servo ppm sign WAS inverted (decision 132) and is FIXED —
+  do NOT negate it.** Until socks main `3eda8b76` (plan-17, 2026-09-05)
+  `acq.json engine.offset_servo.ref_offset_ppm` carried the received-carrier
+  sign under the reference-minus-nominal convention string (record −21.662
+  vs servo +21.264 on one boot). The fix derives ppm through
+  `ref_offset.sign_of()` and was PROVEN on silicon by the plan-19 board leg
+  (2026-09-06, row 5: `sign self-test: ppm opposes estimate_hz`; the servo
+  produced −21.58 ppm from `estimate_hz +34 000` — a LOW LO shows a nominal
+  signal HIGH). Since plan-19 the servo IS the record's producer
+  (`method sky-servo`), so record and servo agree by construction; negating
+  the servo now double-inverts by ~43 ppm ≈ 69 kHz at L1, which is exactly
+  the Iridium-channel error (1.66 steps) the old advice warned about. Read
+  the decision-125 record; its `method` may read `sky-servo` or
+  `persisted-prior` (a prior's `sigma_ppm` may be 3.0). Whether decision
+  60's +21.66 on the old unit was the same inversion is still OPEN.
+- **The daemon is autonomous for its reference offset (ADR-031, proven
+  2026-09-06):** no record → full field on C/A + L5 (17 / 45 rungs,
+  ±59 500 / ±45 000 Hz; L1C / L2C held unless they carry operator
+  `centers_hz`, which this board's config does); a persisted prior on
+  `/boot/gps-receiver-state.json` (+ `.prev`) is served at ≥ 3.0 ppm and
+  buys a 5-rung C/A ladder; the servo hears four bands and writes the
+  record to the live path and the card; the NTP fit is a bench diagnostic
+  only (`ref_offset_measure.py`, default `--seconds 120` — σ ≈ 7 ppm at
+  that length, 900 s for a σ ≈ 0.9 final). Measured on one good sky: 174 s
+  power-on → `serving` (8 stages), 4 s from arming to the first wide-field
+  declare, 38 s to the first servo record; on the prior 8.6 s vs 20.0 s to
+  first declare (n=1 per arm). The wide field is cheap when the sky is
+  strong. `ladder_coverage.py` reads only the tmpfs live path (blind to
+  the prior) and ignores `centers_hz` in `--no-record` pricing.
 - **The F9P TPV arrival-stamp board-vs-GPS term is load-sensitive** (board
   leg 2026-09-04): −3.5 ppm idle vs +8.1 ppm under ~12 k jobs/15 min on
   the same tool and cabling while rail-vs-board moved 0.78 ppm; the loaded
@@ -322,7 +352,17 @@ section opening:
   tighten. Both measure rail-vs-BOARD-clock; on a fresh boot the kernel's
   NTP frequency correction is still settling (+12 → +4 ppm applied over the
   first ~40 min) and moves both — the record's `sigma_note` term. The tool
-  is non-intrusive under a running daemon.
+  is non-intrusive under a running daemon. **Measured 2026-09-06: a 900 s
+  fit run 19–34 min after a cold boot read −26.50 ± 0.91 ppm against the
+  servo's −21.90 ± 0.68 — a 4.6 ppm, 4.04 σ disagreement — while the two
+  rails (dec8 / dec25, independent S2MM counters) agreed to 0.084 ppm and
+  `kernel_freq_ppm` was +7.65 with `poll_interval_s 1024` (a 900 s window
+  can fall between two NTP polls). The same tool at 120 s on a warm ~4 h
+  boot read −21.57. So: the NTP fit is NOT trustworthy inside ~40 min of a
+  boot; its σ is fit precision only; the servo is the instrument whose
+  stability is demonstrated (three warm finals within 0.64 ppm and a cold
+  one 0.48 ppm off). Unsettled experiments: the same 900 s fit ≥ 90 min
+  into a boot; `kernel_freq_ppm` banked beside every tool record.**
 - **`record_vs_servo_ppm` is not a clock-vs-clock check**: the servo's
   estimate is a median over its current fresh-PRN set and moved 2750 Hz
   (1.75 ppm at L1) as that set grew 4 → 9 during a 12-min soak. A bar of
@@ -353,3 +393,27 @@ section opening:
   moves on any observable change in the arithmetic's shape; sixteen
   auxiliary pass lines byte-identical says the whole layer is unmoved.
   Quote it beside every re-gate.
+
+### RF-path tells (2026-09-05, LNA-off day)
+
+- **An unpowered bench LNA looks like this in the daemon's own journal:**
+  the pilot bands sit FLAT for hours (L1C ~33 dB-Hz, L2C ~30 dB-Hz, ratio
+  2.0–2.2) while C/A is silent or appears only in a narrow band at
+  ~41.5 dB-Hz — that value is the 1 ms detection FLOOR as
+  `ratio-model-inversion` reports it, not a real level — and the F9P's sky
+  list shows every PRN at 0.0 dB-Hz. Powering the LNA lifts every band's
+  maxima ~10 dB at once (C/A to ~51, L1C ~43, L2C ~46, L5 ~52). A "C/A
+  came back" that sits at 41.5 is satellites grazing the floor, not gain.
+- **The LNA supply is separate from the board's** (the F9P sits behind a
+  DC block, so nothing else biases the antenna). After any board power
+  event, check the LNA supply BEFORE trusting a sky number.
+- **Sky statistics from an LNA-off window are weak-signal samples, never
+  a baseline.** Tag them.
+- **`journalctl -o short-iso` on this board prints BOARD-LOCAL time
+  (UTC+1)**; `acq.json` `updated` is UTC. Convert before computing any
+  seconds-to figure.
+- **The manual-ssh lesson, re-learned 2026-09-05:** "host key changed" +
+  "publickey denied" from a host shell were both host-side (a stale ECDSA
+  `known_hosts` line; no key on the board). `platforms/tools/bench/ssh_run.py`
+  is the reach of record; the board's ED25519 fingerprint is the one
+  recorded under §Network connection of the zynq-boot chapter.
