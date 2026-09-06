@@ -295,6 +295,38 @@ section opening:
   first declare (n=1 per arm). The wide field is cheap when the sky is
   strong. `ladder_coverage.py` reads only the tmpfs live path (blind to
   the prior) and ignores `centers_hz` in `--no-record` pricing.
+- **The sky-gate is the receiver's live-sky health check (brainstorm S1,
+  decisions 126/139 as amended; landed 2026-09-06 socks main `abd05b5a`):**
+  `sky_gate_collect.py` gathers a ≥ 600 s bundle (job-stats slice,
+  `acq.json`/record/status polls, gpsd `SKY` every 30 s, F9P sidecar;
+  posture flags `--antenna/--lna/--pad` are REQUIRED operator words — the
+  board cannot sense the LNA); `sky_gate.py` computes six PRN-agnostic
+  statistics per band and judges them against envelopes keyed by image
+  VERSION (banked only with `--ruling`). Shapes that first light forced:
+  bank per statistic; the alarm rate's envelope is `[0, garwood95_hi]`; the
+  ppm is additive `± max(3σ_combined, 0.5 ppm)` with sigma an upper bound
+  only (the crystal walks ~0.9 ppm boot to boot); the C/N0-vs-F9P censor is
+  SUBJECT-side (`subject_min + 1 dB`) because `ratio-model-inversion`
+  compresses weak SVs UPWARD at its ~41.4 dB-Hz C/A floor; judge REFUSES a
+  bundle whose registry/config/capabilities shas differ from the envelope's
+  unless `--allow-config-differs`. Envelopes of record for `0x000e0002`
+  live under `systems/builds/sky-gate-first-light-20260906/` (worktree
+  `socks-sky-gate-board-leg`); n = 1 window — two windows 15 min apart
+  disagreed on 9 of 31 components, so a median-of-windows bank is the open
+  design question. The e2e gate's live-ADC row cannot run on the antenna
+  posture (its setup schema demands loopback topology).
+- **Dwell and fold on a serving board (sky-gate leg row 4b, 2026-09-06,
+  n = 1):** a round is a full band×PRN sweep with NO time budget or fence;
+  `engine.dwell.ca.dwell_target 8` (one RTL-accumulated capture 8× longer)
+  plus `engine.fold.l5.fold_n 8` (20 hypothesis jobs per PRN) stretched the
+  round ~20× — total jobs 1 929 → 580, C/A 690 → 34, L1C and L2C ZERO
+  declares in 600 s. Per job C/A declared 1.91× more at D = 8; the L5 fold
+  declared ~2.9× more per search opportunity (n = 1, no rate yet). The
+  published C/N0 moved −3.19 dB from D = 2 to D = 8 against a fixed F9P
+  (≈ `5·log10(4)`): `Cn0FromRatio` models D exactly, so the defect is in
+  the ratio or dwell count it is handed — under investigation
+  (`dwell-fold-investigation`). Do not raise a dwell count on a serving
+  board without a scheduler ruling.
 - **The F9P TPV arrival-stamp board-vs-GPS term is load-sensitive** (board
   leg 2026-09-04): −3.5 ppm idle vs +8.1 ppm under ~12 k jobs/15 min on
   the same tool and cabling while rail-vs-board moved 0.78 ppm; the loaded
