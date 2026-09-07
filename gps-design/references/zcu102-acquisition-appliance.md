@@ -449,3 +449,45 @@ section opening:
   `known_hosts` line; no key on the board). `platforms/tools/bench/ssh_run.py`
   is the reach of record; the board's ED25519 fingerprint is the one
   recorded under §Network connection of the zynq-boot chapter.
+
+### The round's cost, measured (2026-09-07, from three 2026-09-06 sky-gate windows)
+
+- **Sum the records before you name a cause.** Row 4b's "the deep C/A dwell
+  consumed the round" was refuted by its own `job_wall_ms`: the L5 fold was
+  485 s of a 509 s round, the C/A D = 8 dwell 8 s (30 ms per job vs 12 at
+  D = 2). Cost model `T_round = T_between + Σ(wall + gap)`, every term a
+  measured mean, reproduces a round to 0.4 % and a slice to 0.5 %.
+- **A fold hypothesis rung is real engine time: `(4N+1)·(N+1)` SDF passes
+  of `n + FLUSH_LEN` cycles at 100 MHz** — 297 passes = 194.8 ms predicted
+  vs 199.5 ms measured at N = 8 (fed-tape ladder 7.6 / 20.8 / 59.0 /
+  199.5 ms at N = 1/2/4/8). A 20-hypothesis sweep is ~20 s of engine time
+  per PRN. The flush (`2^log2n − 1 + 3·log2n ≈ n`) is the common SDF core's
+  own serialized-frame period by contract (`common_sdf_fft_pipe.vhd`
+  header; measured: two gapless 16-point frames emit 17 of 32) — the engine
+  cannot schedule it away; gapless frames are a core change.
+- **The C/N0 estimator must be told the dwell count the HARDWARE summed**
+  (`ratio_dwells` = `dwell_total` × any oracle accumulation), never the
+  retired software accumulator's count. Told 1 for a D-epoch ratio it reads
+  high by `10·log10(D·E_D/E_1)`: +1.8 dB at C/A D = 2, +4.7 dB at 8. The F9P
+  offset moved −3.185 dB between a D = 2 and a D = 8 window (predicted
+  −2.87); with the fix three windows agree to 0.2 dB at ≈ +1.2 dB (F9P −
+  subject). A correct model handed the wrong argument is an instrument
+  defect of the same class as a wrong model.
+- **The daemon's own overhead dominated the baseline round (88 %):**
+  0.222 s per job was two `write_status` builds of a 64 KB `acq.json`
+  (`indent=2` alone 69 % of a publish; tmpfs was never the cost), and the
+  5.2 s between rounds was the legacy C/A twin sweep on the old block
+  (2.4 s one-row probes plus a 17 s 19-rung discovery every fifth round,
+  `sweep_id` stepping on those rounds, no viewer connected). `utilization()`
+  is not a feasibility number for a once-sorted serial round — the honest
+  test is `round_period / min staleness budget` (4b: 6.08 on L2C while
+  `utilization` read 0.25).
+- **Model floors at the declare bar 2.0** (`Cn0FromRatio` inverted): C/A
+  D = 1/2/8/256/512 → 41.3/39.4/36.1/31.6/31.1 dB-Hz (non-coherent gain
+  saturates); L5 fold N = 8 → 33.6; L1C D = 1 (10 ms) → 32.6; L2C D = 1
+  (20 ms) → 29.6. The D = 1 and D = 8 rows match the observed floors.
+- **A dark census is per (band, D, N):** zero alarms in n jobs bounds the
+  rate at 3.69/n per job (95 %); 1e-3 needs ≥ 3 700 clean jobs. The fold
+  sweep tests 660 row-hypotheses per opportunity vs 5 for PCPS — on sky 2
+  of 8 fold declares were noise at ratios 2.05–2.09, above the 283-job fed
+  N = 8 ceiling (1.94).
