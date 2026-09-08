@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -205,12 +207,76 @@ def collect_items(handback: dict[str, Any]) -> list[dict[str, str]]:
     return items
 
 
+def describe_handback_path(handback_path: Path) -> str:
+    """Render the handback location WITHOUT an absolute path or username.
+
+    The triage record is a tracked-file candidate, so an absolute path in it
+    trips the fingerprint guard and has to be scrubbed by hand. Emit the
+    enclosing worktree's identity plus a worktree-relative path instead —
+    which is what a reader actually needs, since the inbox lives on a
+    sibling worktree rather than in the thread's own checkout.
+    """
+    resolved = handback_path.resolve()
+
+    def git(start: Path, *argv: str) -> str:
+        """Ask git, authoritatively. A bare `.git` directory is not a repo."""
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(start), *argv],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    # `--show-toplevel` resolves a LINKED worktree to its own root, which is
+    # what a reader needs; and unlike testing `.git` for existence it cannot
+    # be fooled by a stray empty `.git` directory (e.g. /tmp/.git).
+    start = resolved.parent
+    top = git(start, "rev-parse", "--show-toplevel")
+    if top:
+        root = Path(top)
+        try:
+            rel = resolved.relative_to(root)
+        except ValueError:
+            rel = Path(resolved.name)
+        branch = git(start, "rev-parse", "--abbrev-ref", "HEAD")
+        where = f"worktree `{root.name}`"
+        if branch and branch != "HEAD":
+            where += f", branch `{branch}`"
+        return f"{where} — `{rel}`"
+
+    # Not in a repo: fall back to a CWD-relative path, else a tail fragment.
+    try:
+        return f"`{resolved.relative_to(Path.cwd())}`"
+    except ValueError:
+        return f"`.../{Path(*resolved.parts[-3:])}`"
+
+
+def scrub_identity(text: str) -> str:
+    """Last-resort net: never emit $HOME or the local username verbatim.
+
+    The username must be replaced with ANY delimiter, not just as a path
+    segment: the harness's own scratchpad directories flatten paths into
+    names like `-media-<user>-Work1-...`, where a `/<user>/` match never
+    fires. The fingerprint guard treats a bare username as a violation
+    however it is delimited, so this replaces every occurrence.
+    """
+    home = str(Path.home())
+    if home and home != "/":
+        text = text.replace(home, "$HOME")
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    if len(user) >= 3:
+        text = text.replace(user, "<user>")
+    return text
+
+
 def render_markdown(handback_path: Path, handback: dict[str, Any], items: list[dict[str, str]]) -> str:
     title = f"# Codex handback triage — {handback.get('plan_id', '?')}"
     header = [
         title,
         "",
-        f"Handback JSON: `{handback_path}`",
+        f"Handback JSON: {describe_handback_path(handback_path)}",
         f"Thread: `{handback.get('thread_id', '?')}`",
         f"Status: `{handback.get('status', '?')}`",
         "",
@@ -253,7 +319,7 @@ def main() -> None:
     handback_path = Path(args.handback_json).resolve()
     handback = load_json(handback_path)
     items = collect_items(handback)
-    rendered = render_markdown(handback_path, handback, items)
+    rendered = scrub_identity(render_markdown(handback_path, handback, items))
 
     if args.out:
         out = Path(args.out)
