@@ -219,3 +219,78 @@ section opening:
   newly emitted/frozen vectors — never silently in place of the lossless
   authority. Linear 24-bit clipping remains REJECTED: 22.5 dB statistic
   corruption at exact ΔP_d parity.
+
+## Capture path: BRAM delay, arm-only recognition, subband DDR sink
+
+Earned by plan-31 Steps 0–4 (2026-09-08/09), measured in simulation. Lane
+cache decision 72 holds the full numbers; this is the re-derivation-costly core.
+
+- **The bin→subband map is the golden's NEAREST-CENTRE map with
+  ROUND-HALF-TO-EVEN ties** (`pl_b2ir_channelize.py::bin_for`), never a
+  floor/right-shift. The two disagree on **4191 of 8401 band bins (49.9 %)**,
+  and at signed bin −1 a shift map returns subband 127 whose centre is
+  158.75 kHz away when subband 0's is 1.25 kHz away. `peak_bin` is
+  **band-relative 0..8400**, not an absolute fftshifted index — the detector
+  assigns `o_band1 <= shft_v - BAND_LO`. There are **66 exact-tie bins**
+  (`(s−N/2) mod 128 == 64`) and half-to-even differs from half-away-from-zero
+  on **33** of them; the quotient is exactly representable in binary floating
+  point, so rounding half away from zero is wrong, not merely imprecise. A gate
+  sampling only bin centres passes under BOTH maps and proves nothing.
+- **Exactly 128 detector bins per channelizer subband** (160 kHz / 1250 Hz),
+  and detector hop / decimation = 8192/64 = **128 exactly**, so every detector
+  block origin coincides with a channelizer frame boundary. The detector
+  watches band bins 4032..12432 = 10.50125 MHz = **1616.0–1626.5 MHz**, the
+  Iridium downlink band; ~66 of 128 subbands are in band.
+- **The arm-deadline budget has two readings and the smaller one governs.**
+  Frame-first is 471.96 µs; the channelizer's first captured frame needs FIR
+  support `[end − 1535, end]`, so the earliest required sample leaves the delay
+  1535 / 20.48 MS/s = **74.951 µs earlier**, making the governing budget
+  **397.01 µs**. Quoting 471.96 µs alone is optimistic by 15.9 %. Measured arm
+  path: **84.32 µs**, leaving 312.69 µs. Both readings must yield the SAME arm
+  cost — that identity is what validates any such measurement.
+- **Recognition must be ONSET-driven.** Waiting for burst end costs 8.28 or
+  20.32 ms against 1.6 ms of retention — fails by 5.2× and 12.7×. One burst
+  spans ~21–51 detector blocks (burst / 400 µs hop), so arming per run would
+  consume 21–51 slots for ONE waveform; refusing further runs on a live
+  subband (`already_armed`) is a requirement, not a preference. Measured
+  13.8–32.8 refusals per capture, the weak tape lower because marginal
+  detection does not fire on every block of a burst.
+- **Delaying the channelizer OUTPUT instead of the raw IQ costs 3.5× MORE
+  BRAM**, not less: the PFB is 2× oversampled (128 branches / 64 decimation =
+  40.96 MS/s aggregate) and the word grows 24 → 42 bits. Raw-IQ delay is
+  21.3 BRAM36 ideal; all-subband output delay is 74.7; even restricting to the
+  ~66 in-band subbands is worse at 38.5. Do not re-propose this.
+- **Never backpressure the detector's run stream to solve sink contention.**
+  Its run FIFO is 512 records and **drops-and-counts when full**
+  (`pl_b1ir_detector.vhd:34,60`), where a downstream consumer cannot see the
+  loss. The proven answer is to never stall (`run_ready_o <= rst_n and not
+  clear_i`) and count a `COMMAND_BUSY` refusal instead: upstream pressure
+  becomes structurally zero and the loss lands somewhere visible. Losing an arm
+  is recoverable; losing detector runs corrupts the detection record itself.
+- **A published capture descriptor cannot be edited, so epoch revocation needs
+  its own retained notification.** Without one, PS can hold an
+  apparently-good descriptor from a revoked epoch and act on corrupt samples.
+  Every descriptor from a revoked epoch is invalid **including already-published
+  ones**, and the notification must be retained until acknowledged before
+  reset/rearm — otherwise a clear silently erases a fault PS never observed.
+  Related: a refusal must ALWAYS publish a terminal descriptor, because silent
+  absence is indistinguishable from "not yet".
+- **A gapped epoch cannot be inferred from the rail.** Channelizer and detector
+  inputs are valid-only and free-running, so ordinary invalid cycles are legal
+  cadence. A loss witness must come from upstream (`epoch_fault_i`), and the
+  absolute sample counter must count the detector's **enabled valid edges** — a
+  shared reset alone does not establish an epoch, and `A0 + b*8192` holds only
+  in a loss-free one.
+- **Holding an arm slot until PS release makes slot occupancy dominated by PS
+  latency, not capture duration.** Measured: PS release 1 ms → 10 ms took peak
+  live slots 4 → 5. N sizing therefore carries a PS-latency term, not only an
+  arrival-rate term.
+- **There is no UltraRAM on the xczu9eg** (912 BRAM36, 0 URAM). Do not offer
+  URAM as a BRAM-relief option on this part.
+- **`PL_B1IR_DEPTH = 7` is empirical and was already swept** at fixed P_fa:
+  depth 5 drops P_d at 45 dB-Hz from 0.992 to 0.827, failing the P_d ≥ 0.9 bar;
+  depths 4 and 6 were never measured. Separately, 30 of the detector's 166
+  BRAM36 are recoverable bit-exact with no ADR amendment — the largest single
+  piece being 12 tiles from a seventh history row that exists only as a write
+  target, since only six rows are ever read and the read address already leads
+  the write by the RAM's 2-cycle latency. Recon only; nothing implemented.
