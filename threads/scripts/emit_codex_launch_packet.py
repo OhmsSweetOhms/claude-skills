@@ -347,6 +347,43 @@ def stage_env_file(
     return dest, "skeleton written — EDIT the per-hop toolchain section"
 
 
+def write_fire_script(
+    *,
+    handback_inbox: Path,
+    worktree: Path,
+    plan_id: str,
+    launch_command: str,
+) -> tuple[Path, bool]:
+    """Write the Fire Card's launch surface as `<inbox>/fire.sh` and return
+    (path, gitignored?).
+
+    The script is the ONE thing the operator runs to fire a Codex worker:
+    it `cd`s to the worktree, sources the inbox `env.sh`, and `exec`s the
+    pinned `launch_codex_worker.py launch ...` line. It exists because a
+    pasted multi-hundred-character one-liner wraps in a real terminal and
+    has (2026-09-11) opened a Python REPL and split its own arguments.
+    It carries absolute paths by design, so it lives beside prompt.md and
+    env.sh under the gitignore rule `codex-handoff/**/fire.sh`; the caller
+    warns when that rule is missing.
+    """
+    fire_path = handback_inbox / "fire.sh"
+    fire_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"# Fire Card launch script for {plan_id} — terminal-only; absolute paths by design;\n"
+        "# gitignored (codex-handoff/**/fire.sh). Run it in a NEW terminal: bash <this file>\n"
+        "set -euo pipefail\n"
+        f"cd {shlex.quote(str(worktree))}\n"
+        f"source codex-handoff/{plan_id}/env.sh\n"
+        f"exec {launch_command}\n"
+    )
+    fire_path.chmod(0o755)
+    ignored = subprocess.run(
+        ["git", "-C", str(worktree), "check-ignore", "-q", str(fire_path)],
+        capture_output=True,
+    ).returncode == 0
+    return fire_path, ignored
+
+
 def build_worker_launch_command(
     *,
     handback_inbox: Path,
@@ -806,17 +843,6 @@ def main() -> None:
         out_path = Path(args.out).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(packet)
-        # The plan-file path is what the human will actually paste into
-        # Codex turn 1; print it on stdout BEFORE the "written to" line
-        # so the human sees it without having to open the saved file.
-        print(f"Plan file (paste this absolute path into Codex turn 1):")
-        print(f"  {plan_file}")
-        print()
-        print(f"Codex launch packet written to:")
-        print(f"  {out_path}")
-        print()
-        print(f"Environment file: {env_path}")
-        print(f"  ({env_how})")
         launch_command = build_worker_launch_command(
             handback_inbox=handback_inbox,
             thread_id=args.thread_id,
@@ -827,11 +853,27 @@ def main() -> None:
             reasoning_effort=args.reasoning_effort,
             auto_compact_token_limit=args.auto_compact_token_limit,
         )
-        print(f"  Launch: cd {worktree} && "
-              f"source codex-handoff/{inbox_stem}/env.sh && {launch_command}")
+        # The Fire Card's launch surface is a one-line bash script, not the
+        # long `cd && source && launch ...` one-liner: a pasted one-liner
+        # wraps in the operator's terminal and has opened a Python REPL and
+        # split its own arguments (2026-09-11). The script is gitignored
+        # beside prompt.md/env.sh (absolute paths by design).
+        fire_path, fire_ignored = write_fire_script(
+            handback_inbox=handback_inbox,
+            worktree=worktree,
+            plan_id=inbox_stem,
+            launch_command=launch_command,
+        )
+        print("FIRE CARD (terminal-only; absolute paths by design)")
+        print(f"  Launch dir (Codex CWD) : {worktree}")
+        print(f"  Prompt (absolute)      : {out_path}")
+        print(f"  Plan file              : {plan_file}")
         if kickoff_file:
-            print(f"Kickoff file (tracked framing; turn 1 names it): {kickoff_file}")
-        print(f"Handback inbox: {handback_inbox}")
+            print(f"  Kickoff file           : {kickoff_file}")
+        print(f"  Handback inbox         : {handback_inbox}")
+        print(f"  Environment file       : {env_path}  ({env_how})")
+        print(f"  Fire script            : {fire_path}"
+              + ("" if fire_ignored else "  [WARNING: not gitignored — add codex-handoff/**/fire.sh to .gitignore before any commit]"))
         print()
         print("ARM (orchestrator, before yielding; one terminal event, no model polling):")
         print("  python3 \"$HOME/.claude/skills/threads/scripts/"
@@ -839,11 +881,15 @@ def main() -> None:
               f"--inbox {shlex.quote(str(handback_inbox))}")
         print()
         print("FIRE (operator, a NEW terminal — reading the packet in an existing session is NOT a launch):")
-        print(f"  Codex vehicle : cd {worktree} && source codex-handoff/{inbox_stem}/env.sh && {launch_command}")
+        print(f"  Codex vehicle : bash {fire_path}")
         print(f"  Claude vehicle: cd {worktree} && claude")
-        print(f"  then paste the 'Copy-paste — Codex turn 1' block from {out_path} as turn 1.")
+        print(f"  Then paste Codex turn 1 — the first fenced block of the prompt; print it with:")
+        print(f"    awk '/^```$/{{n++; next}} n==1' {shlex.quote(str(out_path))}")
         print(f"  Fired when {handback_inbox}/worker-state.json records state=running;")
         print("  a first tool call is progress, not the launch authority.")
+        print()
+        print("  (reference, the same launch as one line — do NOT paste this if your terminal wraps:)")
+        print(f"    cd {worktree} && source codex-handoff/{inbox_stem}/env.sh && {launch_command}")
     else:
         print(f"# Environment file: {env_path} ({env_how})",
               file=sys.stderr)

@@ -487,23 +487,29 @@ codex worktree on X", "spawn codex on X", "run codex on X".
 
 6. **You (the user) open a sidecar terminal** — a separate
    tab, window, or pane in your terminal app on this same machine —
-   and run the emitted foreground launcher in the worktree:
+   and run the emitted **fire script** (one line; the emitter writes it
+   as `<inbox>/fire.sh`, gitignored, absolute paths by design):
    ```bash
-   cd <worktree>
-   source codex-handoff/<plan-id>/env.sh
-   python3 ~/.claude/skills/threads/scripts/launch_codex_worker.py launch ...
+   bash <absolute-path-to-worktree>/codex-handoff/<plan-id>/fire.sh
    ```
-   Then paste the launch packet from step 4 as the first turn (the
-   plan-file absolute path is the first line of the packet so it can
-   be copied without scrolling). The codex TUI is the watch-and-interact
+   It `cd`s to the worktree, sources the inbox `env.sh`, and `exec`s the
+   pinned `launch_codex_worker.py launch ...` line. **Never paste the
+   long one-liner** the script wraps: a pasted `cd && source && python3
+   ... --flag ...` line wraps in a real terminal and has opened a Python
+   REPL and split its own arguments (2026-09-11). The Fire Card prints
+   the one-liner only as a reference below the script path.
+   Then paste Codex turn 1 — the **first fenced block of `prompt.md`**;
+   the Fire Card prints the prompt's absolute path and an `awk` line
+   that prints exactly that block, so it can be copied without opening
+   or scrolling the file. The codex TUI is the watch-and-interact
    surface: events stream live, approval gates fire when codex wants
    to run a tool, and you can interject mid-thought.
 
    Claude (the main session) cannot launch this terminal for you —
    spawning an interactive TTY isn't possible from inside its own
-   shell. The bootstrap script's final stdout block prints the
-   exact `cd / source / launch_codex_worker.py` invocation; copy-paste it into the
-   sidecar terminal.
+   shell. The emitter's final stdout block IS the Fire Card: launch dir,
+   prompt (absolute), plan, kickoff, inbox, env file, fire script, the
+   ARM line for the orchestrator and the FIRE line for you.
 
 7. **Watch + steer.** As codex works, the TUI shows every event
    (tool calls, file edits, agent messages, tool results). Approve
