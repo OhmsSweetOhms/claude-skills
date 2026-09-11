@@ -498,10 +498,13 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    ... --flag ...` line wraps in a real terminal and has opened a Python
    REPL and split its own arguments (2026-09-11). The Fire Card prints
    the one-liner only as a reference below the script path.
-   Then paste Codex turn 1 — the **first fenced block of `prompt.md`**;
-   the Fire Card prints the prompt's absolute path and an `awk` line
-   that prints exactly that block, so it can be copied without opening
-   or scrolling the file. The codex TUI is the watch-and-interact
+   Then paste **one line** into the worker's TUI as turn 1 — the Fire
+   Card prints it verbatim: `Read <inbox>/turn1.md in full and follow it
+   as your turn-1 instructions; do not summarize it back, start
+   executing.` The emitter saves the turn-1 block (the first fenced block
+   of `prompt.md`) to `<inbox>/turn1.md` (gitignored beside `prompt.md`,
+   `env.sh`, `fire.sh`) so nothing multi-line is ever pasted: a 60-line
+   paste wraps and lands partially. The codex TUI is the watch-and-interact
    surface: events stream live, approval gates fire when codex wants
    to run a tool, and you can interject mid-thought.
 

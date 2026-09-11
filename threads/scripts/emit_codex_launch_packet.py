@@ -384,6 +384,25 @@ def write_fire_script(
     return fire_path, ignored
 
 
+def write_turn1_file(*, handback_inbox: Path, packet: str) -> Path:
+    """Write the packet's first fenced block (Codex turn 1) to `<inbox>/turn1.md`.
+
+    The operator pastes ONE line into the worker's TUI — "Read <this file>
+    in full and follow it" — instead of a 60-line block that wraps or
+    pastes partially. The file sits beside prompt.md/env.sh/fire.sh and is
+    covered by the same host-local ignore rule family
+    (`codex-handoff/**/turn1.md`); it carries absolute paths by design.
+    """
+    lines = packet.splitlines()
+    fences = [i for i, line in enumerate(lines) if line.strip() == "```"]
+    if len(fences) < 2:
+        die("launch packet has no fenced turn-1 block to save")
+    block = "\n".join(lines[fences[0] + 1:fences[1]]) + "\n"
+    turn1_path = handback_inbox / "turn1.md"
+    turn1_path.write_text(block)
+    return turn1_path
+
+
 def build_worker_launch_command(
     *,
     handback_inbox: Path,
@@ -864,9 +883,19 @@ def main() -> None:
             plan_id=inbox_stem,
             launch_command=launch_command,
         )
+        # Turn 1 is ONE pasted line: Codex reads the saved turn-1 file. The
+        # block itself is written to <inbox>/turn1.md so nothing multi-line
+        # is ever pasted into the TUI (a 60-line paste is where wrapping and
+        # partial pastes bite). The long packet stays in prompt.md for reference.
+        turn1_path = write_turn1_file(handback_inbox=handback_inbox, packet=packet)
+        paste_line = (
+            f"Read {turn1_path} in full and follow it as your turn-1 instructions; "
+            f"do not summarize it back, start executing."
+        )
         print("FIRE CARD (terminal-only; absolute paths by design)")
         print(f"  Launch dir (Codex CWD) : {worktree}")
-        print(f"  Prompt (absolute)      : {out_path}")
+        print(f"  Turn-1 file (absolute) : {turn1_path}")
+        print(f"  Prompt, long form      : {out_path}")
         print(f"  Plan file              : {plan_file}")
         if kickoff_file:
             print(f"  Kickoff file           : {kickoff_file}")
@@ -883,8 +912,8 @@ def main() -> None:
         print("FIRE (operator, a NEW terminal — reading the packet in an existing session is NOT a launch):")
         print(f"  Codex vehicle : bash {fire_path}")
         print(f"  Claude vehicle: cd {worktree} && claude")
-        print(f"  Then paste Codex turn 1 — the first fenced block of the prompt; print it with:")
-        print(f"    awk '/^```$/{{n++; next}} n==1' {shlex.quote(str(out_path))}")
+        print(f"  Then paste this ONE line into the worker's TUI as turn 1:")
+        print(f"    {paste_line}")
         print(f"  Fired when {handback_inbox}/worker-state.json records state=running;")
         print("  a first tool call is progress, not the launch authority.")
         print()
