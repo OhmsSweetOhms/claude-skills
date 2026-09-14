@@ -90,6 +90,29 @@ failures, inverted:
    `--- END KICKOFF ---` sentinel so terminal truncation is detectable.
    Codex packets: emission is not done until the Fire Card and handback
    inbox exist.
+11. **Every observable in the plan is read from the code, and audited
+   before emission** (global Core Rule 32). Every behavioral claim, status
+   token, JSON path, register or field name, file path, command, and
+   acceptance clause in the plan and kickoff is grounded in the code at the
+   emitted base commit, cited `file:line`, or marked as inference. Before
+   declaring the packet emitted, run a **pre-emission token audit**: a cheap
+   read-only agent (Sonnet/Haiku, per the token-economy rule) reads the
+   plan and kickoff in full and, for every concrete observable they name,
+   finds where the code emits or accepts it and whether it exists under the
+   condition the row reads it. It returns a table of (row, quoted phrase,
+   verdict EXISTS / DIFFERENT NAME / CONDITIONAL / MISSING, `file:line`,
+   corrected token). The producer re-verifies every MISSING and CONDITIONAL
+   row itself — auditors are wrong about one claim in three too — fixes the
+   plan in place, and only then emits. Ask of each acceptance clause: what
+   will the worker actually be able to observe and quote under this row's
+   conditions? (Earned 2026-09-14: seven plan clauses in one orchestrator
+   session named a status block that only exists when tracking is enabled,
+   an engine state token the code never emits, a no-`/dev/mem`-holder
+   condition a serving daemon violates by design, register reset semantics
+   the RTL does not have, a mid-epoch behavior the pipeline could not
+   provide as written, and a gate script path that did not exist; every one
+   cost a worker question, and one audit run before emission caught three
+   blockers that would have stopped a board leg.)
 
 ## Routing notes per variant
 
