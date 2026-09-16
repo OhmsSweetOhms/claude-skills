@@ -51,7 +51,16 @@ failures, inverted:
    (contract ambiguity, net-new structure, interface/schema changes,
    re-deriving an authoritative value, cross-packet blast radius) and close
    with the default: *if you're unsure whether a choice is yours to make,
-   it isn't — ask.*
+   it isn't — ask.* **The stop triggers are the ONLY stop points; say so.**
+   Every worker packet states run-to-completion: finished steps, green
+   gates, commits and phase boundaries are checkpoints, not pauses; the
+   worker continues through every phase to the handback and resumes on its
+   own when a question is answered or a detached job lands. Workers left to
+   default stop between phases to report, which costs an operator round
+   trip per phase for nothing (Codex, 2026-09-16). Codex packets get this
+   mechanically from the threads emitter's turn-1 `RUN TO COMPLETION`
+   block; a Claude-agent or hand-authored packet carries it in its
+   escalation section.
 5. **Falsifiable acceptance.** Every deliverable carries the exact command
    an independent verifier can re-run and the expected result. "Done" that
    can't be re-checked isn't done.

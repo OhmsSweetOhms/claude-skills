@@ -517,6 +517,42 @@ recorded in investigations[].
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
 per ~/.claude/skills/threads/references/codex-handback.md.
 
+RUN TO COMPLETION. Execute every step and phase of the plan in one continuous
+run, through the handback, without pausing for confirmation. A finished step, a
+passing gate, a commit, or a phase boundary is NOT a stopping point: record the
+checkpoint in progress.json and start the next step in the same turn. Summaries,
+"shall I continue?", and progress reports to the operator are not deliverables;
+the handback is. The ONLY reasons to end a turn before the handback are: (1) an
+open q-NN question whose answer wait you launched as a mailbox job; (2) a detached
+long command you launched as a mailbox job; (3) a STOP-boundary or hard-constraint
+hit, recorded as a blocker in a gate-incomplete handback. When a mailbox job's
+terminal record arrives (answered, or the command finished), resume the plan
+where you left off; do not wait to be told to continue. If the operator redirects
+you mid-run, follow the redirect, then return to this rule.
+
+ASK AND ARM ARE ONE ACTION. The moment you hit something the plan/ADRs/vectors do
+not pin, do all three in the same turn, unprompted, with no chat message to the
+operator first: (a) write {handback_inbox}/questions/q-NN.md (status: open,
+candidate readings + evidence + your lean); (b) write this contract to
+{handback_inbox}/jobs/q-NN-answer-wait.json, with NN filled in:
+  {{"schema_version": "1", "job_name": "q-NN-answer-wait",
+   "working_directory": "../../..", "timeout_seconds": 3600, "max_parallel": 1,
+   "containment": {{"mode": "systemd-user-scope"}},
+   "summary": {{"tail_lines": 40, "max_bytes": 8192}},
+   "doorbell": {{"mode": "codex-self"}},
+   "commands": [{{"name": "await-q-NN-answer",
+     "argv": ["bash", "-lc", "\\"$HOME/.claude/skills/threads/scripts/await_codex_answer.sh\\" codex-handoff/{plan_id}/questions/q-NN.md 3600"],
+     "max_attempts": 1, "success_markers": ["status: answered"],
+     "failure_markers": ["TIMEOUT"],
+     "expected_artifacts": ["codex-handoff/{plan_id}/questions/q-NN.md"]}}]}}
+and (c) launch it: python3 ~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py --contract {handback_inbox}/jobs/q-NN-answer-wait.json --inbox {handback_inbox}
+then run launch_codex_worker.py update to blocked and END THE TURN. Never write a
+question without launching its wait job; never end a turn with an open q-NN and
+no wait job running; never ask the question in chat instead of the file (the
+operator is not the answer channel). If the launch fails (e.g. a sandbox cannot
+reach the systemd user bus and the job stays queued), say so in one line naming
+the job, because the orchestrator's watcher still sees the file.
+
 WAITING IS NOT REASONING. Any Vivado/Xsim/synthesis/implementation command,
 mailbox wait, or other command that can outlive one tool return MUST use a JSON
 contract with launch_codex_mailbox_job.py. After launch, end the model turn.
