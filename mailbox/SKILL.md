@@ -74,6 +74,49 @@ only — **the block IS in the file but the doorbell was skipped**.
 `wait` uses the harness's hook codes: `0` nothing to say, `2` wake the
 session (stderr is the message), `1` a broken invocation.
 
+## Arming the Claude side (once per machine)
+
+The waiter only runs if a `Stop` hook runs it. The entry:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/skills/mailbox/scripts/mb.py\" wait --deadline 3300",
+            "asyncRewake": true,
+            "timeout": 3600
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`asyncRewake` is what lets an exit 2 wake an idle session. `timeout` is the
+harness's, and a hook is killed **silently** at it — which is why the waiter's
+own `--deadline` is shorter and wakes the session with `MAILBOX_WAITER_RENEW`
+so the next turn end re-arms it.
+
+Install it with the script beside `mb.py`, which the OPERATOR runs — no model
+edits a settings file:
+
+```bash
+python3 ~/.claude/skills/mailbox/scripts/install_stop_hook.py           # dry run + diff
+python3 ~/.claude/skills/mailbox/scripts/install_stop_hook.py --apply   # write it
+```
+
+It backs the file up, touches only its own entry, is idempotent, refuses a
+settings file it cannot parse, and takes the entry out again with `--remove`.
+It names the `mb.py` beside itself, so running a branch checkout's copy installs
+that checkout's waiter — which is what a trial wants. A session picks the hook
+up when it starts; for one session only, pass the snippet with
+`claude --settings <file>`.
+
 ## When it does not arrive
 
 - **`RING_SKIPPED <reason>`** — the block is in the file; only the
