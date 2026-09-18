@@ -355,6 +355,20 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertNotIn("\\       --contract", packet)
         self.assertNotIn("Block on\n     `bash", packet)
 
+        # The doorbell types nothing and routes by session id, so turn 1 must
+        # bind the session before the worker can be reached at all — and must
+        # not promise a relay or a keystroke.
+        turn1 = packet.split("```")[1]
+        bind = [i for i, line in enumerate(turn1.splitlines()) if "bind-session" in line]
+        self.assertEqual(len(bind), 1, "turn 1 must name bind-session exactly once")
+        worker_commands = [i for i, line in enumerate(turn1.splitlines())
+                           if line.startswith("python3 ")]
+        self.assertEqual(worker_commands[0], bind[0],
+                         "bind-session must be the worker's FIRST command in turn 1")
+        self.assertIn("QUEUED into this session", turn1)
+        for retired in ("host relay", "pings", "typed into this session"):
+            self.assertNotIn(retired, packet)
+
     def test_a_packet_names_the_checkout_it_was_emitted_from(self) -> None:
         """A packet emitted from a branch worktree must run THAT checkout's
         scripts: the installed skill's launcher may not know the branch's flags.

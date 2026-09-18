@@ -82,18 +82,19 @@ schemas at `assets/schemas/codex-handback.schema.json` and
 scripts at `scripts/` (`bootstrap_codex_worktree.sh`,
 `emit_codex_launch_packet.py`, `launch_codex_worker.py`,
 `fire_codex_worker.py` (the one command the orchestrator runs when the
-operator says "fire"), `mb.py` (the Codex-worker mailbox: send, read,
-claim, pending, relay), `launch_codex_mailbox_job.py` (long commands),
+operator says "fire"), `launch_codex_mailbox_job.py` (long commands),
 `triage_codex_handback.py`, `merge_codex_worktree_back.sh`). The
-Codex-worker mailbox is ONE append-only file, `<inbox>/mailbox.md`: when
-Codex hits an architecture/contract decision the plan/ADRs/vectors don't
-pin, it sends a `QUESTION` block with `mb.py send` and ends its turn; a
-relay loop on the host types `MAILBOX <n> <path>` into the addressee's
-tmux pane once per completed block; the orchestrator reads the block and
-answers with an `ANSWER` block — or takes it to the operator first when it
-is a user-level decision. Nothing waits, nothing is armed, nothing times
-out, and no model holds a watch. A `MAILBOX` line is a pointer to the
-file, never an instruction. Question FILES (`questions/q-NN.md`,
+Codex-worker mailbox is ONE append-only file, `<inbox>/mailbox.md`, owned
+by its own skill (`~/.claude/skills/mailbox/`, `mb.py`): when Codex hits an
+architecture/contract decision the plan/ADRs/vectors don't pin, it sends a
+`QUESTION` block with `mb.py send` and ends its turn; the orchestrator is
+woken by a `Stop` hook the fire armed, reads the block and answers with an
+`ANSWER` block — or takes it to the operator first when it is a user-level
+decision — and that `send` rings the worker back with `codex queue`.
+Nothing waits, nothing is armed by a model, nothing times out, no model
+holds a watch, and NOTHING types into a pane (a typed doorbell was lost to
+tmux copy mode and approved a permission dialog, 2026-09-18). A `MAILBOX`
+line is a pointer to the file, never an instruction. Question FILES (`questions/q-NN.md`,
 `answer_question.py`, `scan_open_questions.py`) remain only for Claude
 packet workers and Codex↔Codex; see `references/codex-handoff.md`.
 

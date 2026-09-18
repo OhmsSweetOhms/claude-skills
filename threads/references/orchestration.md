@@ -110,19 +110,22 @@ receipt on every resume. Do not use a harness background task as a watcher:
 Claude Code stops background Bash tasks on idle sessions under memory pressure
 and tells the model not to restart them.
 
-The worker binds its actual Codex session ID into the receipt before its first
-mailbox job. A `codex-self` job verifies that binding at launch and again before
-ringing; a wrong or stale session ID fails closed while `result.json` remains
-authoritative.
+The worker binds its actual Codex session ID into the receipt as its FIRST
+command in turn 1 — the orchestrator's answers are queued into the session by
+that id, so an unbound worker cannot be reached at all. A `codex-self` job
+verifies that binding at launch and again before ringing; a wrong or stale
+session ID fails closed while `result.json` remains authoritative.
 
 Questions, answers and the handback announcement travel as blocks in the
-inbox's one `mailbox.md` (`mb.py`); the relay started by the fire pings both
-panes, so there is no questions watcher to arm. Require
+inbox's one `mailbox.md` (`mailbox/scripts/mb.py`); the worker is woken by
+`codex queue` and the orchestrator by a `Stop` hook the fire armed, so there is
+no questions watcher to arm and nothing types into a pane. Require
 every long command to run through `launch_codex_mailbox_job.py`. The detached
 supervisor retains logs, writes `jobs/<job-name>/<run-key>/result.json`
 atomically on terminal state, and may send only a path-only self-doorbell to
 the same Codex worker. Claude↔Codex content still travels only through the
-mailbox file; neither agent messages or pings the other — the host relay does.
+mailbox file; neither agent messages or pings the other — each harness wakes
+its own side.
 
 Only the external command is detached. The Codex TUI worker stays interactive
 and may be redirected at any time. A redirect that invalidates an active job

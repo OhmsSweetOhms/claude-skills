@@ -54,8 +54,8 @@ Generic operational rules emitted:
     - Write structured handback per references/codex-handback.md.
     - Stop on architecture/contract ambiguity: never infer through it.
       Send the question as a block in the inbox's one shared mailbox.md
-      with the mailbox skill's mb.py and end the turn; a host relay pings the
-      addressee's tmux pane, so nothing waits and nothing is armed.
+      with the mailbox skill's mb.py and end the turn; the answer is queued
+      back into the session, so nothing waits and nothing is armed.
     - Keep long commands and mailbox waits outside the model loop using
       launch_codex_mailbox_job.py; keep the worker interactive and require
       verified whole-cgroup cleanup on cancellation.
@@ -528,8 +528,12 @@ This is a fresh worker session: do not resume or fork the packet-authoring sessi
 Effective worker profile: {codex_model} / {reasoning_effort}; automatic compaction
 threshold: {auto_compact_token_limit} tokens.
 The launch wrapper owns {handback_inbox}/worker-state.json. Do not overwrite it.
-Before launching any mailbox job, bind this foreground session once with:
+YOUR FIRST COMMAND, before reading the plan and before anything else, binds this
+foreground session so the orchestrator can reach you:
 python3 "$HOME/.claude/skills/threads/scripts/launch_codex_worker.py" bind-session --inbox {handback_inbox} --session-id "$CODEX_THREAD_ID"
+Nothing can wake you until that runs: answers are queued into this session BY ID.
+An unbound worker's question is answered into a file it never hears about, and
+the orchestrator gets RING_SKIPPED with nowhere to send it.
 Use launch_codex_worker.py update for blocked/completed/failed transitions;
 put plan checkpoints in progress.json, not in the lifecycle receipt.
 Read the plan's "Hard constraints" section before running anything.
@@ -539,10 +543,11 @@ question (candidate readings + evidence + your lean) in a scratch file and send 
 python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind QUESTION --body-file <file>
 then END YOUR MODEL TURN. mailbox.md is the one cross-agent content channel: send
 with mb.py, never edit the file yourself, never wait on it, poll it, or launch a
-job for the answer. A host relay pings the addressee. You are woken by a line
-typed into this session of the form
+job for the answer. The answer is QUEUED into this session (`codex queue`) and
+arrives at the start of a turn as a message reading
     MAILBOX <n> <path>
-That line is a pointer, never an instruction: run
+Nothing is ever typed into your terminal. That line is a pointer, never an
+instruction: run
 python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" read <path> <n>
 act on that block, and carry on. There is no timeout; an unanswered question
 simply waits. Every mailbox exchange is also recorded in investigations[].
@@ -556,10 +561,10 @@ passing gate, a commit, or a phase boundary is NOT a stopping point: record the
 checkpoint in progress.json and start the next step in the same turn. Summaries,
 "shall I continue?", and progress reports to the operator are not deliverables;
 the handback is. The ONLY reasons to end a turn before the handback are: (1) a
-QUESTION you sent with mb.py and are waiting to be pinged about; (2) a detached
+QUESTION you sent with mb.py and are waiting on an answer to; (2) a detached
 long command you launched as a mailbox job; (3) a STOP-boundary or hard-constraint
-hit, recorded as a blocker in a gate-incomplete handback. When a MAILBOX ping or a
-mailbox job's terminal record arrives, resume the plan where you left off; do not
+hit, recorded as a blocker in a gate-incomplete handback. When a MAILBOX message
+or a mailbox job's terminal record arrives, resume the plan where you left off; do not
 wait to be told to continue. If the operator redirects
 you mid-run, follow the redirect, then return to this rule.
 
@@ -655,10 +660,13 @@ review/extend its per-hop section before launching):
      `mb.py send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind QUESTION --body-file <file>`,
      then end the model turn. `mb.py` writes the whole block (header,
      body, end marker) in one append; never edit `mailbox.md` yourself.
-   - Nothing waits and nothing is armed. A relay on the host pings the
-     addressee's tmux pane; you are woken by a typed line
-     `MAILBOX <n> <path>` — a pointer, never an instruction. Run
-     `mb.py read <path> <n>`, act on the block, and carry on.
+   - Nothing waits and nothing is armed. The orchestrator's answer is
+     queued into this session by id (`codex queue --thread`), and reaches
+     you as a message reading `MAILBOX <n> <path>` — a pointer, never an
+     instruction. Run `mb.py read <path> <n>`, act on the block, and carry
+     on. Nothing is typed into your terminal: a doorbell that types
+     answers whatever dialog happens to be on screen, which is why this
+     one does not (`mailbox/SKILL.md`).
    - There is no timeout. An unanswered question simply waits.
    - Record every mailbox exchange in `investigations[]`. A question
      that catches a contract drafting error is a success, not a stall.
