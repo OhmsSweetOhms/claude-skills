@@ -296,7 +296,9 @@ ENV_SKELETON = """\
 # comment here telling the operator to run that command unsandboxed.
 
 # --- worktree-level env (python pins etc.) ---------------------------
-[ -f .envrc ] && . ./.envrc
+# (an `if`, not `[ -f ] && .`: as the file's last command that form returns 1
+# without an .envrc, and fire.sh's `set -e` then dies silently on `source`)
+if [ -f .envrc ]; then . ./.envrc; fi
 
 # --- per-hop toolchain env (EDIT ME) ---------------------------------
 # export XILINXD_LICENSE_FILE="$HOME/.Xilinx/Xilinx.lic"

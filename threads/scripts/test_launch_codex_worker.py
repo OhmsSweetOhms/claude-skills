@@ -352,6 +352,23 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertNotIn("\\       --contract", packet)
         self.assertNotIn("Block on\n     `bash", packet)
 
+    def test_staged_env_file_sources_cleanly_under_errexit_without_an_envrc(self) -> None:
+        """fire.sh runs `set -euo pipefail` then sources env.sh. A worktree with no
+        .envrc must not make that source return non-zero (it killed a real fire
+        silently: rc=1, nothing on the pane)."""
+        emitter = load_module(EMITTER, "emit_codex_launch_packet_env_test")
+        env_path, _how = emitter.stage_env_file(
+            self.inbox, env_file=None, worktree=self.repo,
+            thread_id="fpga/20260101-test-worker", plan_id="plan-test-worker",
+        )
+        self.assertFalse((self.repo / ".envrc").exists())
+        run = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail; cd {self.repo}; source {env_path}; echo sourced-ok"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("sourced-ok", run.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
