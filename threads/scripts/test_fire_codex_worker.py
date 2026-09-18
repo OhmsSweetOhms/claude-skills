@@ -117,7 +117,12 @@ class FireOnPrivateTmux(unittest.TestCase):
         self.assertEqual(claims["orchestrator"], self.orch)
         self.assertRegex(claims["worker"], r"^%\d+$")
         self.assertNotEqual(claims["worker"], self.orch)
-        argv = json.loads((self.inbox / "child-argv.json").read_text())
+        # WORKER_LAUNCHED is recorded BEFORE the launcher releases its gate
+        # (launch_codex_worker.py: event, then gate), so the child may not have
+        # run yet: wait for its argv file instead of reading it at once.
+        argv_file = self.inbox / "child-argv.json"
+        self.assertTrue(self._wait(lambda: argv_file.exists() and argv_file.stat().st_size > 0))
+        argv = json.loads(argv_file.read_text())
         self.assertIn(str(self.inbox / "turn1.md"), argv[-1])
         self.assertTrue(self._wait(lambda: "RELAY_START" in (self.inbox / "relay.log").read_text()
                                    if (self.inbox / "relay.log").exists() else False))
