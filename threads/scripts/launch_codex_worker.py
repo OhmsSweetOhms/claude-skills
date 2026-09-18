@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"   # 3: mailbox.messages (the one shared mailbox.md) replaced mailbox.questions
 HANDOFF_SCHEMA = Path(__file__).resolve().parent.parent / "assets" / "schemas" / "codex-handback.schema.json"
 WORKER_SCHEMA = Path(__file__).resolve().parent.parent / "assets" / "schemas" / "codex-worker-state.schema.json"
 ALLOWED_UPDATES = {
@@ -305,7 +305,7 @@ def launch(args: argparse.Namespace) -> int:
                 "prompt": "prompt.md",
                 "handback_json": "handback.json",
                 "handback_markdown": "handback.md",
-                "questions": "questions",
+                "messages": "mailbox.md",
                 "progress": "progress.json",
             },
             "session_id": None,

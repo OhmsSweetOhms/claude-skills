@@ -158,6 +158,9 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertEqual(state["state"], "completed", state["events"][-1])
         self.assertEqual(state["process"]["state"], "exited")
         self.assertTrue((self.inbox / "child-observed-state.json").exists())
+        self.assertEqual(state["schema_version"], "3")
+        self.assertEqual(state["mailbox"]["messages"], "mailbox.md")
+        self.assertNotIn("questions", state["mailbox"])
         self.assertIn("WORKER_LAUNCHED", result.stdout)
         self.assertIn("WORKER_COMPLETED", result.stdout)
         self.assert_schema_valid(state)
@@ -393,6 +396,10 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn("sourced-ok", run.stdout)
+        # The skeleton's header comment names the launcher of THIS checkout, as
+        # the rest of the packet does (a side-checkout trial found it stale).
+        if emitter.SKILL_DIR != emitter.LIVE_SKILL_DIR.resolve():
+            self.assertNotIn(".claude/skills/threads/", env_path.read_text())
 
 
 if __name__ == "__main__":

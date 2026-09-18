@@ -509,8 +509,11 @@ def resolve_worker_binding(inbox: Path, contract: dict[str, Any]) -> dict[str, A
         raw_state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         die(f"cannot read worker state for doorbell binding: {exc}")
-    if raw_state.get("schema_version") != "2":
+    if raw_state.get("schema_version") not in {"2", "3"}:
         # Migration boundary for packets already running when v2 was installed.
+        # A v2 record falls through to read_worker_state and is refused loudly:
+        # v3 replaced mailbox.questions with mailbox.messages, and the skill is
+        # cut over only with no live worker.
         return {
             "mode": "legacy-v1",
             "session_id": environment_thread_id,

@@ -683,6 +683,12 @@ CONSUME it — merely displaying an open question is a failed postcondition:
   worker meanwhile: it has ended its turn and has no cap to outlive.
 - `HANDBACK`: run **Process codex handback** on the named file.
 
+**After the handback the worker's tmux window stays open.** It is the operator's
+to close when they choose (operator ruling 2026-09-18) — the TUI is their view of
+what the worker did, and a follow-up block can still reach it. The relay exits
+on its own when that pane goes. No model closes the window, kills the relay, or
+treats a still-open window as unfinished work.
+
 **If the relay dies** (window closed, machine restart): messages still land in
 the file and nobody is pinged. `mb.py pending <mailbox> --role orchestrator`
 shows what is owed; relay a block by hand by typing its `MAILBOX <n> <path>`

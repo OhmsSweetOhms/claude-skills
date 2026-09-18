@@ -344,9 +344,9 @@ def stage_env_file(
         return dest, "existing file kept (not overwritten)"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(
-        ENV_SKELETON.format(
+        localize(ENV_SKELETON.format(
             thread_id=thread_id, plan_id=plan_id, worktree=worktree
-        )
+        ))
     )
     return dest, "skeleton written — EDIT the per-hop toolchain section"
 
