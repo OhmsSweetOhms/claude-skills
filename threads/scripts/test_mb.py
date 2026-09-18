@@ -24,6 +24,12 @@ def run_mb(*args: str, env: dict | None = None, stdin: str | None = None):
                           text=True, env=env, input=stdin)
 
 
+def drop_socket(name: str) -> None:
+    """kill-server leaves the dead socket file behind; do not litter the tmux dir."""
+    base = Path(os.environ.get("TMUX_TMPDIR", "/tmp")) / f"tmux-{os.getuid()}"
+    (base / name).unlink(missing_ok=True)
+
+
 class BlockFormat(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="mbtest-"))
@@ -165,13 +171,17 @@ class RelayOnPrivateTmux(unittest.TestCase):
         if self.relay and self.relay.stdout:
             self.relay.stdout.close()
         subprocess.run(["tmux", "-L", self.sock, "kill-server"], capture_output=True)
+        drop_socket(self.sock)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _start_relay(self, *extra: str):
         self.relay = subprocess.Popen([sys.executable, str(MB), "relay", str(self.box),
                                        "--poll", "0.1", *extra], env=self.env,
                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        time.sleep(0.4)
+        # Block until the relay has taken its "already seen" snapshot; a sleep
+        # here races a loaded machine and turns a late start into a lost ping.
+        self.started = self.relay.stdout.readline()
+        self.assertIn("RELAY_START", self.started)
 
     def _pings(self, pane: str) -> list[str]:
         seen = []
@@ -251,6 +261,13 @@ class RelayOnPrivateTmux(unittest.TestCase):
         self._start_relay()
         self._tmux("kill-pane", "-t", self.work)
         self.assertEqual(self.relay.wait(timeout=15), 0)
+        self.assertIn("RELAY_EXIT", self.relay.stdout.read())
+
+    def test_relay_exits_when_the_tmux_server_is_gone(self):
+        self._claim_both()
+        self._start_relay()
+        self._tmux("kill-server")
+        self.assertEqual(self.relay.wait(timeout=25), 0)
         self.assertIn("RELAY_EXIT", self.relay.stdout.read())
 
 

@@ -161,7 +161,7 @@ def relay(mailbox: Path, poll_s: float, from_start: bool) -> int:
     seen = set() if from_start else {b["n"] for b in read_blocks(mailbox) if b["complete"]}
     tried: dict[int, str] = {}               # block -> pane a ping already failed on
     quiet: set[int] = set()
-    stamp, last_pane_check = None, 0.0
+    stamp, last_pane_check, unreachable = None, 0.0, 0
     log(f"RELAY_START {mailbox} seen={len(seen)}")
     while True:
         now = time.monotonic()
@@ -169,6 +169,10 @@ def relay(mailbox: Path, poll_s: float, from_start: bool) -> int:
             last_pane_check = now
             worker = newest_claims(read_blocks(mailbox)).get("worker")
             panes = live_panes()
+            unreachable = unreachable + 1 if panes is None else 0
+            if unreachable >= 2:             # no server, nobody to ping: do not linger
+                log("RELAY_EXIT tmux server is unreachable")
+                return 0
             if worker and panes is not None and worker not in panes:
                 log(f"RELAY_EXIT worker pane {worker} is gone")
                 return 0
