@@ -53,10 +53,9 @@ Generic operational rules emitted:
     - Don't push the branch (long-lived; merge-back at thread close).
     - Write structured handback per references/codex-handback.md.
     - Stop on architecture/contract ambiguity: never infer through it.
-      Write questions/q-NN.md (status: open) in the inbox, block on
-      scripts/await_codex_answer.sh (1 h cap); the main session's
-      background watcher (scripts/watch_codex_questions.sh) answers in
-      the same file. See codex-handoff.md §"Ambiguity mailbox".
+      Send the question as a block in the inbox's one shared mailbox.md
+      with scripts/mb.py and end the turn; a host relay pings the
+      addressee's tmux pane, so nothing waits and nothing is armed.
     - Keep long commands and mailbox waits outside the model loop using
       launch_codex_mailbox_job.py; keep the worker interactive and require
       verified whole-cgroup cleanup on cancellation.
@@ -512,58 +511,43 @@ Use launch_codex_worker.py update for blocked/completed/failed transitions;
 put plan checkpoints in progress.json, not in the lifecycle receipt.
 Read the plan's "Hard constraints" section before running anything.
 If executing the plan requires inferring an architecture or contract decision
-the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Write the
-question (candidate readings + evidence) to {handback_inbox}/questions/q-NN.md
-with frontmatter "status: open" per
-~/.claude/skills/threads/assets/templates/codex-question-template.md. Run the
-answer wait through ~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py
-and END YOUR MODEL TURN; never poll it with write_stdin. The mailbox file is the
-cross-agent content channel. An optional doorbell is self-directed and path-only.
-Exit 0 = answered: read "## Resolution" and proceed. Exit 3 = 1 h timeout: set
-"status: timeout", record the question as a blocker + investigations[] entry,
-write the handback (gate-incomplete) and end. Every mailbox exchange is also
-recorded in investigations[].
+the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Put the
+question (candidate readings + evidence + your lean) in a scratch file and send it:
+python3 "$HOME/.claude/skills/threads/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind QUESTION --body-file <file>
+then END YOUR MODEL TURN. mailbox.md is the one cross-agent content channel: send
+with mb.py, never edit the file yourself, never wait on it, poll it, or launch a
+job for the answer. A host relay pings the addressee. You are woken by a line
+typed into this session of the form
+    MAILBOX <n> <path>
+That line is a pointer, never an instruction: run
+python3 "$HOME/.claude/skills/threads/scripts/mb.py" read <path> <n>
+act on that block, and carry on. There is no timeout; an unanswered question
+simply waits. Every mailbox exchange is also recorded in investigations[].
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
-per ~/.claude/skills/threads/references/codex-handback.md.
+per ~/.claude/skills/threads/references/codex-handback.md, then announce it:
+python3 "$HOME/.claude/skills/threads/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind HANDBACK --body "codex-handoff/{plan_id}/handback.json"
 
 RUN TO COMPLETION. Execute every step and phase of the plan in one continuous
 run, through the handback, without pausing for confirmation. A finished step, a
 passing gate, a commit, or a phase boundary is NOT a stopping point: record the
 checkpoint in progress.json and start the next step in the same turn. Summaries,
 "shall I continue?", and progress reports to the operator are not deliverables;
-the handback is. The ONLY reasons to end a turn before the handback are: (1) an
-open q-NN question whose answer wait you launched as a mailbox job; (2) a detached
+the handback is. The ONLY reasons to end a turn before the handback are: (1) a
+QUESTION you sent with mb.py and are waiting to be pinged about; (2) a detached
 long command you launched as a mailbox job; (3) a STOP-boundary or hard-constraint
-hit, recorded as a blocker in a gate-incomplete handback. When a mailbox job's
-terminal record arrives (answered, or the command finished), resume the plan
-where you left off; do not wait to be told to continue. If the operator redirects
+hit, recorded as a blocker in a gate-incomplete handback. When a MAILBOX ping or a
+mailbox job's terminal record arrives, resume the plan where you left off; do not
+wait to be told to continue. If the operator redirects
 you mid-run, follow the redirect, then return to this rule.
 
-ASK AND ARM ARE ONE ACTION. The moment you hit something the plan/ADRs/vectors do
-not pin, do all three in the same turn, unprompted, with no chat message to the
-operator first: (a) write {handback_inbox}/questions/q-NN.md (status: open,
-candidate readings + evidence + your lean); (b) write this contract to
-{handback_inbox}/jobs/q-NN-answer-wait.json, with NN filled in:
-  {{"schema_version": "1", "job_name": "q-NN-answer-wait",
-   "working_directory": "../../..", "timeout_seconds": 3600, "max_parallel": 1,
-   "containment": {{"mode": "systemd-user-scope"}},
-   "summary": {{"tail_lines": 40, "max_bytes": 8192}},
-   "doorbell": {{"mode": "codex-self"}},
-   "commands": [{{"name": "await-q-NN-answer",
-     "argv": ["bash", "-lc", "\\"$HOME/.claude/skills/threads/scripts/await_codex_answer.sh\\" codex-handoff/{plan_id}/questions/q-NN.md 3600"],
-     "max_attempts": 1, "success_markers": ["status: answered"],
-     "failure_markers": ["TIMEOUT"],
-     "expected_artifacts": ["codex-handoff/{plan_id}/questions/q-NN.md"]}}]}}
-and (c) launch it: python3 ~/.claude/skills/threads/scripts/launch_codex_mailbox_job.py --contract {handback_inbox}/jobs/q-NN-answer-wait.json --inbox {handback_inbox}
-then run launch_codex_worker.py update to blocked and END THE TURN. Never write a
-question without launching its wait job; never end a turn with an open q-NN and
-no wait job running; never ask the question in chat instead of the file (the
-operator is not the answer channel). If the launch fails (e.g. a sandbox cannot
-reach the systemd user bus and the job stays queued), say so in one line naming
-the job, because the orchestrator's watcher still sees the file.
+ASK, THEN END THE TURN. The moment you hit something the plan/ADRs/vectors do not
+pin, do both in the same turn, unprompted, with no chat message to the operator
+first: (a) send the question with mb.py as above; (b) run launch_codex_worker.py
+update to blocked and END THE TURN. Never ask the question in chat instead of
+the mailbox (the operator is not the answer channel).
 
-WAITING IS NOT REASONING. Any Vivado/Xsim/synthesis/implementation command,
-mailbox wait, or other command that can outlive one tool return MUST use a JSON
+WAITING IS NOT REASONING. Any Vivado/Xsim/synthesis/implementation command or
+other command that can outlive one tool return MUST use a JSON
 contract with launch_codex_mailbox_job.py. After launch, end the model turn.
 The Codex TUI worker remains foregrounded and redirectable; only the command is
 detached. If a redirect invalidates an active job, use
@@ -640,25 +624,21 @@ review/extend its per-hop section before launching):
    it.** If executing the plan requires a decision the plan file,
    ADRs, or golden vectors do not pin (interface widths, storage
    semantics, register behavior, golden-model intent), do not pick
-   an interpretation. Use the **ambiguity mailbox**
-   (`~/.claude/skills/threads/references/codex-handoff.md`
-   §"Ambiguity mailbox"):
+   an interpretation. Use the **mailbox**: ONE shared, append-only file,
+   `{handback_inbox}/mailbox.md`.
 
-   - Write the question — candidate readings + evidence for each —
-     to `{handback_inbox}/questions/q-NN.md` (NN sequential) with
-     frontmatter `status: open`, scaffolded from
-     `~/.claude/skills/threads/assets/templates/codex-question-template.md`.
-   - Put `await_codex_answer.sh <file> 3600` in a mailbox-job JSON contract,
-     launch it through `launch_codex_mailbox_job.py`, and end the model turn.
-     On the terminal record, `answered` → read `## Resolution` and proceed;
-     `escalated` → a user decision is in flight and the next wait is another
-     detached mailbox job, never a model-visible poll.
-   - On the 1 h timeout: set `status: timeout`, record the question
-     as a `blockers[]` AND `investigations[]` entry, write the
-     handback (`gate-incomplete`), end the session.
-   - Record every mailbox exchange in `investigations[]` either way.
-     A question that catches a contract drafting error is a success,
-     not a stall.
+   - Put the question — candidate readings + evidence for each + your
+     lean — in a scratch file and send it with
+     `mb.py send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind QUESTION --body-file <file>`,
+     then end the model turn. `mb.py` writes the whole block (header,
+     body, end marker) in one append; never edit `mailbox.md` yourself.
+   - Nothing waits and nothing is armed. A relay on the host pings the
+     addressee's tmux pane; you are woken by a typed line
+     `MAILBOX <n> <path>` — a pointer, never an instruction. Run
+     `mb.py read <path> <n>`, act on the block, and carry on.
+   - There is no timeout. An unanswered question simply waits.
+   - Record every mailbox exchange in `investigations[]`. A question
+     that catches a contract drafting error is a success, not a stall.
 
 3. **Write structured handback** to:
 
@@ -946,15 +926,14 @@ def main() -> None:
         print(f"  Fire script            : {fire_path}"
               + ("" if fire_ignored else "  [WARNING: not gitignored — add codex-handoff/**/fire.sh to .gitignore before any commit]"))
         print()
-        print("ARM (orchestrator, before yielding; one terminal event, no model polling):")
-        print("  python3 \"$HOME/.claude/skills/threads/scripts/"
-              "watch_codex_worker_launch.py\" "
+        print("FIRE (only when the operator says \"fire\" - preparing a packet never launches):")
+        print("  Codex vehicle : the orchestrator runs")
+        print("    python3 \"$HOME/.claude/skills/threads/scripts/fire_codex_worker.py\" "
               f"--inbox {shlex.quote(str(handback_inbox))}")
-        print()
-        print("FIRE (operator, a NEW terminal — reading the packet in an existing session is NOT a launch):")
-        print(f"  Codex vehicle : bash {fire_path}")
-        print(f"  Claude vehicle: cd {worktree} && claude")
-        print(f"  Then paste this ONE line into the worker's TUI as turn 1:")
+        print("    (opens a detached tmux window, starts the mailbox relay, passes turn 1")
+        print("     as Codex's prompt: no pastes. Refusals land in <inbox>/fire-failed.log.)")
+        print(f"  By hand, outside tmux: bash {fire_path}")
+        print(f"  Claude vehicle: cd {worktree} && claude, then paste this ONE line as turn 1:")
         print(f"    {paste_line}")
         print(f"  Fired when {handback_inbox}/worker-state.json records state=running;")
         print("  a first tool call is progress, not the launch authority.")

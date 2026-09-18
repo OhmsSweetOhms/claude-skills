@@ -341,6 +341,14 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             auto_compact_token_limit=300000,
         )
         self.assertIn("launch_codex_mailbox_job.py --contract", packet)
+        # Questions and the handback travel as blocks in the one shared mailbox;
+        # nothing waits on a file and no wait job exists for a question.
+        self.assertIn("mb.py\" send codex-handoff/plan-test-worker/mailbox.md --from worker "
+                      "--to orchestrator --kind QUESTION", packet)
+        self.assertIn("--kind HANDBACK", packet)
+        self.assertIn("MAILBOX <n> <path>", packet)
+        for retired in ("await_codex_answer", "watch_codex_questions", "q-NN", "questions/"):
+            self.assertNotIn(retired, packet)
         self.assertNotIn("\\       --contract", packet)
         self.assertNotIn("Block on\n     `bash", packet)
 
