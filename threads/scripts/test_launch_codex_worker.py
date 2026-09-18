@@ -360,19 +360,25 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         scripts: the installed skill's launcher may not know the branch's flags.
         From the installed skill the portable forms are kept."""
         emitter = load_module(EMITTER, "emit_codex_launch_packet_localize_test")
-        text = 'python3 "$HOME/.claude/skills/threads/scripts/mb.py" and ~/.claude/skills/threads/references/x.md'
+        # A packet names two skills now: the worker runs `mailbox`'s mb.py and
+        # `threads`' launcher, and BOTH must come from the checkout under trial.
+        text = ('python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" and '
+                '~/.claude/skills/threads/references/x.md')
         here = str(HERE.parent)
+        root = str(HERE.parent.parent)
         if emitter.SKILL_DIR == emitter.LIVE_SKILL_DIR.resolve():
             self.assertEqual(emitter.localize(text), text)
         else:
             out = emitter.localize(text)
-            self.assertIn(f'"{here}/scripts/mb.py"', out)
+            self.assertIn(f'"{root}/mailbox/scripts/mb.py"', out)
             self.assertIn(f"{here}/references/x.md", out)
-            self.assertNotIn(".claude/skills/threads/", out.replace(here, ""))
+            self.assertNotIn(".claude/skills/", out.replace(root, ""))
         emitter.SKILL_DIR = emitter.LIVE_SKILL_DIR.resolve()       # as if installed
         self.assertEqual(emitter.localize(text), text)
         emitter.SKILL_DIR = Path("/somewhere/else/threads")        # as if a worktree
-        self.assertIn('"/somewhere/else/threads/scripts/mb.py"', emitter.localize(text))
+        out = emitter.localize(text)
+        self.assertIn('"/somewhere/else/mailbox/scripts/mb.py"', out)
+        self.assertIn("/somewhere/else/threads/references/x.md", out)
         command = emitter.build_worker_launch_command(
             handback_inbox=Path("/worktree/codex-handoff/plan-x"), thread_id="a/b", plan_id="plan-x",
             branch="b", base_sha="0123456", codex_model="m", reasoning_effort="low",

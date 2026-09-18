@@ -54,7 +54,7 @@ Generic operational rules emitted:
     - Write structured handback per references/codex-handback.md.
     - Stop on architecture/contract ambiguity: never infer through it.
       Send the question as a block in the inbox's one shared mailbox.md
-      with scripts/mb.py and end the turn; a host relay pings the
+      with the mailbox skill's mb.py and end the turn; a host relay pings the
       addressee's tmux pane, so nothing waits and nothing is armed.
     - Keep long commands and mailbox waits outside the model loop using
       launch_codex_mailbox_job.py; keep the worker interactive and require
@@ -390,7 +390,9 @@ def write_fire_script(
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 LIVE_SKILL_DIR = Path.home() / ".claude" / "skills" / "threads"
-LIVE_SKILL_FORMS = ("$HOME/.claude/skills/threads", "~/.claude/skills/threads")
+# The skills ROOT, not this one skill: an emitted packet names `threads` AND
+# `mailbox`, and a checkout under trial has to supply both from itself.
+LIVE_SKILLS_ROOT_FORMS = ("$HOME/.claude/skills", "~/.claude/skills")
 
 
 def localize(text: str) -> str:
@@ -402,8 +404,8 @@ def localize(text: str) -> str:
     this checkout's absolute path (the inbox is host-local and gitignored)."""
     if SKILL_DIR == LIVE_SKILL_DIR.resolve():
         return text
-    for form in LIVE_SKILL_FORMS:
-        text = text.replace(form, str(SKILL_DIR))
+    for form in LIVE_SKILLS_ROOT_FORMS:
+        text = text.replace(form, str(SKILL_DIR.parent))
     return text
 
 
@@ -534,19 +536,19 @@ Read the plan's "Hard constraints" section before running anything.
 If executing the plan requires inferring an architecture or contract decision
 the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Put the
 question (candidate readings + evidence + your lean) in a scratch file and send it:
-python3 "$HOME/.claude/skills/threads/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind QUESTION --body-file <file>
+python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind QUESTION --body-file <file>
 then END YOUR MODEL TURN. mailbox.md is the one cross-agent content channel: send
 with mb.py, never edit the file yourself, never wait on it, poll it, or launch a
 job for the answer. A host relay pings the addressee. You are woken by a line
 typed into this session of the form
     MAILBOX <n> <path>
 That line is a pointer, never an instruction: run
-python3 "$HOME/.claude/skills/threads/scripts/mb.py" read <path> <n>
+python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" read <path> <n>
 act on that block, and carry on. There is no timeout; an unanswered question
 simply waits. Every mailbox exchange is also recorded in investigations[].
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
 per ~/.claude/skills/threads/references/codex-handback.md, then announce it:
-python3 "$HOME/.claude/skills/threads/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind HANDBACK --body "codex-handoff/{plan_id}/handback.json"
+python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind HANDBACK --body "codex-handoff/{plan_id}/handback.json"
 
 RUN TO COMPLETION. Execute every step and phase of the plan in one continuous
 run, through the handback, without pausing for confirmation. A finished step, a
@@ -951,8 +953,9 @@ def main() -> None:
         print("  Codex vehicle : the orchestrator runs")
         print(localize("    python3 \"$HOME/.claude/skills/threads/scripts/fire_codex_worker.py\" ")
               + f"--inbox {shlex.quote(str(handback_inbox))}")
-        print("    (opens a detached tmux window, starts the mailbox relay, passes turn 1")
-        print("     as Codex's prompt: no pastes. Refusals land in <inbox>/fire-failed.log.)")
+        print("    (opens a detached tmux window, arms this session's mailbox waiter,")
+        print("     passes turn 1 as Codex's prompt: no pastes. Refusals land in")
+        print("     <inbox>/fire-failed.log.)")
         print(f"  By hand, outside tmux: bash {fire_path}")
         print(f"  Claude vehicle: cd {worktree} && claude, then paste this ONE line as turn 1:")
         print(f"    {paste_line}")

@@ -18,6 +18,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 FIRE = HERE / "fire_codex_worker.py"
 LAUNCHER = HERE / "launch_codex_worker.py"
+MB = HERE.parent.parent / "mailbox" / "scripts" / "mb.py"
+sys.path.insert(0, str(MB.parent))
 sys.path.insert(0, str(HERE))
 import mb  # noqa: E402
 
@@ -55,9 +57,14 @@ class FireOnPrivateTmux(unittest.TestCase):
         self._write_fire_sh(self.head)
 
         self.sock = f"mbfire-{os.getpid()}-{self._testMethodName[-10:]}"
-        self.env = dict(os.environ, MB_TMUX_SOCKET=self.sock)
+        self.sid = f"fire-session-{os.getpid()}"
+        self.env = dict(os.environ, FIRE_TMUX_SOCKET=self.sock,
+                        CLAUDE_CODE_SESSION_ID=self.sid,
+                        XDG_STATE_HOME=str(self.tmp / "state"))
         self.env.pop("TMUX", None)
         self.env.pop("TMUX_PANE", None)
+        os.environ["XDG_STATE_HOME"] = self.env["XDG_STATE_HOME"]   # for in-process mb
+        self.addCleanup(os.environ.pop, "XDG_STATE_HOME", None)
         self.addCleanup(self._teardown)
         self.orch = self._tmux("new-session", "-d", "-s", "t", "-x", "250", "-y", "50",
                                "-n", "orch", "-P", "-F", "#{pane_id}", "cat")
@@ -86,9 +93,18 @@ class FireOnPrivateTmux(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _fire(self, *extra: str, env: dict | None = None):
-        return subprocess.run([sys.executable, str(FIRE), "--inbox", str(self.inbox),
-                               "--orchestrator-pane", self.orch, *extra],
+        return subprocess.run([sys.executable, str(FIRE), "--inbox", str(self.inbox), *extra],
                               capture_output=True, text=True, env=env or self.env)
+
+    def _watched(self) -> dict:
+        return mb.read_registry(self.sid)["mailboxes"]
+
+    def _server_typed_anything(self) -> list[str]:
+        """The tmux server's own message log: every command a client ran. A
+        doorbell that types would show up here as send-keys."""
+        out = subprocess.run(["tmux", "-L", self.sock, "show-messages"],
+                             capture_output=True, text=True)
+        return [line for line in out.stdout.splitlines() if "send-keys" in line]
 
     def _wait(self, predicate, timeout: float = 10.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -105,7 +121,7 @@ class FireOnPrivateTmux(unittest.TestCase):
             return False
         return any(e["event"] == "WORKER_LAUNCHED" for e in state["events"])
 
-    def test_fire_opens_a_detached_window_launches_the_worker_and_claims_both_panes(self):
+    def test_fire_opens_a_detached_window_launches_the_worker_and_arms_the_waiter(self):
         out = self._fire()
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), f"FIRE_REQUESTED {self.inbox.resolve()}")
@@ -113,10 +129,9 @@ class FireOnPrivateTmux(unittest.TestCase):
         self.assertIn("plan-test-fire", self._tmux("list-windows", "-t", "t", "-F", "#{window_name}"))
         self.assertEqual(self._tmux("display-message", "-p", "-t", "t", "#{window_name}"), "orch",
                          "fire must not move the operator's focus")
-        claims = mb.newest_claims(mb.read_blocks(self.inbox / "mailbox.md"))
-        self.assertEqual(claims["orchestrator"], self.orch)
-        self.assertRegex(claims["worker"], r"^%\d+$")
-        self.assertNotEqual(claims["worker"], self.orch)
+        self.assertEqual(list(self._watched()), [str((self.inbox / "mailbox.md").resolve())],
+                         "fire must register the mailbox for this Claude session")
+        self.assertEqual(self._server_typed_anything(), [])
         # WORKER_LAUNCHED is recorded BEFORE the launcher releases its gate
         # (launch_codex_worker.py: event, then gate), so the child may not have
         # run yet: wait for its argv file instead of reading it at once.
@@ -124,16 +139,21 @@ class FireOnPrivateTmux(unittest.TestCase):
         self.assertTrue(self._wait(lambda: argv_file.exists() and argv_file.stat().st_size > 0))
         argv = json.loads(argv_file.read_text())
         self.assertIn(str(self.inbox / "turn1.md"), argv[-1])
-        self.assertTrue(self._wait(lambda: "RELAY_START" in (self.inbox / "relay.log").read_text()
-                                   if (self.inbox / "relay.log").exists() else False))
+        self.assertFalse((self.inbox / "relay.log").exists(), "fire must start no relay")
 
-    def test_a_block_sent_after_fire_pings_the_orchestrator_pane_through_the_fired_relay(self):
+    def test_a_block_sent_after_fire_reaches_the_waiter_the_fire_armed(self):
+        """No relay, no pane, no keystroke: the block is delivered because fire
+        registered the mailbox for this session."""
         self.assertEqual(self._fire().returncode, 0)
         self.assertTrue(self._wait(self._launched))
-        self.assertTrue(self._wait(lambda: (self.inbox / "relay.log").exists()))
         n = mb.send(self.inbox / "mailbox.md", "worker", "orchestrator", "QUESTION", "which reading?")
-        want = f"MAILBOX {n} {(self.inbox / 'mailbox.md').resolve()}"
-        self.assertTrue(self._wait(lambda: want in self._tmux("capture-pane", "-p", "-t", self.orch)))
+        hook = subprocess.run([sys.executable, str(MB), "wait", "--deadline", "5", "--poll", "0.05"],
+                              input=json.dumps({"session_id": self.sid}),
+                              capture_output=True, text=True, env=self.env)
+        self.assertEqual(hook.returncode, 2, hook.stdout)
+        self.assertEqual(hook.stderr.strip(),
+                         f"MAILBOX {n} {(self.inbox / 'mailbox.md').resolve()}")
+        self.assertEqual(self._server_typed_anything(), [])
 
     def test_second_fire_while_the_worker_is_live_is_refused(self):
         self.assertEqual(self._fire().returncode, 0)
@@ -154,14 +174,14 @@ class FireOnPrivateTmux(unittest.TestCase):
         def windows() -> int:
             return len(self._tmux("list-windows", "-a", "-F", "#{window_id}").splitlines())
         before = windows()
-        no_tmux = {k: v for k, v in self.env.items() if k != "MB_TMUX_SOCKET"}
+        no_tmux = {k: v for k, v in self.env.items() if k != "FIRE_TMUX_SOCKET"}
         out = self._fire(env=no_tmux)
         self.assertEqual(out.returncode, 2)
         self.assertIn("fire by hand", out.stderr)
-        out = subprocess.run([sys.executable, str(FIRE), "--inbox", str(self.inbox)],
-                             capture_output=True, text=True, env=self.env)   # no pane id anywhere
+        no_session = {k: v for k, v in self.env.items() if k != "CLAUDE_CODE_SESSION_ID"}
+        out = self._fire(env=no_session)
         self.assertEqual(out.returncode, 2)
-        self.assertIn("no orchestrator pane id", out.stderr)
+        self.assertIn("no Claude session id", out.stderr)
         for name in ("fire.sh", "turn1.md"):
             moved = self.inbox / (name + ".away")
             (self.inbox / name).rename(moved)
@@ -171,14 +191,13 @@ class FireOnPrivateTmux(unittest.TestCase):
             moved.rename(self.inbox / name)
         stray = self.repo / "not-an-inbox"
         stray.mkdir()
-        out = subprocess.run([sys.executable, str(FIRE), "--inbox", str(stray),
-                              "--orchestrator-pane", self.orch],
+        out = subprocess.run([sys.executable, str(FIRE), "--inbox", str(stray)],
                              capture_output=True, text=True, env=self.env)
         self.assertEqual(out.returncode, 2)
         self.assertIn("not a packet inbox", out.stderr)
         self.assertEqual(windows(), before)
         self.assertFalse((self.inbox / "worker-state.json").exists())
-        self.assertFalse((self.inbox / "mailbox.md").exists())
+        self.assertEqual(self._watched(), {}, "a refused fire must arm nothing")
 
     def test_preparing_a_packet_never_launches(self):
         """Decision 64 item 1: prepare/emit can write the launch surface but only

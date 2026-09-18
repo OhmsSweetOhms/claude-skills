@@ -8,16 +8,16 @@ does not move launch authority.
 
   fire_codex_worker.py --inbox <worktree>/codex-handoff/<plan-id>
 
-It appends the orchestrator's pane claim to `<inbox>/mailbox.md`, opens
-`tmux new-window -d -n <plan-id> -c <worktree>` running the mailbox relay in the
-background and then `<inbox>/fire.sh`, and appends the worker's pane claim from
-the pane id tmux prints. The relay's output goes to `<inbox>/relay.log`; the
-pane belongs to the Codex TUI and nothing else writes to it. A launcher refusal
-is recorded in `<inbox>/fire-failed.log` and the window stays open until a key
-is pressed, so the refusal is readable both from a file and from the pane.
+Before it opens anything it registers `<inbox>/mailbox.md` for THIS Claude
+session (`$CLAUDE_CODE_SESSION_ID`), so the `Stop` hook's waiter is armed before
+the worker can say anything. Then it opens `tmux new-window -d -n <plan-id> -c
+<worktree>` running `<inbox>/fire.sh`. A launcher refusal is recorded in
+`<inbox>/fire-failed.log` and the window stays open until a key is pressed, so
+the refusal is readable both from a file and from the pane.
 
-`new-window` starts a process in its own pane. It is not `send-keys`: it types
-nothing into any keyboard.
+tmux is used for exactly one thing: opening the window. `new-window` starts a
+process in its own pane — it types nothing into any keyboard, and nothing here
+ever will (`mailbox/SKILL.md` records why).
 
 Output: one pointer line, `FIRE_REQUESTED <inbox>`. Success of the worker itself
 is `WORKER_LAUNCHED` in `<inbox>/worker-state.json`, as before.
@@ -26,18 +26,30 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
+SKILLS_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(SKILLS_ROOT / "mailbox" / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mb  # noqa: E402
 from launch_codex_worker import LaunchError, existing_worker_is_live, read_state  # noqa: E402
 
-MB = Path(__file__).resolve().parent / "mb.py"
+PANE = re.compile(r"^%\d+$")
 
 
-def fire(inbox: Path, orchestrator_pane: str) -> str:
+def tmux(*args: str) -> subprocess.CompletedProcess:
+    """Set FIRE_TMUX_SOCKET=<name> to talk to `tmux -L <name>`; tests use it, and
+    never point a test at the operator's server."""
+    sock = os.environ.get("FIRE_TMUX_SOCKET")
+    cmd = ["tmux"] + (["-L", sock] if sock else []) + list(args)
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def fire(inbox: Path, session_id: str) -> str:
     inbox = inbox.expanduser().resolve()
     if inbox.parent.name != "codex-handoff":
         raise LaunchError(f"not a packet inbox (expected <worktree>/codex-handoff/<plan-id>): {inbox}")
@@ -46,10 +58,11 @@ def fire(inbox: Path, orchestrator_pane: str) -> str:
     for needed in (fire_sh, turn1):
         if not needed.is_file():
             raise LaunchError(f"packet is not prepared, missing {needed.name}: {inbox}")
-    if not (os.environ.get("TMUX") or os.environ.get("MB_TMUX_SOCKET")):
+    if not (os.environ.get("TMUX") or os.environ.get("FIRE_TMUX_SOCKET")):
         raise LaunchError(f"not inside tmux; fire by hand in a new terminal: bash {fire_sh}")
-    if not mb.PANE.match(orchestrator_pane):
-        raise LaunchError("no orchestrator pane id: pass --orchestrator-pane %N or run inside tmux")
+    if not session_id:
+        raise LaunchError("no Claude session id: pass --session-id or run where "
+                          "$CLAUDE_CODE_SESSION_ID is set (the waiter is routed by it)")
     state_path = inbox / "worker-state.json"
     if state_path.exists():
         if existing_worker_is_live(read_state(state_path)):
@@ -58,13 +71,13 @@ def fire(inbox: Path, orchestrator_pane: str) -> str:
             f"worker state already exists at {state_path}; regenerate the packet for a relaunch"
         )
 
-    mailbox = inbox / "mailbox.md"
-    mb.send(mailbox, "orchestrator", "relay", "CLAIM", orchestrator_pane)
+    # Arm the wake BEFORE the worker exists: a block sent in its first seconds
+    # must find a registered mailbox, not a race.
+    mb.watch(inbox / "mailbox.md", session_id)
 
     q = shlex.quote
     failed = inbox / "fire-failed.log"
     script = (
-        f"{q(sys.executable)} {q(str(MB))} relay {q(str(mailbox))} >> {q(str(inbox / 'relay.log'))} 2>&1 & "
         f"bash {q(str(fire_sh))}; rc=$?; "
         f"if [ $rc -ne 0 ]; then "
         f"printf '%s fire.sh exited rc=%s\\n' \"$(date -u +%FT%TZ)\" \"$rc\" >> {q(str(failed))}; "
@@ -72,23 +85,22 @@ def fire(inbox: Path, orchestrator_pane: str) -> str:
         f"fi; exit $rc"
     )
     args = ["new-window", "-d", "-P", "-F", "#{pane_id}", "-n", plan_id, "-c", str(worktree)]
-    if os.environ.get("MB_TMUX_SOCKET"):     # the pane inherits the SERVER's environment
-        args += ["-e", f"MB_TMUX_SOCKET={os.environ['MB_TMUX_SOCKET']}"]
-    out = mb.tmux(*args, script)
+    if os.environ.get("FIRE_TMUX_SOCKET"):   # the pane inherits the SERVER's environment
+        args += ["-e", f"FIRE_TMUX_SOCKET={os.environ['FIRE_TMUX_SOCKET']}"]
+    out = tmux(*args, script)
     pane = out.stdout.strip()
-    if out.returncode != 0 or not mb.PANE.match(pane):
+    if out.returncode != 0 or not PANE.match(pane):
         raise LaunchError(f"tmux new-window failed: {out.stderr.strip() or out.stdout.strip()}")
-    mb.send(mailbox, "worker", "relay", "CLAIM", pane)
     return pane
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--inbox", required=True)
-    ap.add_argument("--orchestrator-pane", default=os.environ.get("TMUX_PANE", ""))
+    ap.add_argument("--session-id", default=os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
     a = ap.parse_args()
     try:
-        fire(Path(a.inbox), a.orchestrator_pane)
+        fire(Path(a.inbox), a.session_id)
     except (LaunchError, ValueError, OSError) as exc:
         print(f"fire_codex_worker: {exc}", file=sys.stderr)
         return 2
