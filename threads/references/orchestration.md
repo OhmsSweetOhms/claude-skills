@@ -97,31 +97,32 @@ rules, in tension order:
   defer the registry when it would aggregate another session's
   in-flight state — note it, and let the next regen self-heal.
 
-### Long-idle packets: mailbox watcher without worker polling
+### Long-idle packets: no watcher, no worker polling
 
 A build-day / RTL / xsim packet can spend hours in a gate with no question.
-That quiet interval is not a reason to wake its worker. Before handing the
-launch command to the operator, arm the one-shot launch watcher
-(`watch_codex_worker_launch.py --inbox <inbox>`) outside the model loop. The
-operator then fires the foreground TUI through `launch_codex_worker.py`, which
-atomically creates schema-validated `worker-state.json` and causes the watcher
-to return `WORKER_LAUNCHED <path>`. The orchestrator consumes the file, never a
-prose launch claim. A harness that cannot re-enter on watcher completion still
-reads this live receipt on its next resume; the operator may relay the same
-pointer once, but no cross-agent content leaves the mailbox.
+That quiet interval is not a reason to wake its worker, and nothing is armed
+to watch it. On the operator's "fire" the orchestrator runs
+`fire_codex_worker.py --inbox <inbox>`, which opens the foreground TUI in a
+detached tmux window through `launch_codex_worker.py`; the launcher atomically
+creates schema-validated `worker-state.json` and records `WORKER_LAUNCHED`. The
+orchestrator consumes the file, never a prose launch claim, and reads the live
+receipt on every resume. Do not use a harness background task as a watcher:
+Claude Code stops background Bash tasks on idle sessions under memory pressure
+and tells the model not to restart them.
 
 The worker binds its actual Codex session ID into the receipt before its first
 mailbox job. A `codex-self` job verifies that binding at launch and again before
 ringing; a wrong or stale session ID fails closed while `result.json` remains
 authoritative.
 
-After launch, arm the questions watcher
-(`watch_codex_questions.sh <inbox> 3600 20`) and require
+Questions, answers and the handback announcement travel as blocks in the
+inbox's one `mailbox.md` (`mb.py`); the relay started by the fire pings both
+panes, so there is no questions watcher to arm. Require
 every long command to run through `launch_codex_mailbox_job.py`. The detached
 supervisor retains logs, writes `jobs/<job-name>/<run-key>/result.json`
 atomically on terminal state, and may send only a path-only self-doorbell to
 the same Codex worker. Claude↔Codex content still travels only through the
-mailbox; neither agent directly messages the other.
+mailbox file; neither agent messages or pings the other — the host relay does.
 
 Only the external command is detached. The Codex TUI worker stays interactive
 and may be redirected at any time. A redirect that invalidates an active job

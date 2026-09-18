@@ -28,12 +28,13 @@ Codex writes here DURING/AFTER the run:
 - `scripts/` — throwaway probes, debug tests, and helper scripts
 - `temp/` — bulky or disposable generated working files
 - `artifacts/` — curated evidence cited by the handback
-- `questions/` — ambiguity mailbox (`q-NN.md`): when the plan/ADRs/
-  vectors don't pin a decision Codex needs, it writes a
-  `status: open` question here and blocks; the main session's
-  background watcher answers in the same file (1 h cap both sides;
-  see `~/.claude/skills/threads/references/codex-handoff.md`
-  §"Ambiguity mailbox")
+- `mailbox.md` — the ONE shared, append-only message file between the
+  orchestrator and a Codex worker (questions, answers, the handback
+  announcement). Written only through `scripts/mb.py send`, never by
+  hand; a relay on the host pings the addressee's tmux pane, so nothing
+  waits and nothing times out (see
+  `~/.claude/skills/threads/references/codex-handoff.md` §"Codex worker
+  mailbox"). `relay.log` and `fire-failed.log` sit beside it.
 
 The main session reads this inbox after Codex exits and promotes only
 durable material into `.threads/`, permanent tests, or tracked data.
