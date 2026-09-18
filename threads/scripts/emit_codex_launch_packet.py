@@ -96,6 +96,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launch_codex_worker import turn1_prompt  # noqa: E402  (the sentence has one home)
+
 
 def warn(msg: str) -> None:
     print(f"warning: {msg}", file=sys.stderr)
@@ -384,6 +387,9 @@ def write_fire_script(
     return fire_path, ignored
 
 
+TURN1_NAME = "turn1.md"   # the launch command names it before it is written
+
+
 def write_turn1_file(*, handback_inbox: Path, packet: str) -> Path:
     """Write the packet's first fenced block (Codex turn 1) to `<inbox>/turn1.md`.
 
@@ -398,7 +404,7 @@ def write_turn1_file(*, handback_inbox: Path, packet: str) -> Path:
     if len(fences) < 2:
         die("launch packet has no fenced turn-1 block to save")
     block = "\n".join(lines[fences[0] + 1:fences[1]]) + "\n"
-    turn1_path = handback_inbox / "turn1.md"
+    turn1_path = handback_inbox / TURN1_NAME
     turn1_path.write_text(block)
     return turn1_path
 
@@ -413,6 +419,7 @@ def build_worker_launch_command(
     codex_model: str,
     reasoning_effort: str,
     auto_compact_token_limit: int,
+    turn1_file: Path,
 ) -> str:
     parts = [
         "python3",
@@ -426,6 +433,7 @@ def build_worker_launch_command(
         "--model", shlex.quote(codex_model),
         "--reasoning-effort", shlex.quote(reasoning_effort),
         "--auto-compact-token-limit", str(auto_compact_token_limit),
+        "--turn1-file", shlex.quote(str(turn1_file)),
     ]
     return " ".join(parts)
 
@@ -466,6 +474,7 @@ def emit_packet(
         codex_model=codex_model,
         reasoning_effort=reasoning_effort,
         auto_compact_token_limit=auto_compact_token_limit,
+        turn1_file=handback_inbox / TURN1_NAME,
     )
     return f"""\
 {plan_file}
@@ -898,6 +907,10 @@ def main() -> None:
         out_path = Path(args.out).resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(packet)
+        # Turn 1 is written FIRST: the launch command names it, and the launcher
+        # starts Codex with a one-sentence pointer to it as the prompt argument,
+        # so nothing is pasted into the TUI. The long packet stays in prompt.md.
+        turn1_path = write_turn1_file(handback_inbox=handback_inbox, packet=packet)
         launch_command = build_worker_launch_command(
             handback_inbox=handback_inbox,
             thread_id=args.thread_id,
@@ -907,6 +920,7 @@ def main() -> None:
             codex_model=args.codex_model,
             reasoning_effort=args.reasoning_effort,
             auto_compact_token_limit=args.auto_compact_token_limit,
+            turn1_file=turn1_path,
         )
         # The Fire Card's launch surface is a one-line bash script, not the
         # long `cd && source && launch ...` one-liner: a pasted one-liner
@@ -919,15 +933,7 @@ def main() -> None:
             plan_id=inbox_stem,
             launch_command=launch_command,
         )
-        # Turn 1 is ONE pasted line: Codex reads the saved turn-1 file. The
-        # block itself is written to <inbox>/turn1.md so nothing multi-line
-        # is ever pasted into the TUI (a 60-line paste is where wrapping and
-        # partial pastes bite). The long packet stays in prompt.md for reference.
-        turn1_path = write_turn1_file(handback_inbox=handback_inbox, packet=packet)
-        paste_line = (
-            f"Read {turn1_path} in full and follow it as your turn-1 instructions; "
-            f"do not summarize it back, start executing."
-        )
+        paste_line = turn1_prompt(turn1_path)
         print("FIRE CARD (terminal-only; absolute paths by design)")
         print(f"  Launch dir (Codex CWD) : {worktree}")
         print(f"  Turn-1 file (absolute) : {turn1_path}")

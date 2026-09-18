@@ -54,7 +54,10 @@ import os
 import pathlib
 import time
 
+import sys
+
 inbox = pathlib.Path(os.environ["FAKE_INBOX"])
+(inbox / "child-argv.json").write_text(json.dumps(sys.argv[1:]))
 state = json.loads((inbox / "worker-state.json").read_text())
 if state["state"] != "running" or state["process"]["state"] != "running":
     raise SystemExit(91)
@@ -89,6 +92,8 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             encoding="utf-8",
         )
         self.fake_codex.chmod(0o755)
+        self.turn1 = self.inbox / "turn1.md"
+        self.turn1.write_text("Execute the plan.\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -106,6 +111,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             "--model", "gpt-test",
             "--reasoning-effort", "high",
             "--auto-compact-token-limit", "300000",
+            "--turn1-file", str(self.turn1),
             "--codex-bin", str(self.fake_codex),
             *extra,
         ]
@@ -155,6 +161,33 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertIn("WORKER_LAUNCHED", result.stdout)
         self.assertIn("WORKER_COMPLETED", result.stdout)
         self.assert_schema_valid(state)
+
+    def test_turn1_pointer_is_the_prompt_argument_and_never_the_file_content(self) -> None:
+        self.turn1.write_text("SECRET-TURN-ONE-BODY\n", encoding="utf-8")
+        result = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(FAKE_HANDBACK_STATUS="complete"),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads((self.inbox / "child-argv.json").read_text(encoding="utf-8"))
+        launcher = load_module(LAUNCHER, "launch_codex_worker_prompt_test")
+        self.assertEqual(argv[-1], launcher.turn1_prompt(self.turn1.resolve()))
+        self.assertIn(str(self.turn1.resolve()), argv[-1])
+        self.assertNotIn("SECRET-TURN-ONE-BODY", " ".join(argv))
+        self.assertEqual(argv[:2], ["--model", "gpt-test"])
+
+    def test_missing_or_empty_turn1_is_refused_before_any_state_is_written(self) -> None:
+        for prepare in (self.turn1.unlink, lambda: self.turn1.write_text("  \n", encoding="utf-8")):
+            self.turn1.write_text("x\n", encoding="utf-8")
+            prepare()
+            result = subprocess.run(
+                self.command(), cwd=self.repo, env=self.environment(),
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("turn-1 file is missing or empty", result.stderr + result.stdout)
+            self.assertFalse((self.inbox / "worker-state.json").exists())
+            self.assertFalse((self.inbox / "child-argv.json").exists())
 
     def test_clean_process_exit_is_not_plan_completion(self) -> None:
         result = subprocess.run(
@@ -282,7 +315,9 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             codex_model="gpt-test",
             reasoning_effort="high",
             auto_compact_token_limit=300000,
+            turn1_file=Path("/worktree/codex-handoff/plan-test-worker/turn1.md"),
         )
+        self.assertIn("--turn1-file /worktree/codex-handoff/plan-test-worker/turn1.md", command)
         self.assertIn("launch_codex_worker.py", command)
         self.assertIn("--expected-head 0123456", command)
         self.assertNotIn(" codex --model ", command)
