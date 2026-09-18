@@ -22,7 +22,9 @@ screen, and a doorbell cannot know what that is.
     === end 7
 
 Blocks are numbered, append-only and never rewritten. **Never edit
-`mailbox.md` by hand.** `mb.py send` takes a file lock, numbers the block,
+`mailbox.md` by hand, and never delete it** — it is the record of the exchange,
+not a queue to be drained, and a packet that has handed back still owns its
+file. `mb.py send` takes a file lock, numbers the block,
 and appends header + body + end marker in one write — so a half-written
 block never exists and the end marker is never your job. A block without
 its end marker is never delivered to anyone.
@@ -132,6 +134,15 @@ up when it starts; for one session only, pass the snippet with
 - **Nothing at all** — a waiter can die with its session. Run
   `mb.py pending <mailbox> --role orchestrator`; it reads the file, so it
   is true whatever happened to the doorbell. Then `mb.py watch` again.
+- **The doorbell can only ring at a turn boundary** (measured 2026-09-18). The
+  `Stop` hook runs when a turn ENDS, so a session that is mid-turn — including
+  one stopped at a permission dialog — has an armed waiter only if one from an
+  earlier turn is still blocked. A wake already in flight lands normally (it
+  enqueues, and it cannot answer a dialog); a block that arrives after the
+  waiter has fired waits for the next turn to end. In the ruled flow this never
+  bites, because you end your turn after sending. When something has gone
+  sideways and a session has been busy for a long time, `pending` is how you
+  find out what it has not been told.
 
 ## Takeover
 
