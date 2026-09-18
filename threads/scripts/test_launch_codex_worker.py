@@ -352,6 +352,31 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertNotIn("\\       --contract", packet)
         self.assertNotIn("Block on\n     `bash", packet)
 
+    def test_a_packet_names_the_checkout_it_was_emitted_from(self) -> None:
+        """A packet emitted from a branch worktree must run THAT checkout's
+        scripts: the installed skill's launcher may not know the branch's flags.
+        From the installed skill the portable forms are kept."""
+        emitter = load_module(EMITTER, "emit_codex_launch_packet_localize_test")
+        text = 'python3 "$HOME/.claude/skills/threads/scripts/mb.py" and ~/.claude/skills/threads/references/x.md'
+        here = str(HERE.parent)
+        if emitter.SKILL_DIR == emitter.LIVE_SKILL_DIR.resolve():
+            self.assertEqual(emitter.localize(text), text)
+        else:
+            out = emitter.localize(text)
+            self.assertIn(f'"{here}/scripts/mb.py"', out)
+            self.assertIn(f"{here}/references/x.md", out)
+            self.assertNotIn(".claude/skills/threads/", out.replace(here, ""))
+        emitter.SKILL_DIR = emitter.LIVE_SKILL_DIR.resolve()       # as if installed
+        self.assertEqual(emitter.localize(text), text)
+        emitter.SKILL_DIR = Path("/somewhere/else/threads")        # as if a worktree
+        self.assertIn('"/somewhere/else/threads/scripts/mb.py"', emitter.localize(text))
+        command = emitter.build_worker_launch_command(
+            handback_inbox=Path("/worktree/codex-handoff/plan-x"), thread_id="a/b", plan_id="plan-x",
+            branch="b", base_sha="0123456", codex_model="m", reasoning_effort="low",
+            auto_compact_token_limit=1, turn1_file=Path("/worktree/codex-handoff/plan-x/turn1.md"),
+        )
+        self.assertIn("/somewhere/else/threads/scripts/launch_codex_worker.py", command)
+
     def test_staged_env_file_sources_cleanly_under_errexit_without_an_envrc(self) -> None:
         """fire.sh runs `set -euo pipefail` then sources env.sh. A worktree with no
         .envrc must not make that source return non-zero (it killed a real fire

@@ -388,6 +388,25 @@ def write_fire_script(
     return fire_path, ignored
 
 
+SKILL_DIR = Path(__file__).resolve().parent.parent
+LIVE_SKILL_DIR = Path.home() / ".claude" / "skills" / "threads"
+LIVE_SKILL_FORMS = ("$HOME/.claude/skills/threads", "~/.claude/skills/threads")
+
+
+def localize(text: str) -> str:
+    """Point every script and reference path in emitted text at THIS checkout
+    of the skill. From the installed skill the portable `$HOME` / `~` forms are
+    right and the text is returned unchanged. From any other checkout — a
+    branch worktree under trial — a packet that named the installed skill would
+    run the installed scripts against the branch's rules, so the paths become
+    this checkout's absolute path (the inbox is host-local and gitignored)."""
+    if SKILL_DIR == LIVE_SKILL_DIR.resolve():
+        return text
+    for form in LIVE_SKILL_FORMS:
+        text = text.replace(form, str(SKILL_DIR))
+    return text
+
+
 TURN1_NAME = "turn1.md"   # the launch command names it before it is written
 
 
@@ -436,7 +455,7 @@ def build_worker_launch_command(
         "--auto-compact-token-limit", str(auto_compact_token_limit),
         "--turn1-file", shlex.quote(str(turn1_file)),
     ]
-    return " ".join(parts)
+    return localize(" ".join(parts))
 
 
 def emit_packet(
@@ -477,7 +496,7 @@ def emit_packet(
         auto_compact_token_limit=auto_compact_token_limit,
         turn1_file=handback_inbox / TURN1_NAME,
     )
-    return f"""\
+    return localize(f"""\
 {plan_file}
 
 ## Copy-paste — Codex turn 1 (short prompt)
@@ -742,7 +761,7 @@ source codex-handoff/{plan_id}/env.sh
 ```
 
 Then paste the complete short-prompt block above as turn 1.
-"""
+""")
 
 
 def main() -> None:
@@ -930,8 +949,8 @@ def main() -> None:
         print()
         print("FIRE (only when the operator says \"fire\" - preparing a packet never launches):")
         print("  Codex vehicle : the orchestrator runs")
-        print("    python3 \"$HOME/.claude/skills/threads/scripts/fire_codex_worker.py\" "
-              f"--inbox {shlex.quote(str(handback_inbox))}")
+        print(localize("    python3 \"$HOME/.claude/skills/threads/scripts/fire_codex_worker.py\" ")
+              + f"--inbox {shlex.quote(str(handback_inbox))}")
         print("    (opens a detached tmux window, starts the mailbox relay, passes turn 1")
         print("     as Codex's prompt: no pastes. Refusals land in <inbox>/fire-failed.log.)")
         print(f"  By hand, outside tmux: bash {fire_path}")
