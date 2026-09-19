@@ -168,7 +168,17 @@ class FireOnPrivateTmux(unittest.TestCase):
         failed = self.inbox / "fire-failed.log"
         self.assertTrue(self._wait(failed.exists), "launcher refusal was not recorded")
         self.assertIn("rc=", failed.read_text())
+        self.assertIn("launcher refused:", failed.read_text(),
+                      "the launcher's own message must outlive the pane it was printed in")
         self.assertFalse((self.inbox / "worker-state.json").exists())
+        # ... and the refusal WAKES the orchestrator instead of waiting to be found.
+        box = self.inbox / "mailbox.md"
+        self.assertTrue(self._wait(lambda: any(b["kind"] == "FIRE_FAILED" and b["complete"]
+                                               for b in mb.read_blocks(box))),
+                        "a refused launch sent no FIRE_FAILED block")
+        block = [b for b in mb.read_blocks(box) if b["kind"] == "FIRE_FAILED"][0]
+        self.assertEqual((block["sender"], block["to"]), ("worker", "orchestrator"))
+        self.assertIn("launcher refused:", block["body"])
 
     def test_refusals_open_no_window(self):
         def windows() -> int:

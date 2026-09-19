@@ -353,6 +353,12 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertEqual(worker_commands[0], bind[0],
                          "bind-session must be the worker's FIRST command in turn 1")
         self.assertIn("QUEUED into this session", turn1)
+        started = [i for i, line in enumerate(turn1.splitlines()) if "--kind STARTED" in line]
+        self.assertEqual(len(started), 1, "turn 1 must announce the launch exactly once")
+        self.assertEqual(worker_commands[1], started[0],
+                         "STARTED must be the worker's SECOND command, right after the bind")
+        self.assertIn('fork_turns "none"', turn1)
+        self.assertIn("A sub-agent never writes to mailbox.md and never binds a session", turn1)
         for retired in ("host relay", "pings", "typed into this session"):
             self.assertNotIn(retired, packet)
 

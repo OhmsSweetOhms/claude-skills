@@ -535,6 +535,9 @@ python3 "$HOME/.claude/skills/threads/scripts/launch_codex_worker.py" bind-sessi
 Nothing can wake you until that runs: answers are queued into this session BY ID.
 An unbound worker's question is answered into a file it never hears about, and
 the orchestrator gets RING_SKIPPED with nowhere to send it.
+YOUR SECOND COMMAND tells the orchestrator the fire worked — until it lands, a
+launched worker and a dead one look the same from outside:
+python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind STARTED --body "bound; reading the plan"
 Use launch_codex_worker.py update for blocked/completed/failed transitions;
 put plan checkpoints in progress.json, not in the lifecycle receipt.
 Read the plan's constraints section before running anything (it may be
@@ -557,6 +560,13 @@ python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id
 The orchestrator cannot otherwise tell "never woke" from "woke and working" —
 that ACK is the only difference, and it costs one line. Then act on the block
 and carry on. There is no timeout; an unanswered question simply waits. Every mailbox exchange is also recorded in investigations[].
+THE MAILBOX IS THIS SESSION'S ALONE — the packet's main session. If you spawn a
+sub-agent (a reviewer, a helper), spawn it with fork_turns "none" and a
+self-contained task message that names no mailbox: a sub-agent that starts with
+your conversation starts with these rules and any MAILBOX line in it, and will
+answer as you. A sub-agent never writes to mailbox.md and never binds a session;
+mb.py refuses any caller that is not the bound session. If a sub-agent turns up
+something the orchestrator must rule on, it returns that to you and YOU ask.
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
 per ~/.claude/skills/threads/references/codex-handback.md, then announce it:
 python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind HANDBACK --body "codex-handoff/{plan_id}/handback.json"
@@ -677,6 +687,12 @@ review/extend its per-hop section before launching):
      doorbell that types answers whatever dialog happens to be on screen,
      which is why this one does not (`mailbox/SKILL.md`).
    - There is no timeout. An unanswered question simply waits.
+   - The mailbox belongs to this session alone. Spawn any sub-agent with
+     `fork_turns` `"none"` and a self-contained task message that names no
+     mailbox; a sub-agent forked with your conversation inherits these rules
+     and any `MAILBOX` line in it and answers as you (2026-09-19). `mb.py`
+     refuses a caller that is not the bound session; a sub-agent returns what
+     it found to you, and you ask.
    - Record every mailbox exchange in `investigations[]`. A question
      that catches a contract drafting error is a success, not a stall.
 

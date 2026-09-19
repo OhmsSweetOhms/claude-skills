@@ -12,8 +12,9 @@ Before it opens anything it registers `<inbox>/mailbox.md` for THIS Claude
 session (`$CLAUDE_CODE_SESSION_ID`), so the `Stop` hook's waiter is armed before
 the worker can say anything. Then it opens `tmux new-window -d -n <plan-id> -c
 <worktree>` running `<inbox>/fire.sh`. A launcher refusal is recorded in
-`<inbox>/fire-failed.log` and the window stays open until a key is pressed, so
-the refusal is readable both from a file and from the pane.
+`<inbox>/fire-failed.log` WITH the launcher's message, sent to the orchestrator as
+a `FIRE_FAILED` mailbox block so it is woken rather than left to find out, and
+the window stays open until a key is pressed.
 
 tmux is used for exactly one thing: opening the window. `new-window` starts a
 process in its own pane — it types nothing into any keyboard, and nothing here
@@ -77,10 +78,21 @@ def fire(inbox: Path, session_id: str) -> str:
 
     q = shlex.quote
     failed = inbox / "fire-failed.log"
+    mailbox = inbox / "mailbox.md"
+    mb_py = Path(mb.__file__).resolve()
+    # A non-zero exit is a FAILED FIRE only if the launcher never recorded
+    # WORKER_LAUNCHED: fire.sh execs the launcher, which stays in the foreground
+    # for the worker's whole life, so a late non-zero exit is just a closed TUI.
+    # A failed fire wakes the orchestrator with the launcher's own words (it
+    # appends them to fire-failed.log); nothing is bound yet, so mb.py has no
+    # worker identity to hold this block against.
     script = (
         f"bash {q(str(fire_sh))}; rc=$?; "
         f"if [ $rc -ne 0 ]; then "
         f"printf '%s fire.sh exited rc=%s\\n' \"$(date -u +%FT%TZ)\" \"$rc\" >> {q(str(failed))}; "
+        f"if ! grep -q WORKER_LAUNCHED {q(str(state_path))} 2>/dev/null; then "
+        f"python3 {q(str(mb_py))} send {q(str(mailbox))} --from worker --to orchestrator "
+        f"--kind FIRE_FAILED --body-file {q(str(failed))}; fi; "
         f"printf '\\nfire failed (rc=%s) - press Enter to close this window\\n' \"$rc\"; read -r _; "
         f"fi; exit $rc"
     )

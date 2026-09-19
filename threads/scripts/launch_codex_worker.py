@@ -593,6 +593,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def record_refused_launch(inbox: str, message: str) -> None:
+    """Keep the refusal where the orchestrator can read it. The message went to a
+    pane that dies with its window; `fire_codex_worker.py` sends this file as the
+    body of a FIRE_FAILED block. Best effort: a refusal must still be a refusal."""
+    try:
+        path = Path(inbox).expanduser().resolve() / "fire-failed.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as log:
+            log.write(f"{utc_now()} launcher refused: {message}\n")
+    except OSError:
+        pass
+
+
 def main() -> int:
     if len(sys.argv) >= 4 and sys.argv[1] == "--gate-exec":
         gate_fd = int(sys.argv[2])
@@ -609,6 +622,8 @@ def main() -> int:
     try:
         return args.func(args)
     except LaunchError as exc:
+        if args.command == "launch":
+            record_refused_launch(args.inbox, str(exc))
         die(str(exc))
     return 2
 
