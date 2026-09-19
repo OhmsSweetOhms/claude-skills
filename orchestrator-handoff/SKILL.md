@@ -173,6 +173,20 @@ Run the self-audit — the same standard applied to workers, on yourself:
   assumption; role text contains no status that will rot.
 - Everything that exists only in chat is banked: launch prompts, rulings,
   escalation drafts.
+- **Reconcile every surface your own boot protocol points at** — the
+  work-order document, the playbook, the roadmap, whatever a cold
+  successor is told to read *after* the cache. The cache being correct is
+  not enough: a successor that boots exactly as instructed still lands on
+  those files, and if they still announce as "next to author" work this
+  session finished, the correct boot produces the wrong next move. Walk
+  your own resume protocol's reading list and ask of each file, "is this
+  still true after today?" Move completed work into the done/history
+  section **with its measured results and, crucially, whatever it left
+  open**, and put the successors in its place marked drafted-and-unfired
+  so nobody mistakes a draft for a launch. (Earned 2026-09-09: a lane
+  cache was updated correctly all session while the playbook it pointed
+  at still listed a capability as un-started that two closed packets had
+  built and repaired that same day.)
 - Write the dated session narrative: what was decided and done (with
   commit hashes), then **watch items** — the specific things the next
   orchestrator must verify or expect (an unexecuted close, an expected

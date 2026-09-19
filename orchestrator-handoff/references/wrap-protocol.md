@@ -56,6 +56,18 @@ that live only in findings files get found; facts that live only in the
 transcript die. Scrub any claims the session refuted (live docs
 reference current state).
 
+**6a. Reconcile the work-order surfaces your boot protocol points at.**
+The cache is not the only thing a cold successor reads. Walk your own
+resume protocol's reading list — the playbook, the roadmap, the
+forward-work table, whatever comes *after* the cache — and ask of each,
+"is this still true after today?" A correct cache pointing at a stale
+work order still produces the wrong next move, because the successor
+boots exactly as instructed and lands there. Move finished work into the
+done/history section with its measured results **and whatever it left
+open**, and put the successors in its place marked drafted-and-unfired.
+This is the step most easily skipped, because the cache edit feels like
+the job is done.
+
 **7. Commit, explicit paths, before doing anything else.**
 A perfect wrap in the working tree is a wrap that doesn't exist. Run the
 project's scans/checks; commit the boot surface + narrative together.
