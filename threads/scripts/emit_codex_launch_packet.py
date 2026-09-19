@@ -195,12 +195,48 @@ def refuse_chart_in_plan(plan_file: Path) -> None:
         )
 
 
+def resolve_worktree_entry(entry: dict, main_repo: Path) -> Path | None:
+    """The existing directory one codex_worktrees[] entry names, or None.
+
+    `path` wins when present. It can use the `<workspace-root>/...` scrub
+    convention, the fingerprint-safe `$WORKBASE/<worktree>` placeholder, a
+    home-relative `~/...` (which keeps the username out of committed
+    bookkeeping) or a path relative to the main checkout. An entry with no
+    `path` is looked for by its `worktree` NAME beside the main checkout — the
+    common layout, and how most entries are actually written.
+    """
+    workbase = os.environ.get("WORKBASE")
+    siblings = ([Path(workbase)] if workbase else []) + [
+        main_repo.parent, main_repo.parent.parent, main_repo.parent.parent.parent]
+    raw_path = entry.get("path")
+    if raw_path:
+        for prefix in ("<workspace-root>/", "$WORKBASE/"):
+            if raw_path.startswith(prefix):
+                candidates = [root / raw_path[len(prefix):] for root in siblings]
+                break
+        else:
+            path = Path(os.path.expandvars(raw_path)).expanduser()
+            candidates = [path if path.is_absolute() else main_repo / raw_path]
+    elif entry.get("worktree"):
+        candidates = [root / entry["worktree"] for root in siblings]
+    else:
+        return None
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_dir():
+            return resolved
+    return None
+
+
 def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | None]:
     """Return (worktree_path, branch_from_json) from thread.json.
 
-    Picks the first non-merged codex_worktrees[] entry whose path
-    resolves to an existing directory. Returns (None, None) if no
-    suitable entry is found — caller dies with a helpful message.
+    Considers NON-MERGED codex_worktrees[] entries only, and returns the one
+    that resolves to an existing directory. None, or more than one, is an
+    error naming the entries — never a guess. A merged entry is never returned:
+    falling through to one silently put a packet's env.sh, fire.sh and turn1.md
+    in a merged worktree of another repo (2026-09-19, arm plan-15), the same
+    lesson as the first-match pick of 2026-08-17 one case over.
     """
     if not thread_json.exists():
         die(f"thread.json not found: {thread_json}")
@@ -209,76 +245,38 @@ def discover_worktree(thread_json: Path, main_repo: Path) -> tuple[Path, str | N
     except (json.JSONDecodeError, OSError) as exc:
         die(f"failed to parse {thread_json}: {exc}")
 
-    worktrees = data.get("codex_worktrees", [])
-    live = [w for w in worktrees if w.get("status") not in ("merged",) and w.get("path")]
-    if len(live) > 1:
-        # Silent first-match picked the WRONG worktree once (2026-08-17,
-        # plan-11 landed in socks-pl-block-verification instead of
-        # socks-acq-daemon). Ambiguity is an error, not a guess.
-        listing = "\n".join(f"    - {w.get('path')}  (branch {w.get('branch')})" for w in live)
-        die(
-            f"{thread_json} lists {len(live)} live codex worktrees — pass --worktree-path:\n{listing}"
-        )
-    ranked = sorted(
-        worktrees,
-        key=lambda w: 0 if w.get("status") not in ("merged",) else 1,
-    )
-    for entry in ranked:
-        raw_path = entry.get("path")
-        if not raw_path:
-            continue
-        # thread.json paths can use the <workspace-root>/... scrub
-        # convention. The token expands to the directory containing the
-        # project workspace, which is typically one or two parents above
-        # the main checkout. Try several plausible roots and pick the
-        # first that resolves to an existing directory.
-        if raw_path.startswith("<workspace-root>/"):
-            tail = raw_path[len("<workspace-root>/"):]
-            candidates = [
-                main_repo.parent / tail,
-                main_repo.parent.parent / tail,
-                main_repo.parent.parent.parent / tail,
-            ]
-            for candidate in candidates:
-                resolved = candidate.resolve()
-                if resolved.exists():
-                    return resolved, entry.get("branch")
-            # Fall through to the next entry if no candidate exists
-            continue
-        # thread.json also stores paths as $WORKBASE/<worktree> (the
-        # fingerprint-safe placeholder for the directory that holds the
-        # project checkouts). Expand from the environment if set; else
-        # assume WORKBASE = the main repo's parent (the common layout:
-        # main checkout and codex worktrees are siblings).
-        if raw_path.startswith("$WORKBASE/"):
-            tail = raw_path[len("$WORKBASE/"):]
-            workbase = os.environ.get("WORKBASE")
-            candidates = [Path(workbase) / tail] if workbase else []
-            candidates += [
-                main_repo.parent / tail,
-                main_repo.parent.parent / tail,
-            ]
-            for candidate in candidates:
-                resolved = candidate.resolve()
-                if resolved.exists():
-                    return resolved, entry.get("branch")
-            continue
-        # Expand a leading ~ first: thread.json stores worktree paths
-        # home-relative (~/.claude/skills-<slug>) to keep the username out
-        # of committed bookkeeping. Without expansion, ~/... is not
-        # is_absolute(), so the branch below would prepend main_repo and
-        # never resolve.
-        path = Path(os.path.expandvars(raw_path)).expanduser()
-        if not path.is_absolute():
-            path = (main_repo / raw_path).resolve()
-        if path.exists():
-            return path, entry.get("branch")
+    def label(entry: dict) -> str:
+        return (f"    - {entry.get('path') or entry.get('worktree') or '<no path, no worktree name>'}"
+                f"  (branch {entry.get('branch')}, status {entry.get('status')})")
 
+    open_entries = [w for w in data.get("codex_worktrees", [])
+                    if w.get("status") not in ("merged",)]
+    found = [(w, resolve_worktree_entry(w, main_repo)) for w in open_entries]
+    live = [(w, path) for w, path in found if path is not None]
+    if len(live) > 1:
+        listing = "\n".join(label(w) for w, _ in live)
+        die(f"{thread_json} lists {len(live)} live codex worktrees — pass --worktree-path:\n{listing}")
+    if live:
+        entry, path = live[0]
+        return path, entry.get("branch")
+    listing = "\n".join(label(w) for w in open_entries) or "    (no non-merged entries at all)"
     die(
-        f"no usable codex_worktrees[] entry in {thread_json}.\n"
-        f"  expected at least one entry with a 'path' that resolves "
-        f"to an existing directory."
+        f"no usable codex_worktrees[] entry in {thread_json} — pass --worktree-path.\n"
+        f"  A merged entry is never used. Non-merged entries, none of which resolves\n"
+        f"  to an existing directory:\n{listing}"
     )
+
+
+def refuse_a_split_packet(out_path: Path, handback_inbox: Path) -> None:
+    """env.sh, fire.sh and turn1.md go to the RESOLVED inbox whatever --out says;
+    a packet split across two directories fires the worker somewhere its prompt
+    is not, and the wrong resolution cannot be seen from where prompt.md landed."""
+    if out_path.resolve().parent != handback_inbox.resolve():
+        die(
+            f"--out {out_path} is not in the resolved inbox {handback_inbox}.\n"
+            f"  The packet's other files are written there. Pass the inbox's own\n"
+            f"  prompt.md, or --worktree-path if the wrong worktree was resolved."
+        )
 
 
 ENV_SKELETON = """\
@@ -941,6 +939,7 @@ def main() -> None:
 
     if args.out:
         out_path = Path(args.out).resolve()
+        refuse_a_split_packet(out_path, handback_inbox)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(packet)
         # Turn 1 is written FIRST: the launch command names it, and the launcher

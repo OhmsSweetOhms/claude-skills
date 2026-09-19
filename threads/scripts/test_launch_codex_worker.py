@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -423,6 +426,77 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         # the rest of the packet does (a side-checkout trial found it stale).
         if emitter.SKILL_DIR != emitter.LIVE_SKILL_DIR.resolve():
             self.assertNotIn(".claude/skills/threads/", env_path.read_text())
+
+
+
+class WorktreeDiscoveryTests(unittest.TestCase):
+    """The emitter never guesses a worktree: a merged entry is never returned, a
+    pathless active entry is never skipped in silence (2026-09-19, arm plan-15)."""
+
+    def setUp(self) -> None:
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.base = Path(self.scratch.name)
+        self.main = self.base / "main-checkout"
+        self.main.mkdir()
+        self.thread_json = self.main / "thread.json"
+        self.emitter = load_module(EMITTER, "emit_codex_launch_packet_discovery_test")
+        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("WORKBASE", None)
+
+    def worktree(self, name: str) -> Path:
+        path = self.base / name
+        path.mkdir()
+        return path
+
+    def write(self, *entries: dict) -> None:
+        self.thread_json.write_text(json.dumps({"codex_worktrees": list(entries)}))
+
+    def discover(self):
+        return self.emitter.discover_worktree(self.thread_json, self.main)
+
+    def test_a_pathless_active_entry_is_found_by_name_and_the_merged_one_never_is(self) -> None:
+        active = self.worktree("project-active-work")
+        self.worktree("other-repo-merged-work")
+        self.write(
+            {"worktree": "project-active-work", "path": None, "branch": "active", "status": "active"},
+            {"path": "$WORKBASE/other-repo-merged-work", "branch": "old", "status": "merged"},
+        )
+        self.assertEqual(self.discover(), (active.resolve(), "active"))
+
+    def test_an_active_entry_that_resolves_nowhere_dies_naming_it_and_never_falls_through(self) -> None:
+        self.worktree("other-repo-merged-work")
+        self.write(
+            {"worktree": "was-never-created", "path": None, "branch": "active", "status": "active"},
+            {"path": "$WORKBASE/other-repo-merged-work", "branch": "old", "status": "merged"},
+        )
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            self.discover()
+        self.assertIn("was-never-created", err.getvalue())
+        self.assertIn("A merged entry is never used", err.getvalue())
+        self.assertIn("--worktree-path", err.getvalue())
+
+    def test_two_live_entries_are_an_error_however_they_are_written(self) -> None:
+        self.worktree("first")
+        self.worktree("second")
+        self.write({"worktree": "first", "status": "active", "branch": "a"},
+                   {"path": "$WORKBASE/second", "status": "active", "branch": "b"})
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            self.discover()
+        self.assertIn("2 live codex worktrees", err.getvalue())
+
+    def test_out_outside_the_resolved_inbox_is_refused(self) -> None:
+        inbox = self.worktree("project-active-work") / "codex-handoff" / "plan-15-x"
+        elsewhere = self.worktree("other-repo-merged-work") / "codex-handoff" / "plan-15-x"
+        self.emitter.refuse_a_split_packet(inbox / "prompt.md", inbox)      # the inbox's own
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            self.emitter.refuse_a_split_packet(elsewhere / "prompt.md", inbox)
+        self.assertIn("is not in the resolved inbox", err.getvalue())
 
 
 if __name__ == "__main__":
