@@ -557,7 +557,8 @@ are about to do:
 python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind ACK --body "block <n>: <one line on what you will do>"
 The orchestrator cannot otherwise tell "never woke" from "woke and working" —
 that ACK is the only difference, and it costs one line. Then act on the block
-and carry on. There is no timeout; an unanswered question simply waits. Every mailbox exchange is also recorded in investigations[].
+and carry on. There is no timeout; an unanswered question simply waits. mailbox.md is the
+record of every exchange; do not copy them into the handback.
 THE MAILBOX IS THIS SESSION'S ALONE — the packet's main session. If you spawn a
 sub-agent (a reviewer, a helper), spawn it with fork_turns "none" and a
 self-contained task message that names no mailbox: a sub-agent that starts with
@@ -691,8 +692,10 @@ review/extend its per-hop section before launching):
      and any `MAILBOX` line in it and answers as you (2026-09-19). `mb.py`
      refuses a caller that is not the bound session; a sub-agent returns what
      it found to you, and you ask.
-   - Record every mailbox exchange in `investigations[]`. A question
-     that catches a contract drafting error is a success, not a stall.
+   - `mailbox.md` is the record of every exchange; do not copy them into
+     the handback's `investigations[]` (that field is for what a human asked
+     mid-session). A question that catches a contract drafting error is a
+     success, not a stall.
 
 3. **Write structured handback** to:
 

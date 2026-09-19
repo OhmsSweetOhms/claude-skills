@@ -401,10 +401,10 @@ codex worktree on X", "spawn codex on X", "run codex on X".
      it.** If the plan/ADRs/golden vectors don't pin a decision Codex
      needs (interface widths, storage semantics, register behavior,
      golden intent), Codex must stop, pose the question with candidate
-     readings + evidence in the mailbox, and launch the detached answer wait;
-     the main session resolves the same file. No cross-agent content is pasted
-     through a second channel. The exchange is recorded in the handback's
-     `investigations[]`. A handed-back question that
+     readings + evidence in the mailbox (`mb.py send … --kind QUESTION`), and
+     end its turn; the answer is queued back into the session. Nothing waits.
+     No cross-agent content is pasted through a second channel, and the mailbox
+     is the record of the exchange. A handed-back question that
      catches a contract drafting error is a success, not a stall.
    - **Write structured handback** per `references/codex-handback.md` to
      `<worktree>/codex-handoff/<plan-id>/handback.{json,md}` with the
@@ -688,7 +688,6 @@ mailbox is the MAIN session's alone: a sub-agent is spawned with `fork_turns`
 the bound session (a forked review sub-agent ACKed as the worker on the first
 live packet, 2026-09-19). There is no timeout — an unanswered question simply
 waits. After writing the handback files, announce them with a `HANDBACK` block.
-Record every exchange in `investigations[]`.
 
 **Orchestrator protocol:** on a `MAILBOX <n> <path>` line, read the block and
 CONSUME it — merely displaying an open question is a failed postcondition:

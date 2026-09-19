@@ -150,9 +150,10 @@ root-level `codex-handoff/<plan-id>/` inbox:
 - `temp/` for bulky or disposable generated working files.
 - `artifacts/` for curated evidence cited by the handback.
 - `mailbox.md` for every orchestrator↔worker exchange (question and
-  answer blocks in the one file, sent with `mb.py`). Every exchange is duplicated into
-  `investigations[]`; a question still unanswered at handback also becomes a
-  `blockers[]` entry.
+  answer blocks in the one file, sent with `mb.py`). The mailbox IS the record
+  of those exchanges — do not copy them into `investigations[]`, which is for
+  what a human asked mid-session. A question still unanswered at handback
+  becomes a `blockers[]` entry.
 
 Record useful material in `handoff_artifacts[]` with a promotion
 recommendation. The main session decides what becomes `.threads/`
