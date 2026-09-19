@@ -369,6 +369,16 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         for retired in ("host relay", "pings", "typed into this session"):
             self.assertNotIn(retired, packet)
 
+        # The ACK: without it the orchestrator cannot tell "never woke" from
+        # "woke and working" (hop-12 trial, 2026-09-18). It must be ordered
+        # BEFORE the work, or it reports nothing the next block would not.
+        self.assertIn("--kind ACK", turn1)
+        self.assertIn("BEFORE any other tool call", turn1)
+        self.assertLess(turn1.index("--kind ACK"), turn1.index("--kind HANDBACK"),
+                        "the ACK must be described before the handback")
+        self.assertIn('titled "Constraints" or "Hard constraints"', turn1,
+                      "a plan whose heading is Constraints must not be missed")
+
     def test_a_packet_names_the_checkout_it_was_emitted_from(self) -> None:
         """A packet emitted from a branch worktree must run THAT checkout's
         scripts: the installed skill's launcher may not know the branch's flags.

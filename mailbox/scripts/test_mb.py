@@ -69,11 +69,15 @@ class MailboxTest(unittest.TestCase):
                 os.environ[key] = value
 
     def write_worker_state(self, *, session_id="codex-thread-uuid", state="running",
-                           process_state="running"):
+                           process_state="running", alive=True):
+        """`alive` controls the only liveness signal mb.py trusts: whether the
+        recorded worker process identity still matches a running process."""
         (self.box.parent).mkdir(parents=True, exist_ok=True)
+        identity = mb.process_identity(os.getpid()) if alive else {
+            "pid": 999999, "boot_id": "0" * 36, "start_ticks": 1}
         (self.box.parent / "worker-state.json").write_text(json.dumps({
             "schema_version": "3", "state": state, "session_id": session_id,
-            "process": {"state": process_state},
+            "process": {"state": process_state, "worker_identity": identity},
         }))
 
     def codex_argv(self):
@@ -213,14 +217,26 @@ class RingOnSend(MailboxTest):
         self.assertEqual(out.stdout.strip(), f"SENT 1 {self.box}")
         self.assertIsNone(self.codex_argv())
 
+    def test_a_completed_worker_is_still_rung(self):
+        """The hop-12 regression. A `completed` worker's TUI is still sitting
+        there, and a post-handback follow-up is exactly the case where the
+        lifecycle says "over" and the worker is not. Reading the lifecycle as
+        liveness cost that trial a hand-rung pointer."""
+        for lifecycle in ("completed", "failed", "exited", "blocked"):
+            with self.subTest(lifecycle=lifecycle):
+                self.argv.unlink(missing_ok=True)
+                self.write_worker_state(state=lifecycle, session_id=f"t-{lifecycle}")
+                out = run_mb("send", str(self.box), "--from", "orchestrator", "--to",
+                             "worker", "--kind", "NOTE", "--body", "follow-up",
+                             env=self.env)
+                self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+                self.assertIn(f"RANG worker t-{lifecycle}", out.stdout)
+                self.assertEqual(self.codex_argv()[:3], ["queue", "--thread", f"t-{lifecycle}"])
+
     def test_every_skipped_ring_is_loud_and_leaves_the_block_in_the_file(self):
         cases = [
             ({}, "no worker-state.json"),
             ({"session_id": None}, "no bound session"),
-            ({"state": "completed"}, "worker is completed"),
-            ({"state": "failed"}, "worker is failed"),
-            ({"state": "exited"}, "worker is exited"),
-            ({"process_state": "exited"}, "process has exited"),
         ]
         for n, (state_kwargs, expect) in enumerate(cases, start=1):
             with self.subTest(expect=expect):
@@ -380,16 +396,45 @@ class Wait(MailboxTest):
         self.assertIn("MAILBOX_WAITER_RENEW", out.stderr)
         self.assertLess(time.monotonic() - start, 10.0)
 
-    def test_a_spent_mailbox_drops_out_of_the_watch(self):
+    def test_the_watch_survives_a_completed_worker_that_is_still_running(self):
+        """The hop-12 regression, the other face. After a HANDBACK the waiter
+        used to drop the mailbox because the LIFECYCLE was terminal, leaving the
+        orchestrator deaf to the follow-up exchange that verification triggers."""
         mb.watch(self.box, self.sid)
-        mb.send(self.box, "worker", "orchestrator", "HANDBACK", "codex-handoff/x/handback.json")
-        self.write_worker_state(state="completed")
+        mb.send(self.box, "worker", "orchestrator", "HANDBACK", "handback.md")
+        self.write_worker_state(state="completed")         # lifecycle over, process alive
+        first = self.run_wait("--deadline", "0.4")
+        self.assertEqual(first.returncode, 2)
+        self.assertIn("MAILBOX 1 ", first.stderr)
+        second = self.run_wait("--deadline", "0.4")        # nothing fresh, but still watched
+        self.assertEqual(second.returncode, 2)
+        self.assertIn("MAILBOX_WAITER_RENEW", second.stderr)
+        self.assertIn(str(self.box.resolve()), mb.read_registry(self.sid)["mailboxes"])
+        mb.send(self.box, "worker", "orchestrator", "HANDBACK", "handback.md, take two")
+        third = self.run_wait("--deadline", "0.4")         # the follow-up still lands
+        self.assertEqual(third.returncode, 2)
+        self.assertIn("MAILBOX 2 ", third.stderr)
+
+    def test_the_watch_drops_only_once_the_worker_process_is_gone(self):
+        mb.watch(self.box, self.sid)
+        mb.send(self.box, "worker", "orchestrator", "HANDBACK", "handback.md")
+        self.write_worker_state(state="completed", alive=False)
         first = self.run_wait("--deadline", "0.4")         # the handback still arrives
         self.assertEqual(first.returncode, 2)
         self.assertIn("MAILBOX 1 ", first.stderr)
         second = self.run_wait("--deadline", "30")         # then the watch is over
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(mb.read_registry(self.sid)["mailboxes"], {})
+
+    def test_a_departed_process_is_recognised_however_the_record_reads(self):
+        """`process.state` is never reaped when the operator closes the window,
+        so it reads `running` for a dead pid. The identity is the witness."""
+        self.write_worker_state(state="running", process_state="running", alive=False)
+        self.assertTrue(mb.worker_process_is_gone(json.loads(
+            (self.box.parent / "worker-state.json").read_text())))
+        self.write_worker_state(state="completed", process_state="running", alive=True)
+        self.assertFalse(mb.worker_process_is_gone(json.loads(
+            (self.box.parent / "worker-state.json").read_text())))
 
 
 if __name__ == "__main__":

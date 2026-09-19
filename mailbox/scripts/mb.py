@@ -36,7 +36,8 @@ Usage:
   mb.py wait [--deadline S] [--poll S]         (Stop hook: session_id on stdin)
 
 Roles: orchestrator, worker. Kinds are uppercase tokens; the worker rules name
-QUESTION, ANSWER, HANDBACK and NOTE.
+QUESTION, ANSWER, HANDBACK, NOTE and ACK (the worker's one-line "I have this,
+here is what I am about to do", sent the moment it consumes a pointer).
 
 Exit codes: 0 ok; 2 refused (nothing written); 3 from `send` only — the block IS
 in the file but the doorbell was skipped, with the reason on the `RING_SKIPPED`
@@ -74,7 +75,6 @@ WAIT_ROLE = "orchestrator"
 WAIT_DEADLINE_S = 3300.0   # under the hook's 3600 s timeout, which kills SILENTLY
 WAIT_POLL_S = 0.5
 QUEUE_TIMEOUT_S = 20.0
-TERMINAL_STATES = ("completed", "failed", "exited")
 
 
 # ---------------------------------------------------------------- the file
@@ -178,19 +178,38 @@ def worker_state(mailbox: Path) -> dict:
     return data
 
 
-def worker_is_over(state: dict) -> str | None:
-    """A reason string when the worker can no longer be rung or woken, else None.
+def process_identity(pid: int) -> dict | None:
+    """The launcher's own identity shape, field for field, so the two agree.
+    Duplicated rather than imported: the mailbox skill works without threads."""
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        stat_text = Path(f"/proc/{pid}/stat").read_text()
+        tail = stat_text[stat_text.rfind(") ") + 2:].split()
+        start_ticks = int(tail[19])
+    except (OSError, ValueError, IndexError):
+        return None
+    return {"pid": pid, "boot_id": boot_id, "start_ticks": start_ticks}
 
-    `state` is the lifecycle; `process.state` is the TUI. A worker BLOCKED on a
-    question is very much alive — that is the whole point — so only the terminal
-    lifecycle states and a departed process count.
+
+def worker_process_is_gone(state: dict) -> bool:
+    """Whether the worker PROCESS has departed — the only honest liveness signal
+    the record carries.
+
+    NOT the lifecycle. A `completed` worker's TUI is still sitting there and can
+    still be rung, and that is exactly how a post-handback follow-up works:
+    verification finds something, the orchestrator sends a NOTE, the worker fixes
+    it and hands back again. Reading `completed` as "nothing more will be said"
+    made the ring refuse a live worker and made the waiter drop its watch, and
+    both were measured on the hop-12 trial (2026-09-18).
+
+    NOT `process.state` alone either: nothing reaps it when the operator closes
+    the window, so it reads `running` for a dead pid forever.
     """
-    lifecycle = state.get("state")
-    if lifecycle in TERMINAL_STATES:
-        return f"worker is {lifecycle}"
-    if (state.get("process") or {}).get("state") == "exited":
-        return f"worker process has exited (lifecycle {lifecycle})"
-    return None
+    process = state.get("process") or {}
+    identity = process.get("worker_identity")
+    if isinstance(identity, dict) and identity.get("pid"):
+        return process_identity(identity["pid"]) != identity
+    return process.get("state") == "exited"     # never launched, or already reaped
 
 
 def ring_worker(mailbox: Path, n: int) -> tuple[str | None, str]:
@@ -201,9 +220,9 @@ def ring_worker(mailbox: Path, n: int) -> tuple[str | None, str]:
         state = worker_state(mailbox)
     except LookupError as exc:
         return None, str(exc)
-    over = worker_is_over(state)
-    if over:
-        return None, over
+    # No lifecycle pre-check: `codex queue` IS the liveness test, and it fails
+    # loudly. A pre-check that refuses a live worker is strictly worse than one
+    # failed queue call — the hop-12 trial spent a hand-rung pointer proving it.
     session_id = state.get("session_id")
     if not session_id:
         return None, ("worker has no bound session — "
@@ -306,11 +325,12 @@ def new_blocks(mailbox: Path, cursor: int) -> list[dict]:
                   key=lambda b: b["n"])
 
 
-def mailbox_is_spent(mailbox: Path) -> bool:
-    """Drop from the watch: the worker is over and nothing is left undelivered.
-    Called only after the undelivered blocks have been handed over."""
+def worker_has_departed(mailbox: Path) -> bool:
+    """Drop from the watch only when nobody is home: the worker's process is
+    gone, so no further block can come from it. Called only after every
+    undelivered block has been handed over."""
     try:
-        return worker_is_over(worker_state(mailbox)) is not None
+        return worker_process_is_gone(worker_state(mailbox))
     except LookupError:
         return False              # no record yet (or unreadable): keep watching
 
@@ -331,7 +351,7 @@ def collect(session_id: str) -> list[str]:
                 entry["cursor"] = fresh[-1]["n"]
                 changed = True
                 lines += [f"MAILBOX {b['n']} {mailbox}" for b in fresh]
-            elif mailbox_is_spent(mailbox):
+            elif worker_has_departed(mailbox):
                 del data["mailboxes"][path]
                 changed = True
         if changed:
@@ -357,7 +377,7 @@ def wait(session_id: str, deadline_s: float, poll_s: float) -> int:
                 print("\n".join(lines), file=sys.stderr)
                 return 2
             if not read_registry(session_id)["mailboxes"]:
-                return 0                  # every watch was spent
+                return 0                  # every watched worker has gone
             if time.monotonic() >= end:
                 # The hook is killed SILENTLY at its own timeout, which would
                 # leave nothing armed. Wake the session instead so the next turn

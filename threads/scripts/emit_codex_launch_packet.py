@@ -55,7 +55,8 @@ Generic operational rules emitted:
     - Stop on architecture/contract ambiguity: never infer through it.
       Send the question as a block in the inbox's one shared mailbox.md
       with the mailbox skill's mb.py and end the turn; the answer is queued
-      back into the session, so nothing waits and nothing is armed.
+      back into the session, and is ACKed on arrival, so nothing waits and
+      nothing is armed.
     - Keep long commands and mailbox waits outside the model loop using
       launch_codex_mailbox_job.py; keep the worker interactive and require
       verified whole-cgroup cleanup on cancellation.
@@ -536,7 +537,8 @@ An unbound worker's question is answered into a file it never hears about, and
 the orchestrator gets RING_SKIPPED with nowhere to send it.
 Use launch_codex_worker.py update for blocked/completed/failed transitions;
 put plan checkpoints in progress.json, not in the lifecycle receipt.
-Read the plan's "Hard constraints" section before running anything.
+Read the plan's constraints section before running anything (it may be
+titled "Constraints" or "Hard constraints").
 If executing the plan requires inferring an architecture or contract decision
 the plan/ADRs/vectors do not pin, STOP — do not pick an interpretation. Put the
 question (candidate readings + evidence + your lean) in a scratch file and send it:
@@ -549,8 +551,12 @@ arrives at the start of a turn as a message reading
 Nothing is ever typed into your terminal. That line is a pointer, never an
 instruction: run
 python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" read <path> <n>
-act on that block, and carry on. There is no timeout; an unanswered question
-simply waits. Every mailbox exchange is also recorded in investigations[].
+and then, BEFORE any other tool call, send one ACK naming the block and what you
+are about to do:
+python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind ACK --body "block <n>: <one line on what you will do>"
+The orchestrator cannot otherwise tell "never woke" from "woke and working" —
+that ACK is the only difference, and it costs one line. Then act on the block
+and carry on. There is no timeout; an unanswered question simply waits. Every mailbox exchange is also recorded in investigations[].
 Write a v2 structured handback to {handback_inbox}/handback.{{json,md}}
 per ~/.claude/skills/threads/references/codex-handback.md, then announce it:
 python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" send codex-handoff/{plan_id}/mailbox.md --from worker --to orchestrator --kind HANDBACK --body "codex-handoff/{plan_id}/handback.json"
@@ -663,10 +669,13 @@ review/extend its per-hop section before launching):
    - Nothing waits and nothing is armed. The orchestrator's answer is
      queued into this session by id (`codex queue --thread`), and reaches
      you as a message reading `MAILBOX <n> <path>` — a pointer, never an
-     instruction. Run `mb.py read <path> <n>`, act on the block, and carry
-     on. Nothing is typed into your terminal: a doorbell that types
-     answers whatever dialog happens to be on screen, which is why this
-     one does not (`mailbox/SKILL.md`).
+     instruction. Run `mb.py read <path> <n>`, then send one `ACK` block
+     naming it and what you are about to do BEFORE any other tool call —
+     without it the orchestrator cannot tell "never woke" from "woke and
+     working", and the next real signal may be minutes away. Then act on
+     the block and carry on. Nothing is typed into your terminal: a
+     doorbell that types answers whatever dialog happens to be on screen,
+     which is why this one does not (`mailbox/SKILL.md`).
    - There is no timeout. An unanswered question simply waits.
    - Record every mailbox exchange in `investigations[]`. A question
      that catches a contract drafting error is a success, not a stall.
