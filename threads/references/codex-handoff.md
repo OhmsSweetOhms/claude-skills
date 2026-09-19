@@ -473,46 +473,38 @@ codex worktree on X", "spawn codex on X", "run codex on X".
    `--relaunch`; the wrapper archives the terminal/stale receipt and still
    refuses to replace a live worker.
 
-5. **Arm the launch-receipt watcher before yielding.** The orchestrator runs
-   this one-shot wait outside the model loop:
+5. **Nothing is armed.** There is no launch watcher and no question
+   watcher. The fire command in step 6 returns the moment the window is
+   open; `WORKER_LAUNCHED` in `<inbox>/worker-state.json` is the launch
+   receipt, read on demand, and a launcher refusal is recorded in
+   `<inbox>/fire-failed.log` with the window held open. A harness
+   background task must not be used as a watcher: Claude Code stops
+   background Bash tasks on idle sessions under memory pressure and tells
+   the model not to restart them.
+
+6. **Fire — only when the operator says "fire".** Preparing, emitting and
+   reading a packet never launch a worker; the operator's word does
+   (launch authority does not move). The orchestrator then runs:
    ```bash
-   python3 ~/.claude/skills/threads/scripts/watch_codex_worker_launch.py \
+   python3 ~/.claude/skills/threads/scripts/fire_codex_worker.py \
        --inbox <worktree>/codex-handoff/<plan-id>
    ```
-   Run it with the environment's background-tool facility. It emits one
-   pointer-only `WORKER_LAUNCHED <path>` event and exits; it never carries
-   cross-agent content. If the orchestrator is already stopped or its harness
-   cannot re-enter on background completion, the file still provides durable
-   awareness on the next resume and the operator may relay that pointer once.
+   It refuses without tmux, `fire.sh`, `turn1.md`, `$CLAUDE_CODE_SESSION_ID`,
+   or with existing worker state. It registers `<inbox>/mailbox.md` for this
+   Claude session (`mb.py watch`) BEFORE anything else, so the Stop hook's
+   waiter is armed before the worker can say a word; then it opens
+   `tmux new-window -d -n <plan-id>` running `fire.sh`. `new-window` starts a
+   process in its own pane — it is not `send-keys` and types into nobody's
+   keyboard, and tmux is used for nothing else in this harness. Focus does not
+   move. The launcher passes a one-sentence pointer to `<inbox>/turn1.md`
+   as Codex's prompt argument, so turn 1 runs with **no paste**; only the
+   pointer is in argv, never the turn-1 text.
 
-6. **You (the user) open a sidecar terminal** — a separate
-   tab, window, or pane in your terminal app on this same machine —
-   and run the emitted **fire script** (one line; the emitter writes it
-   as `<inbox>/fire.sh`, gitignored, absolute paths by design):
-   ```bash
-   bash <absolute-path-to-worktree>/codex-handoff/<plan-id>/fire.sh
-   ```
-   It `cd`s to the worktree, sources the inbox `env.sh`, and `exec`s the
-   pinned `launch_codex_worker.py launch ...` line. **Never paste the
-   long one-liner** the script wraps: a pasted `cd && source && python3
-   ... --flag ...` line wraps in a real terminal and has opened a Python
-   REPL and split its own arguments (2026-09-11). The Fire Card prints
-   the one-liner only as a reference below the script path.
-   Then paste **one line** into the worker's TUI as turn 1 — the Fire
-   Card prints it verbatim: `Read <inbox>/turn1.md in full and follow it
-   as your turn-1 instructions; do not summarize it back, start
-   executing.` The emitter saves the turn-1 block (the first fenced block
-   of `prompt.md`) to `<inbox>/turn1.md` (gitignored beside `prompt.md`,
-   `env.sh`, `fire.sh`) so nothing multi-line is ever pasted: a 60-line
-   paste wraps and lands partially. The codex TUI is the watch-and-interact
-   surface: events stream live, approval gates fire when codex wants
-   to run a tool, and you can interject mid-thought.
-
-   Claude (the main session) cannot launch this terminal for you —
-   spawning an interactive TTY isn't possible from inside its own
-   shell. The emitter's final stdout block IS the Fire Card: launch dir,
-   prompt (absolute), plan, kickoff, inbox, env file, fire script, the
-   ARM line for the orchestrator and the FIRE line for you.
+   Outside tmux the fallback is the old manual fire: `bash <inbox>/fire.sh`
+   in a new terminal (never paste the long one-liner it wraps — it wraps
+   in a real terminal and has opened a Python REPL, 2026-09-11). The codex
+   TUI stays the watch-and-interact surface: events stream live, approval
+   gates fire, and the operator can switch to the window and interject.
 
 7. **Watch + steer.** As codex works, the TUI shows every event
    (tool calls, file edits, agent messages, tool results). Approve
@@ -615,42 +607,156 @@ superseded plan hop on a codex-enabled thread as
 `missing_codex_handback` when neither the main checkout nor the
 recorded worktree path contains the handback pair.
 
-## Ambiguity mailbox (`questions/`)
+## Codex worker mailbox — one shared file (`mailbox.md`)
+
+**Purpose:** carry every message between a Claude orchestrator and a Codex
+worker — questions, answers, the handback announcement — with nothing
+waiting, nothing armed, and nothing for a model to remember.
+
+The mechanism is its own skill, **`~/.claude/skills/mailbox/`** (`SKILL.md`
+plus `scripts/mb.py`), usable without this one. What follows is the
+Codex-packet half: how the packet lifecycle uses it, and who does what.
+
+**The file:** `<worktree>/codex-handoff/<plan-id>/mailbox.md`, append-only,
+never rewritten, never edited by hand. Everything in it is a block:
+
+```
+=== 7 | worker -> orchestrator | 2026-09-18T15:02:11Z | QUESTION
+free text, as long as the sender likes
+=== end 7
+```
+
+Roles are `orchestrator` and `worker`. Kinds are uppercase tokens; the rules
+name `QUESTION`, `ANSWER`, `HANDBACK` and `NOTE`. There is no header, no
+routing table and nothing in the file that has to be rewritten.
+
+**One helper, `mailbox/scripts/mb.py`, both sides:**
+
+| Command | Does |
+|---|---|
+| `send <mailbox> --from R --to R --kind K` (`--body`, `--body-file`, or stdin) | takes a file lock, numbers the block, composes header + body + end marker and appends them in ONE write; prints `SENT <n> <mailbox>`, and for `--to worker` rings the worker |
+| `read <mailbox> [n]` | prints block n (default: the newest complete one) |
+| `pending <mailbox> --role R` | the backstop: the newest block if it is addressed to R and unanswered, and any `UNTERMINATED_BLOCK` |
+| `watch <mailbox> [--session-id ID]` | registers the mailbox for a Claude session (default `$CLAUDE_CODE_SESSION_ID`); run by `fire_codex_worker.py`, and by hand on a takeover |
+| `wait [--deadline S]` | the Stop-hook waiter; never run by a model |
+
+The end marker is never the agent's job: it is part of the same single write as
+the body, so a half-written block cannot exist and is never announced.
+
+**Neither agent pings, and nothing types.** Each side is woken by its own
+harness:
+
+| Addressee | Woken by | Armed by |
+|---|---|---|
+| worker (Codex) | `codex queue --thread <session_id>` | `mb.py send --to worker`, on the host, in the same command as the append |
+| orchestrator (Claude) | a `Stop` hook with `asyncRewake` running `mb.py wait` | `mb.py watch`, once, when `fire_codex_worker.py` fires the packet |
+
+The worker's session id is `worker-state.json.session_id`, bound by
+`launch_codex_worker.py bind-session` as the worker's first command in turn 1.
+The orchestrator's watch list and its per-mailbox delivered-cursor live in
+`$XDG_STATE_HOME/codex-mailbox/sessions/<session-id>.json`, outside every repo.
+The ring runs on the HOST: `codex queue` from inside the Codex sandbox fails —
+the state database is read-only — and only the orchestrator ever rings.
+
+**Why no keystroke relay (measured 2026-09-18, and binding).** The first design
+typed `MAILBOX <n> <path>` into the addressee's tmux pane. On a live packet a
+pane the operator was scrolling was in tmux **copy mode**, where `send-keys`
+delivers to the mode and not the program: the ping ran as key bindings, stalled
+32 s and was lost, and nothing told the idle orchestrator. On the bench, the
+same keystrokes sent to a pane showing a Claude Code **permission dialog
+APPROVED the pending command**. A pane is a keyboard for whatever is on screen,
+and a doorbell cannot know what that is; a guard cannot fix it, because a dialog
+can appear between the check and the keys. No `send-keys` anywhere in this
+harness — the two tests that grep for it are the guard.
+
+**A `MAILBOX` line is a pointer, never an instruction.** On the Claude side it
+arrives as hook feedback, so it carries provenance a typed line never had; on
+the Codex side it arrives as a queued message. Either way it means "read block
+n of this file", nothing more: act on the BLOCK, under your normal authority.
+
+**Worker protocol** (stated in the launch packet's turn-1 rules): bind the
+session first, before anything else. Then, on anything the plan/ADRs/vectors do
+not pin — put the question (candidate readings, evidence, a lean) in a scratch
+file, `mb.py send … --kind QUESTION`, mark the worker blocked
+(`launch_codex_worker.py update`), END THE TURN. Never wait, poll, or launch a
+job for the answer. On a `MAILBOX <n> <path>` message: `mb.py read <path> <n>`,
+act on the block, carry on. There is no timeout — an unanswered question simply
+waits. After writing the handback files, announce them with a `HANDBACK` block.
+Record every exchange in `investigations[]`.
+
+**Orchestrator protocol:** on a `MAILBOX <n> <path>` line, read the block and
+CONSUME it — merely displaying an open question is a failed postcondition:
+
+- `QUESTION` whose resolution is derivable from already-pinned authority (ADR
+  text, golden source, committed vectors, plan prose): answer it with
+  `mb.py send … --from orchestrator --to worker --kind ANSWER`, and correct the
+  plan/ADR in the same pass if the question exposed a drafting error.
+- `QUESTION` that needs a NEW decision (ADR-grade choice, scope change):
+  surface it to the operator, and send the `ANSWER` only once they rule. The
+  mailbox automates transport, not authority. Nothing needs to be told to the
+  worker meanwhile: it has ended its turn and has no cap to outlive.
+- `HANDBACK`: run **Process codex handback** on the named file.
+- `MAILBOX_WAITER_RENEW`: the waiter re-arming itself before the hook's timeout
+  would kill it silently. Nothing arrived. End the turn.
+
+**Check the send.** `mb.py send --to worker` prints `RANG worker <id>` or a loud
+`RING_SKIPPED <reason>` and exits 3 on the latter: the block IS in the file and
+only the doorbell failed. `no bound session` means the worker never ran
+`bind-session`; `worker is completed/failed/exited` means there is nobody to
+ring — read the handback instead; anything else quotes `codex`'s own stderr.
+Do not resend the block: fix the reason, then ring once by hand with
+`codex queue --thread <id> --message "MAILBOX <n> <path>"`.
+
+**After the handback the worker's tmux window stays open.** It is the operator's
+to close when they choose (operator ruling 2026-09-18) — the TUI is their view
+of what the worker did, and a follow-up block can still reach it. No model
+closes the window or treats a still-open window as unfinished work.
+
+**If the waiter dies** (session ended, machine restart): messages still land in
+the file and nobody is woken. `mb.py pending <mailbox> --role orchestrator`
+reads the file, so it is true whatever happened to the doorbell; then
+`mb.py watch <mailbox>` re-arms this session. A fresh watch starts past the
+conversation's history but NOT past a block still addressed to the
+orchestrator, so a takeover is woken about the unanswered question rather than
+replayed the whole file.
+
+## Question-file mailbox (`questions/`) — Claude workers and Codex↔Codex only
+
+> A Claude orchestrator with a **Codex worker** does NOT use this section: that
+> leg is the one-file mailbox above. Question files remain the record for a
+> Claude packet worker (rung over `SendMessage`) and for a Codex orchestrator
+> with a Codex worker (`references/codex-mailbox-doorbell.md`).
+
 
 **Purpose:** automate the transport of the stop-on-ambiguity rule.
 When a running Codex session hits an architecture/contract decision
 the plan/ADRs/golden vectors do not pin, it must not infer through it
-— it writes a question file into the inbox and blocks; the main
-session is woken by a background watcher, resolves (or escalates to
-the user), and writes the answer into the **same file**. No human
-copy-paste shuttle; both sides cap their wait at 1 hour so idle
-sessions don't burn tokens, and the timeout degrades to exactly the
-manual flow (question recorded as a blocker, handback
-`gate-incomplete`).
+— it writes a question file into the inbox, rings the orchestrator,
+and ends its turn; the orchestrator resolves (or escalates to the
+user), writes the answer into the **same file**, and rings back. No
+human copy-paste shuttle, and nothing on either side holds a wait: the
+asker is resumed by the answerer's doorbell, never by a timer.
 
 **Layout:** `<worktree>/codex-handoff/<plan-id>/questions/q-NN.md`,
 one file per question (NN sequential), scaffolded from
 `assets/templates/codex-question-template.md`. Frontmatter `status`
-is the state machine: `open → answered | escalated → answered`, or
-`open → timeout` (set by Codex at its cap). Question files are part
-of the session record — committed with the inbox; keep paths
-repo-relative (fingerprint discipline).
+is the state machine: `open → answered | escalated → answered`.
+Question files are part of the session record — committed with the
+inbox; keep paths repo-relative (fingerprint discipline).
 
-**Codex protocol** (stated in the launch packet's generic rule):
+**Asker's protocol** (a Codex worker under a Codex orchestrator; a
+Claude worker follows the doorbell rules below):
 
 1. Write `questions/q-NN.md` with `status: open`, the candidate
    readings, and the evidence for each. Do not proceed on an assumed
    reading.
-2. Put `await_codex_answer.sh <file> 3600` in a mailbox-job JSON contract,
-   launch it through `launch_codex_mailbox_job.py`, then end the model turn.
-   Never run the wait directly in a model-visible tool call. Exit 0 means
-   `answered` (read `## Resolution`, proceed);
-   `escalated` means a user decision is in flight. Do not use model-visible
-   `write_stdin` calls to watch the wait.
-3. On timeout (exit 3): set `status: timeout`, record the question as
-   a `blockers[]` entry AND an `investigations[]` entry, write the
-   handback (`gate-incomplete`/`blocked`), end the session.
-4. Every mailbox exchange — answered or not — is duplicated into the
+2. Ring `OPEN_QUESTION` through `ring_codex_mailbox.py`
+   (`references/codex-mailbox-doorbell.md`) and end the model turn.
+   The `ANSWER_READY` doorbell resumes the session: read `## Resolution`
+   and proceed. `escalated` means a user decision is in flight. There is
+   no wait to launch and no cap to reach — an unanswered question is
+   visible as `status: open` in the file and to the hook scan below.
+3. Every mailbox exchange — answered or not — is duplicated into the
    handback's `investigations[]`.
 
 **Doorbell transport (Claude↔Claude sessions, ruled 2026-08-17).**
@@ -667,23 +773,17 @@ exactly why the file stays the record. Rules, both legs:
   never travels in the message; history stays 100 % in the file.
 - Asker (a Claude worker): write `q-NN.md` (`status: open`, add
   `asked_by: <its ListAgents session name>`), ring the orchestrator,
-  then launch `await_codex_answer.sh` through the detached mailbox-job
-  supervisor and end the model turn. The await is the fallback, not the
-  transport, and never runs as a model-visible foreground wait.
-- Answerer: `## Resolution` body FIRST, `status` flip LAST (unchanged),
-  and the body must LAND: a Codex worker's later question files may carry
-  NO `## Resolution` heading at all — a writer that anchors on the heading
-  writes nothing while the status flip still persists; the await script
-  then (correctly) refuses the empty body and the worker times out into a
-  `gate-incomplete` handback (2026-09-05, plan-25 q-08…q-10). APPEND the
-  heading + body, flip status, then run `await_codex_answer.sh <file> 5 1`
-  and require exit 0 before any doorbell. To re-enter a Codex worker that
-  blocked on such a timeout, launch a short re-wait contract (the same
-  `await_codex_answer.sh <file> 60 5` under `codex-self`) — its
-  `JOB_TERMINAL` doorbell resumes the worker.
-  add `answered_by: <session name>`, then ring `ANSWERED <path>` (or
-  `ESCALATED <path>` so the worker knows a user decision is in flight
-  and does not time out into a blocker).
+  and end the model turn. The answerer's ring resumes it; the file is
+  the record if the ring is lost, and the hook scan below surfaces it.
+- Answerer: write through `answer_question.py` and nothing else — it
+  puts the `## Resolution` body and the `status` flip down in one
+  atomic replace, appends the heading when the file has none, and
+  refuses an empty body. Hand edits anchored on the heading wrote
+  nothing on files that carried no heading while the flip still
+  persisted, and the asker read "answered" over an empty body
+  (2026-09-05, plan-25 q-08…q-10). It stamps `answered_by` from `--by`;
+  then ring `ANSWERED <path>` (or `ESCALATED <path>` so the worker knows
+  a user decision is in flight).
 - Handback leg: the worker writes and commits the handback per the
   owning contract, then rings `HANDBACK <path>`. The orchestrator runs
   verify-before-accept on the FILE; the ring is only the wake.
@@ -697,8 +797,9 @@ exactly why the file stays the record. Rules, both legs:
   channels can return two rulings, and the file would record only one.
   The orchestrator owns the user-facing escalation and rings
   `ESCALATED` while it is in flight.
-- Codex cannot ring. Codex→orchestrator stays file + fallback; the
-  fallback is armed MECHANICALLY (next paragraph), never by memory.
+- A Codex worker under a Claude orchestrator is not on this transport at
+  all: it uses the one-file mailbox above, where each harness wakes its
+  own side.
 
 **Mechanical fallback (hook scan, ruled 2026-08-17).**
 `scripts/scan_open_questions.py` runs as a `SessionStart` +
@@ -712,23 +813,18 @@ across worktrees, and injects `OPEN_QUESTION <path>` /
 `ESCALATED_QUESTION <path>` lines into the turn. Nothing to arm, nothing
 to relaunch. Its gap: it fires on prompts, not on its own — an
 orchestrator idle with nobody typing waits for the doorbell (Claude
-askers) or the optional 1 h watcher below (Codex askers).
+askers). A Codex worker's question does not need it: the mailbox's `Stop`
+hook wakes the idle orchestrator by itself.
 
-**Main-session protocol (watcher — now OPTIONAL for Claude askers, still
-recommended for a running Codex packet when the orchestrator will sit
-idle):**
+**Answering a question FILE (Claude workers, Codex↔Codex).** No watcher is
+armed for it: a Claude worker rings over `SendMessage`, and the hook scan above
+surfaces anything missed on the next prompt. A harness background watcher is
+not an option — Claude Code stops background Bash tasks on idle sessions under
+memory pressure and tells the model not to restart them, which is how
+orchestrators went deaf in 2026-09.
 
-1. At Codex launch, start the watcher in the background
-   (`run_in_background`):
-   ```bash
-   bash ~/.claude/skills/threads/scripts/watch_codex_questions.sh \
-       <worktree>/codex-handoff/<plan-id> 3600
-   ```
-   Zero tokens while idle; re-invokes the session when a question
-   lands (exit 0, `OPEN_QUESTION <path>`) or at the 1 h cap (exit 2 —
-   do not relaunch automatically).
-2. On fire, read the question and pick the answer path — this
-   boundary is load-bearing:
+On a question file, pick the answer path — this boundary is
+load-bearing:
    - **`answered`** — only when the resolution is derivable from
      already-pinned authority (ADR text, golden source, committed
      vectors, plan prose). **Use the atomic writer — do not hand-edit
@@ -744,12 +840,10 @@ idle):**
      (`~/.claude/hooks/mailbox-flip-guard.py`, Edit|Write) DENIES any
      hand edit that would produce `status: answered` on a `q-*.md`
      without a Resolution body, and prints the command above. Rationale
-     (kept for history): the two edits were not atomic and the Codex-side
-     `await_codex_answer.sh` keys on `status`, so a status-first edit
-     can be read as an "answered" question with an empty Resolution
-     body (observed twice, each burning a duplicate q-NN round trip;
-     the await script now also requires a non-empty body as a
-     backstop, but the write order is the real fix). Correct the
+     (kept for history): the two hand edits were not atomic and the
+     asker keys on `status`, so a status-first edit can be read as an
+     "answered" question with an empty Resolution body (observed twice,
+     each burning a duplicate q-NN round trip). Correct the
      plan/ADR in the same pass if the question exposed a drafting
      error (cite the commit in the resolution).
    - **`escalated`** — the question requires a NEW decision
@@ -757,8 +851,6 @@ idle):**
      surface it to the user, and write the resolution + `answered`
      only once the user decides. The mailbox automates transport,
      not authority.
-3. After answering, relaunch the watcher (step 1) to catch the next
-   question while Codex continues.
 
 ## Process codex handback
 

@@ -35,7 +35,7 @@ class MailboxJobTests(unittest.TestCase):
         identity = process_identity(os.getpid())
         assert identity is not None
         state = {
-            "schema_version": "2",
+            "schema_version": "3",
             "worker_run_id": str(uuid.uuid4()),
             "plan_id": "plan-test-worker",
             "thread_id": "fpga/20260101-test-worker",
@@ -64,7 +64,7 @@ class MailboxJobTests(unittest.TestCase):
                 "prompt": "prompt.md",
                 "handback_json": "handback.json",
                 "handback_markdown": "handback.md",
-                "questions": "questions",
+                "messages": "mailbox.md",
                 "progress": "progress.json",
             },
             "session_id": session_id,

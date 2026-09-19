@@ -32,8 +32,8 @@ Codex emits:
   <worktree>/codex-handoff/<plan-id>/scripts/
   <worktree>/codex-handoff/<plan-id>/temp/
   <worktree>/codex-handoff/<plan-id>/artifacts/
-  <worktree>/codex-handoff/<plan-id>/questions/   (ambiguity mailbox,
-      mid-session — see codex-handoff.md §"Ambiguity mailbox")
+  <worktree>/codex-handoff/<plan-id>/mailbox.md   (the one shared message
+      file, mid-session — see codex-handoff.md §"Codex worker mailbox")
 ```
 
 The main session reads those artifacts before closing the plan hop,
@@ -149,9 +149,9 @@ root-level `codex-handoff/<plan-id>/` inbox:
 - `scripts/` for throwaway probes, debug tests, and helpers.
 - `temp/` for bulky or disposable generated working files.
 - `artifacts/` for curated evidence cited by the handback.
-- `questions/` for ambiguity-mailbox exchanges (q-NN.md, Q and
-  resolution in the same file). Every exchange is duplicated into
-  `investigations[]`; an unresolved/timeout question also becomes a
+- `mailbox.md` for every orchestrator↔worker exchange (question and
+  answer blocks in the one file, sent with `mb.py`). Every exchange is duplicated into
+  `investigations[]`; a question still unanswered at handback also becomes a
   `blockers[]` entry.
 
 Record useful material in `handoff_artifacts[]` with a promotion

@@ -15,7 +15,7 @@ Usage:
 
 Rules enforced (exit 2 on violation, file untouched):
   * `answered` REQUIRES a non-empty Resolution body (comments/blank lines
-    do not count — same test as await_codex_answer.sh).
+    do not count).
   * `escalated` never writes a Resolution body; it appends an attributed
     escalation note under `## Resolution` only if --note is given.
   * Refuses to downgrade `answered` -> anything else.

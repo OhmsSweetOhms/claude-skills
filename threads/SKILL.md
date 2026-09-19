@@ -81,20 +81,22 @@ schemas at `assets/schemas/codex-handback.schema.json` and
 `assets/schemas/codex-worker-state.schema.json`, and supporting
 scripts at `scripts/` (`bootstrap_codex_worktree.sh`,
 `emit_codex_launch_packet.py`, `launch_codex_worker.py`,
-`watch_codex_worker_launch.py`, `launch_codex_mailbox_job.py`,
-`watch_codex_questions.sh` +
-`await_codex_answer.sh` + `scan_open_questions.py` (the SessionStart /
-UserPromptSubmit hook that surfaces open questions mechanically) +
-`answer_question.py` (the ONLY sanctioned way to flip a question to
-answered/escalated — atomic body+status write; a PreToolUse guard denies
-hand-edited flips) for the mailbox, `triage_codex_handback.py`,
-`merge_codex_worktree_back.sh`). The mailbox: when Codex hits an
-architecture/contract decision the plan/ADRs/vectors don't pin, it
-writes `questions/q-NN.md` (`status: open`) into the inbox and blocks
-(1 h cap); the main session's background watcher wakes, answers in
-the same file — or marks it `escalated` when it is a user-level
-decision — and relaunches the watcher. Timeout on either side
-degrades to the manual handback-as-blocked flow.
+`fire_codex_worker.py` (the one command the orchestrator runs when the
+operator says "fire"), `launch_codex_mailbox_job.py` (long commands),
+`triage_codex_handback.py`, `merge_codex_worktree_back.sh`). The
+Codex-worker mailbox is ONE append-only file, `<inbox>/mailbox.md`, owned
+by its own skill (`~/.claude/skills/mailbox/`, `mb.py`): when Codex hits an
+architecture/contract decision the plan/ADRs/vectors don't pin, it sends a
+`QUESTION` block with `mb.py send` and ends its turn; the orchestrator is
+woken by a `Stop` hook the fire armed, reads the block and answers with an
+`ANSWER` block — or takes it to the operator first when it is a user-level
+decision — and that `send` rings the worker back with `codex queue`.
+Nothing waits, nothing is armed by a model, nothing times out, no model
+holds a watch, and NOTHING types into a pane (a typed doorbell was lost to
+tmux copy mode and approved a permission dialog, 2026-09-18). A `MAILBOX`
+line is a pointer to the file, never an instruction. Question FILES (`questions/q-NN.md`,
+`answer_question.py`, `scan_open_questions.py`) remain only for Claude
+packet workers and Codex↔Codex; see `references/codex-handoff.md`.
 
 **The plan file IS the launch prompt.** When a plan hop launches Codex,
 the plan file at `.threads/<thread-id>/<plan-NN>-*.md` is the design
@@ -102,12 +104,12 @@ artifact Codex consumes as turn 1. No separate prompt scaffold exists.
 `scripts/emit_codex_launch_packet.py` packages the mechanical
 facts (plan-file absolute path, worktree, branch, base SHA, handback
 inbox, thread/plan IDs) plus five generic operational rules (don't
-push; stop on architecture/contract ambiguity — write a
-`questions/q-NN.md` mailbox file and block on the answer, never infer
-through it; write structured handback; keep waits outside the model loop;
-record foreground-worker lifecycle at the fire boundary)
-that the user pastes into
-Codex's sidecar terminal at turn 1. The plan must be fleshed out per the tiered
+push; stop on architecture/contract ambiguity — send a `QUESTION`
+block to `mailbox.md` and end the turn, never infer through it; write
+structured handback and announce it; keep long commands outside the model
+loop; record foreground-worker lifecycle at the fire boundary). Codex is
+started with a pointer to the saved turn-1 file as its prompt: nothing is
+pasted. The plan must be fleshed out per the tiered
 template before launch — base sections always filled, Codex add-ons
 below the divider filled when the hop is a Codex hop.
 
@@ -123,10 +125,11 @@ Every foreground Codex worker is fired through
 `scripts/launch_codex_worker.py`, never a raw `codex` command. The launcher
 atomically creates the inbox's schema-validated `worker-state.json` before
 the TUI starts, refuses a duplicate live worker, and records process exit
-without pretending that exit code zero proves plan completion. Before the
-operator fires, the orchestrator arms `scripts/watch_codex_worker_launch.py`
-outside the model loop; its only successful output is the pointer event
-`WORKER_LAUNCHED <path>`. The lifecycle receipt is live state, not cached
+without pretending that exit code zero proves plan completion. Nothing is
+armed before a fire: on the operator's "fire" — and never on prepare or
+emit — the orchestrator runs `scripts/fire_codex_worker.py`, which opens
+the worker in a detached tmux window and returns at once;
+`WORKER_LAUNCHED` lands in the receipt. The lifecycle receipt is live state, not cached
 status: orchestrators read it on every resume, while plan checkpoints and
 external-job status remain in `progress.json` and `jobs/` respectively.
 

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"   # 3: mailbox.messages (the one shared mailbox.md) replaced mailbox.questions
 HANDOFF_SCHEMA = Path(__file__).resolve().parent.parent / "assets" / "schemas" / "codex-handback.schema.json"
 WORKER_SCHEMA = Path(__file__).resolve().parent.parent / "assets" / "schemas" / "codex-worker-state.schema.json"
 ALLOWED_UPDATES = {
@@ -212,6 +212,17 @@ def read_conforming_handback_status(inbox: Path, state: dict) -> str | None:
     return handback.get("status")
 
 
+def turn1_prompt(turn1_file: Path) -> str:
+    """The one sentence Codex is started with. Turn 1 itself stays in the file:
+    only this pointer goes on the command line, so nothing long is ever rendered
+    into argv or pasted into the TUI. The emitter prints the same sentence as
+    the manual fallback; this is its only home."""
+    return (
+        f"Read {turn1_file} in full and follow it as your turn-1 instructions; "
+        "do not summarize it back, start executing."
+    )
+
+
 def archive_existing_state(inbox: Path, state: dict) -> Path:
     history = inbox / "worker-state-history"
     history.mkdir(parents=True, exist_ok=True)
@@ -229,6 +240,10 @@ def launch(args: argparse.Namespace) -> int:
         inbox.relative_to(worktree)
     except ValueError as exc:
         raise LaunchError(f"inbox must be inside the current worktree: {inbox}") from exc
+
+    turn1_file = Path(args.turn1_file).expanduser().resolve()
+    if not turn1_file.is_file() or not turn1_file.read_text(encoding="utf-8").strip():
+        raise LaunchError(f"turn-1 file is missing or empty: {turn1_file}; regenerate packet")
 
     branch = git_value(worktree, "branch", "--show-current")
     source_head = git_value(worktree, "rev-parse", "HEAD")
@@ -290,7 +305,7 @@ def launch(args: argparse.Namespace) -> int:
                 "prompt": "prompt.md",
                 "handback_json": "handback.json",
                 "handback_markdown": "handback.md",
-                "questions": "questions",
+                "messages": "mailbox.md",
                 "progress": "progress.json",
             },
             "session_id": None,
@@ -305,6 +320,7 @@ def launch(args: argparse.Namespace) -> int:
         "--model", args.model,
         "-c", f'model_reasoning_effort="{args.reasoning_effort}"',
         "-c", f"model_auto_compact_token_limit={args.auto_compact_token_limit}",
+        turn1_prompt(turn1_file),
     ]
     child: subprocess.Popen | None = None
     abort_before_start = False
@@ -549,6 +565,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("none", "low", "medium", "high", "xhigh", "max"),
     )
     launch_parser.add_argument("--auto-compact-token-limit", required=True, type=int)
+    launch_parser.add_argument("--turn1-file", required=True)
     launch_parser.add_argument("--codex-bin", default="codex")
     launch_parser.add_argument("--relaunch", action="store_true")
     launch_parser.set_defaults(func=launch)

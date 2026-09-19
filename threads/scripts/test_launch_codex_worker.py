@@ -14,7 +14,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 LAUNCHER = HERE / "launch_codex_worker.py"
-WATCHER = HERE / "watch_codex_worker_launch.py"
 SCHEMA = HERE.parent / "assets" / "schemas" / "codex-worker-state.schema.json"
 EMITTER = HERE / "emit_codex_launch_packet.py"
 
@@ -54,7 +53,10 @@ import os
 import pathlib
 import time
 
+import sys
+
 inbox = pathlib.Path(os.environ["FAKE_INBOX"])
+(inbox / "child-argv.json").write_text(json.dumps(sys.argv[1:]))
 state = json.loads((inbox / "worker-state.json").read_text())
 if state["state"] != "running" or state["process"]["state"] != "running":
     raise SystemExit(91)
@@ -89,6 +91,8 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             encoding="utf-8",
         )
         self.fake_codex.chmod(0o755)
+        self.turn1 = self.inbox / "turn1.md"
+        self.turn1.write_text("Execute the plan.\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -106,6 +110,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             "--model", "gpt-test",
             "--reasoning-effort", "high",
             "--auto-compact-token-limit", "300000",
+            "--turn1-file", str(self.turn1),
             "--codex-bin", str(self.fake_codex),
             *extra,
         ]
@@ -152,9 +157,39 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertEqual(state["state"], "completed", state["events"][-1])
         self.assertEqual(state["process"]["state"], "exited")
         self.assertTrue((self.inbox / "child-observed-state.json").exists())
+        self.assertEqual(state["schema_version"], "3")
+        self.assertEqual(state["mailbox"]["messages"], "mailbox.md")
+        self.assertNotIn("questions", state["mailbox"])
         self.assertIn("WORKER_LAUNCHED", result.stdout)
         self.assertIn("WORKER_COMPLETED", result.stdout)
         self.assert_schema_valid(state)
+
+    def test_turn1_pointer_is_the_prompt_argument_and_never_the_file_content(self) -> None:
+        self.turn1.write_text("SECRET-TURN-ONE-BODY\n", encoding="utf-8")
+        result = subprocess.run(
+            self.command(), cwd=self.repo, env=self.environment(FAKE_HANDBACK_STATUS="complete"),
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads((self.inbox / "child-argv.json").read_text(encoding="utf-8"))
+        launcher = load_module(LAUNCHER, "launch_codex_worker_prompt_test")
+        self.assertEqual(argv[-1], launcher.turn1_prompt(self.turn1.resolve()))
+        self.assertIn(str(self.turn1.resolve()), argv[-1])
+        self.assertNotIn("SECRET-TURN-ONE-BODY", " ".join(argv))
+        self.assertEqual(argv[:2], ["--model", "gpt-test"])
+
+    def test_missing_or_empty_turn1_is_refused_before_any_state_is_written(self) -> None:
+        for prepare in (self.turn1.unlink, lambda: self.turn1.write_text("  \n", encoding="utf-8")):
+            self.turn1.write_text("x\n", encoding="utf-8")
+            prepare()
+            result = subprocess.run(
+                self.command(), cwd=self.repo, env=self.environment(),
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("turn-1 file is missing or empty", result.stderr + result.stdout)
+            self.assertFalse((self.inbox / "worker-state.json").exists())
+            self.assertFalse((self.inbox / "child-argv.json").exists())
 
     def test_clean_process_exit_is_not_plan_completion(self) -> None:
         result = subprocess.run(
@@ -181,7 +216,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertIn("not schema-valid", state["events"][-1]["detail"])
         self.assert_schema_valid(state)
 
-    def test_duplicate_live_worker_is_refused_and_watcher_rings_once(self) -> None:
+    def test_duplicate_live_worker_is_refused(self) -> None:
         first = subprocess.Popen(
             self.command(), cwd=self.repo, env=self.environment(FAKE_SLEEP="30"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -194,13 +229,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         )
         self.assertEqual(bind.returncode, 0, bind.stderr)
         self.assertEqual(self.read_state()["session_id"], "test-session-id")
-        watch = subprocess.run(
-            [sys.executable, str(WATCHER), "--inbox", str(self.inbox),
-             "--timeout-seconds", "2", "--interval-seconds", "0.02"],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(watch.returncode, 0, watch.stderr)
-        self.assertEqual(watch.stdout.strip(), f"WORKER_LAUNCHED {self.inbox / 'worker-state.json'}")
+        self.assertIn("WORKER_LAUNCHED", [row["event"] for row in self.read_state()["events"]])
 
         duplicate = subprocess.run(
             self.command(), cwd=self.repo, env=self.environment(),
@@ -257,19 +286,13 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertEqual(validate.returncode, 2)
         self.assertIn("not schema-valid", validate.stderr)
 
-    def test_watcher_preserves_fast_launch_event_after_exit(self) -> None:
+    def test_a_fast_exit_keeps_its_launch_event_in_the_record(self) -> None:
         first = subprocess.run(
             self.command(), cwd=self.repo, env=self.environment(),
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(first.returncode, 0, first.stderr)
-        watch = subprocess.run(
-            [sys.executable, str(WATCHER), "--inbox", str(self.inbox),
-             "--timeout-seconds", "2", "--interval-seconds", "0.02"],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(watch.returncode, 0, watch.stderr)
-        self.assertEqual(watch.stdout.strip(), f"WORKER_LAUNCHED {self.inbox / 'worker-state.json'}")
+        self.assertIn("WORKER_LAUNCHED", [row["event"] for row in self.read_state()["events"]])
 
     def test_emitter_builds_lifecycle_owning_launch_command(self) -> None:
         emitter = load_module(EMITTER, "emit_codex_launch_packet_test")
@@ -282,7 +305,9 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             codex_model="gpt-test",
             reasoning_effort="high",
             auto_compact_token_limit=300000,
+            turn1_file=Path("/worktree/codex-handoff/plan-test-worker/turn1.md"),
         )
+        self.assertIn("--turn1-file /worktree/codex-handoff/plan-test-worker/turn1.md", command)
         self.assertIn("launch_codex_worker.py", command)
         self.assertIn("--expected-head 0123456", command)
         self.assertNotIn(" codex --model ", command)
@@ -306,8 +331,92 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
             auto_compact_token_limit=300000,
         )
         self.assertIn("launch_codex_mailbox_job.py --contract", packet)
+        # Questions and the handback travel as blocks in the one shared mailbox;
+        # nothing waits on a file and no wait job exists for a question.
+        self.assertIn("mb.py\" send codex-handoff/plan-test-worker/mailbox.md --from worker "
+                      "--to orchestrator --kind QUESTION", packet)
+        self.assertIn("--kind HANDBACK", packet)
+        self.assertIn("MAILBOX <n> <path>", packet)
+        for retired in ("await_codex_answer", "watch_codex_questions", "q-NN", "questions/"):
+            self.assertNotIn(retired, packet)
         self.assertNotIn("\\       --contract", packet)
         self.assertNotIn("Block on\n     `bash", packet)
+
+        # The doorbell types nothing and routes by session id, so turn 1 must
+        # bind the session before the worker can be reached at all — and must
+        # not promise a relay or a keystroke.
+        turn1 = packet.split("```")[1]
+        bind = [i for i, line in enumerate(turn1.splitlines()) if "bind-session" in line]
+        self.assertEqual(len(bind), 1, "turn 1 must name bind-session exactly once")
+        worker_commands = [i for i, line in enumerate(turn1.splitlines())
+                           if line.startswith("python3 ")]
+        self.assertEqual(worker_commands[0], bind[0],
+                         "bind-session must be the worker's FIRST command in turn 1")
+        self.assertIn("QUEUED into this session", turn1)
+        for retired in ("host relay", "pings", "typed into this session"):
+            self.assertNotIn(retired, packet)
+
+        # The ACK: without it the orchestrator cannot tell "never woke" from
+        # "woke and working" (hop-12 trial, 2026-09-18). It must be ordered
+        # BEFORE the work, or it reports nothing the next block would not.
+        self.assertIn("--kind ACK", turn1)
+        self.assertIn("BEFORE any other tool call", turn1)
+        self.assertLess(turn1.index("--kind ACK"), turn1.index("--kind HANDBACK"),
+                        "the ACK must be described before the handback")
+        self.assertIn('titled "Constraints" or "Hard constraints"', turn1,
+                      "a plan whose heading is Constraints must not be missed")
+
+    def test_a_packet_names_the_checkout_it_was_emitted_from(self) -> None:
+        """A packet emitted from a branch worktree must run THAT checkout's
+        scripts: the installed skill's launcher may not know the branch's flags.
+        From the installed skill the portable forms are kept."""
+        emitter = load_module(EMITTER, "emit_codex_launch_packet_localize_test")
+        # A packet names two skills now: the worker runs `mailbox`'s mb.py and
+        # `threads`' launcher, and BOTH must come from the checkout under trial.
+        text = ('python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" and '
+                '~/.claude/skills/threads/references/x.md')
+        here = str(HERE.parent)
+        root = str(HERE.parent.parent)
+        if emitter.SKILL_DIR == emitter.LIVE_SKILL_DIR.resolve():
+            self.assertEqual(emitter.localize(text), text)
+        else:
+            out = emitter.localize(text)
+            self.assertIn(f'"{root}/mailbox/scripts/mb.py"', out)
+            self.assertIn(f"{here}/references/x.md", out)
+            self.assertNotIn(".claude/skills/", out.replace(root, ""))
+        emitter.SKILL_DIR = emitter.LIVE_SKILL_DIR.resolve()       # as if installed
+        self.assertEqual(emitter.localize(text), text)
+        emitter.SKILL_DIR = Path("/somewhere/else/threads")        # as if a worktree
+        out = emitter.localize(text)
+        self.assertIn('"/somewhere/else/mailbox/scripts/mb.py"', out)
+        self.assertIn("/somewhere/else/threads/references/x.md", out)
+        command = emitter.build_worker_launch_command(
+            handback_inbox=Path("/worktree/codex-handoff/plan-x"), thread_id="a/b", plan_id="plan-x",
+            branch="b", base_sha="0123456", codex_model="m", reasoning_effort="low",
+            auto_compact_token_limit=1, turn1_file=Path("/worktree/codex-handoff/plan-x/turn1.md"),
+        )
+        self.assertIn("/somewhere/else/threads/scripts/launch_codex_worker.py", command)
+
+    def test_staged_env_file_sources_cleanly_under_errexit_without_an_envrc(self) -> None:
+        """fire.sh runs `set -euo pipefail` then sources env.sh. A worktree with no
+        .envrc must not make that source return non-zero (it killed a real fire
+        silently: rc=1, nothing on the pane)."""
+        emitter = load_module(EMITTER, "emit_codex_launch_packet_env_test")
+        env_path, _how = emitter.stage_env_file(
+            self.inbox, env_file=None, worktree=self.repo,
+            thread_id="fpga/20260101-test-worker", plan_id="plan-test-worker",
+        )
+        self.assertFalse((self.repo / ".envrc").exists())
+        run = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail; cd {self.repo}; source {env_path}; echo sourced-ok"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("sourced-ok", run.stdout)
+        # The skeleton's header comment names the launcher of THIS checkout, as
+        # the rest of the packet does (a side-checkout trial found it stale).
+        if emitter.SKILL_DIR != emitter.LIVE_SKILL_DIR.resolve():
+            self.assertNotIn(".claude/skills/threads/", env_path.read_text())
 
 
 if __name__ == "__main__":

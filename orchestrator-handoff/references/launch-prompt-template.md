@@ -85,8 +85,9 @@ Then the queue, in order: (2) <...>; (3) <...>; (4) <...>.
 
 Mailbox: questions/handbacks are FILES first (the record), then ring
 the orchestrator — SendMessage to `<orchestrator session name from
-ListAgents>` with only `OPEN_QUESTION|HANDBACK <repo-relative path>`;
-block on the await script as fallback. Never put content in a message.
+ListAgents>` with only `OPEN_QUESTION|HANDBACK <repo-relative path>`,
+then end the turn; the answer's ring resumes you. Never put content in
+a message.
 If YOU answer a question (a coordinator answering a sub-worker), use
 `~/.claude/skills/threads/scripts/answer_question.py` — never hand-flip
 `status:`. Escalation has ONE channel: the mailbox to the orchestrator. Do NOT

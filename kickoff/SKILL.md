@@ -81,16 +81,22 @@ failures, inverted:
    <file> — execute it, don't re-plan it"). A worker that read
    orchestrator-voice meta in its launch file booted AS the orchestrator
    and tried to launch a packet (2026-08-16/17).
-9. **Mailbox is file-then-doorbell.** For Claude worker sessions the
-   packet names the orchestrator's `ListAgents` session name and the
+9. **Mailbox is file-then-doorbell, and nobody arms anything.** The
+   file is the record, the doorbell carries a pointer only, and the
+   sender ends its turn after ringing — no leg has a watcher, a wait or
+   a relaunch. A Codex worker under a Claude orchestrator uses the ONE
+   append-only `<inbox>/mailbox.md`, written only through the `mailbox`
+   skill's `mb.py send`: the emitted turn 1 carries the worker's rules,
+   `mb.py send --to worker` rings it through `codex queue`, and the
+   orchestrator is woken by its `Stop` hook. For Claude worker sessions
+   the packet names the orchestrator's `ListAgents` session name and the
    rule: write the question/handback FILE first, then `SendMessage`
-   only `OPEN_QUESTION|HANDBACK <repo-relative path>`; block on the
-   await script as fallback. For an explicitly bound Codex orchestrator and
+   only `OPEN_QUESTION|HANDBACK <repo-relative path>`, then end the
+   turn. For an explicitly bound Codex orchestrator and
    worker, use the threads skill `references/codex-mailbox-doorbell.md`:
    record both actual session UUIDs and deliver file-first events through
    `scripts/ring_codex_mailbox.py`. Claude's hook scan does not run in Codex;
-   do not rely on it for that exchange. Existing Claude orchestration uses
-   its own hook/watcher contract. One
+   do not rely on it for that exchange. One
    channel: the packet says the worker escalates via the mailbox ONLY,
    never also to the operator via AskUserQuestion (two channels, two
    possible rulings — seen 2026-08-17).
