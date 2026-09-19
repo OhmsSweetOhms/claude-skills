@@ -1,6 +1,6 @@
 ---
 name: control-loops
-description: "Digital control loop design, debug, and test for PLLs, FLLs, DLLs, and tracking loops. Use this skill when designing loop filters (2nd/3rd order), computing Kaplan/Ward coefficients, choosing discretization (bilinear-z/Tustin vs forward Euler), debugging loop instability or integrator divergence, writing unit tests for loop math, translating floating-point models to fixed-point or VHDL pipelines, or setting up JSON-driven parameter profiles for control systems. Also triggers on: NCO convention (total-correction vs incremental), carrier/code tracking, lock detection (M2M4, NBPW, PLI), C/N0 estimation, phase/frequency discriminators, loop bandwidth tuning, and stability analysis. Provider-neutral: for GPS-specific topology (Kaplan 3rd-order L1 C/A, Costas PLL, cross-dot FLL), use the gps-design skill instead."
+description: "Digital control loop design, debug, and test for PLLs, FLLs, DLLs, and tracking loops. Use this skill when designing loop filters (2nd/3rd order), computing Kaplan/Ward coefficients, choosing discretization (bilinear-z/Tustin vs forward Euler), debugging loop instability or integrator divergence, writing unit tests for loop math, translating floating-point models to fixed-point or VHDL pipelines, or setting up JSON-driven parameter profiles for control systems. Also triggers on: NCO convention (total-correction vs incremental), carrier/code tracking, lock detection (M2M4, NBPW, PLI), C/N0 estimation, phase/frequency discriminators, loop bandwidth tuning, stability analysis, and offline carrier phase measurement from prompt epochs. Provider-neutral: for GPS-specific topology (Kaplan 3rd-order L1 C/A, Costas PLL, cross-dot FLL), use the gps-design skill instead."
 ---
 
 # Control Loops -- Digital PLL/FLL/DLL Design & Test
@@ -24,11 +24,19 @@ issues, and the float -> fixed-point -> VHDL porting pattern.
 
 ---
 
+## Carrier phase measurement
+
+Use [the phase measurement guide](references/phase-measurement.md) and
+`scripts/measure_carrier_phase.py` when measuring wander from BPSK prompt epochs.
+It averages squared prompts in the NCO frame, unwraps the residual, then restores
+known continuous NCO phase. The guide specifies inputs, CLI use, matched controls,
+ambiguity limits, and why shared-clock loopback cannot isolate oscillator noise.
+
 ## 1. Loop Filter Design
 
 ### 2nd-Order Loop (DLL, simple PLL)
 
-Standard analog prototype with bilinear-z discretization:
+Unity detector/NCO gain analog prototype; gains below assume radians and seconds:
 
 ```
 H(s) = (tau2*s + 1) / (tau1*s)
@@ -43,7 +51,7 @@ Butterworth), T is update interval (s).
 
 ### 3rd-Order Loop (carrier PLL with acceleration tracking)
 
-Kaplan coefficients (standard across all production GPS receivers):
+One Kaplan-style third-order parameterization (not universal across receivers):
 
 ```
 a3 = 1.1,  b3 = 2.4
@@ -62,7 +70,7 @@ response. The integrator gains include T from the discretization.
 
 When combining FLL frequency aid into a PLL filter, the FLL
 discriminator outputs Hz but the filter internals are in rad/s.
-The FLL gain must include the 2*pi conversion:
+For the Hz-input, radian-state parameterization below, the gain includes 2*pi:
 
 ```
 w0f = 4 * Bn_fll * T * 2*pi   (Hz input -> rad/s internal units)
@@ -79,7 +87,7 @@ appear to do almost nothing while the PLL drifts.
 
 There are two conventions for how the loop filter output drives the NCO:
 
-### Convention A: Total Correction (correct for filters with integrators)
+### Total correction output
 
 ```python
 nco_freq = base_freq + filter_output
@@ -89,45 +97,47 @@ The filter's integrators accumulate the total frequency offset. The
 NCO is SET to base + offset each epoch. The base frequency is recorded
 at the loop handoff point (e.g., pull-in to tracking transition).
 
-Loop order = filter integrators + 1 (NCO phase integration).
-A filter with 2 integrators + NCO phase = type-III (3rd order).
+In this minimal topology, two filter integrators plus NCO phase integration
+give type III. Loop type counts open-loop integrations; closed-loop order also
+includes other dynamic states, including explicit delays.
 
-### Convention B: Incremental (correct for proportional-only filters)
+### Frequency increment output
 
 ```python
 nco_freq = nco_freq + filter_output
 ```
 
 The filter output is the per-epoch frequency INCREMENT. The NCO
-accumulates these. Correct when the filter has NO integrators
-(proportional-only gain), because the NCO accumulation provides
-the single needed integration.
+accumulates these. A proportional frequency-error controller can use this
+form. A deliberately derived velocity-form controller can too; inspect the
+output contract rather than deciding from the presence of state alone.
 
 ### The Type-IV Trap
 
-Using Convention B with a filter that HAS integrators creates an
-extra integration in the frequency path:
+Accumulating an output designed as total correction creates an extra
+integration in the frequency path. For the two-integrator example:
+
 - Filter: 2 integrators (total correction)
 - NCO freq accumulation: +1 (unwanted)
 - NCO phase integration: +1
 - Total: 4 integrations = type-IV loop
 
-Type-IV loops are marginally stable at best. They appear to work in
-short tests (1-2 seconds) but diverge over 5-30 seconds as the extra
-integration causes the integrator state to grow without bound.
+That changes the characteristic equation and can destabilize a controller
+designed for total correction. Neither instability nor a time-to-divergence
+is implied by loop type alone; derive poles for the actual sampled feedback.
 
 **Diagnosis:** If a PLL tracks correctly for a few seconds then the
 carrier frequency runs away, check the NCO convention first.
 
 **Fix:** Store the base frequency at the handoff point. Use
-`nco = base + output` for PLL states. Use `nco += output` only for
-proportional-only modes (like a pull-in FLL with no integrators).
+`nco = base + output` for a total-correction filter. Use `nco += output`
+only when the controller explicitly returns a frequency increment.
 
 ---
 
 ## 3. Discretization
 
-### Bilinear-z (Tustin) -- Preferred
+### Bilinear-z (Tustin)
 
 Maps the entire stable s-domain to the stable z-domain. Uses the
 trapezoidal rule -- average of current and previous input:
@@ -138,80 +148,38 @@ integrator += gain * (error + prev_error) * 0.5
 prev_error = error
 ```
 
-Requires storing previous error values. Unconditionally stable if the
-continuous-time system is stable.
+Requires previous input state. The bilinear transform maps stable analog
+poles inside the unit circle, but applying trapezoidal updates to a loop filter
+alone does not prove stability of the sampled feedback loop. Include NCO timing,
+computation delay, detector gain, saturation, and integration windows.
 
-### Forward Euler -- Simpler, Conditionally Stable
+### Euler and implementation timing
 
-```python
-integrator += gain * error
-```
+`integrator += gain * error` is a rectangular update. Whether it represents
+forward or backward Euler depends on the time indices and output ordering.
+Read those indices before naming the method. Small `wn*T` can justify a
+continuous-time approximation; a universal `wn*T < 0.05` rule is not a proof.
 
-Stable when `wn * T << 1`. For a 3rd-order PLL at 25 Hz BW with
-T=1ms: wn*T = 0.032, well within the margin. But the stability
-margin shrinks with higher BW or lower update rate.
-
-### When to Choose
-
-- **Default to bilinear-z** for consistency and robustness.
-- Forward Euler is acceptable when wn*T < 0.05 and simplicity matters
-  (e.g., bare-metal C on a microcontroller with no FPU).
-- The gain formulas are IDENTICAL for both methods when wn*T << 1.
-  Only the integrator update rule differs.
-- If mixing DLL (bilinear-z) and PLL (forward Euler) in the same
-  receiver, switch to bilinear-z for both -- consistency prevents
-  confusion in code reviews and debugging.
+Keep the validated discretization unless a change is needed. Derive the actual
+recurrence and check the resulting poles/response; changing every integrator to
+Tustin for stylistic consistency can change latency and bandwidth. See the
+[bilinear transform definition](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.bilinear.html)
+for the substitution and frequency-warping caveat.
 
 ---
 
 ## 4. JSON Spec Stack Pattern
 
-Control system projects should use a layered JSON configuration:
+Use the project's existing JSON schema and profile loader. Record which
+scenario selects which receiver profile, which keys feed the controller, and
+which defaults apply if keys are absent. Do not create a parallel spec stack.
+For GPS, the v2 scenario root and thin mode registry are documented in gps-design.
 
-```
-tracking-mode-profiles.v1.json       <- "test this scenario"
-  |-- iq_gen_defaults                -> signal generator config
-  +-- receiver_profile: "open_sky"   -> receiver-block-profiles.v1.json
-        +-- per-block params         -> shared-interfaces.v1.json
-              +-- telemetry signals  -> monitor-signals.json
-```
-
-### Key Files
-
-| File | Purpose | Consumed By |
-|------|---------|-------------|
-| `shared-interfaces.v1.json` | Block IDs, module/class, I/O contracts | Code structure, tests |
-| `receiver-block-profiles.v1.json` | Runtime params per profile per block | Runtime init |
-| `monitor-signals.json` | Telemetry signals with types and rates | Telemetry, viewer |
-| `tracking-mode-profiles.v1.json` | Scenario -> signal config + profile | End-to-end tests |
-
-### Rules
-
-- **Code reads from JSON at runtime** -- don't hardcode values that
-  should come from profiles. Use `.get(key, default)` with defaults
-  matching the baseline profile.
-- **Parameter names in JSON must match `.get()` keys** in code.
-- **Block IDs are canonical** across all four files. Don't invent new
-  IDs without updating all files.
-- **Topology (algorithms, methods) is fixed** across profiles. Only
-  tuning parameters (bandwidths, thresholds, spacings) vary.
-- **Profiles represent dynamics envelopes**, not labels. `open_sky` is
-  the default/baseline. Others widen BWs, relax thresholds, etc.
-
-### Profile Diff Pattern
-
-When adding a new profile, start from the baseline and change ONLY
-the parameters that need to differ. Document the rationale in a
-provenance section:
-
-```json
-"provenance": {
-  "PS.B7.pll_bw_locked_hz": {
-    "level": "backed",
-    "source": "GNSS-SDR default 5.0 Hz"
-  }
-}
-```
+After tuning, verify the selected profile, code fallback, generated firmware
+configuration, and test expectations agree. Scope changes by signal family:
+a shared block name does not imply all profiles or nested signal overrides
+should change. Keep measured provenance and distinguish a branch experiment
+from a released default.
 
 ---
 
@@ -235,33 +203,30 @@ Include the FLL gain's 2*pi factor explicitly.
 
 ### Tier 2: Discretization Signature
 
-The bilinear-z transform halves the integrator input on the first
-step (prev=0). This is a measurable 0.5% difference from forward
-Euler at typical GPS bandwidths -- small but detectable:
-
-```python
-def test_bilinear_z_first_step_halves_input(self):
-    filt = PLLLoopFilter(pll_bw_hz=18.0, fll_bw_hz=0.0)
-    out = filt.update(0.1)
-    self.assertAlmostEqual(out, 0.8811, places=3)  # not 0.8858 (fwd Euler)
-```
+For an initially zero trapezoidal integrator, the first update from a
+step input contributes half the rectangular-update increment. Test that
+recurrence, initial conditions, and output ordering against an independent
+calculation. Do not copy a numeric output from a differently parameterized
+filter; the whole-filter output difference depends on its other paths.
 
 ### Tier 3: Closed-Loop Convergence
 
 Simulate a PLL in pure Python (no IQ gen needed). Feed a known
-frequency offset, use atan() as the discriminator, check convergence:
+frequency offset, use a modulo-pi discriminator, and check convergence:
 
 ```python
 for k in range(500):
     sig_phase += TWO_PI * true_freq * T
     nco_phase += TWO_PI * nco_freq * T
-    phase_err = np.arctan(np.sin(sig_phase - nco_phase)
-                          / max(np.cos(sig_phase - nco_phase), 1e-20))
+    delta = sig_phase - nco_phase
+    phase_err = 0.5 * np.arctan2(np.sin(2 * delta), np.cos(2 * delta))
     freq_adj = filt.update(phase_err)
-    nco_freq = base_freq + freq_adj  # Convention A
+    nco_freq = base_freq + freq_adj  # total correction
 ```
 
-Assert: residual < 2 Hz after 500 epochs, max deviation < 50 Hz.
+Choose convergence bounds from the fixture dynamics and capture range. Check
+both BPSK signs: clamping a negative cosine denominator to a positive epsilon
+changes the Costas discriminator and can hide a quadrant/sign defect.
 
 ### Tier 4: Regression Test for Known Failure Mode
 
@@ -283,16 +248,28 @@ stress different stability margins:
 ```python
 for profile_name in ['open_sky', 'urban', 'high_dynamic']:
     profile = load_profile(profile_name)
-    # ... run 30s tracking, assert carrier within ±5 Hz
+    # ... run matched tracking fixtures, assess bias, jitter, slips and lock
 ```
+
+A wider bandwidth can reduce dynamic lag while increasing noisy instantaneous
+frequency excursions. Separate mean error, jitter distribution, phase slips,
+lock time, and navigation/PVT outcomes. A fixed every-epoch frequency bound may
+encode one bandwidth's noise assumptions. Investigate a failure using the same
+fixture before changing the bound; never relax it just to turn the suite green.
+
+Offline replay of recorded discriminator inputs checks filter arithmetic and
+transition continuity. It cannot rank tracking performance: a changed filter
+would alter future prompts. Compare actual closed-loop variants, including
+profile loading and state transitions. At bandwidth changes, inspect each
+state's units and output contribution before proposing resets or rescaling.
 
 ### Tier 6: End-to-End Integration
 
-Full receiver with IQ generation, state machine transitions, nav
-data. These are slow (~10s each) but catch wiring bugs:
+Full receiver with IQ generation, state machine transitions, and nav
+data catches wiring bugs; runtime depends on the fixture and host.
 
 - State transition timing (PULL_IN -> TRACKING at epoch >= min_epochs)
-- Bandwidth narrowing at lock
+- Profile-selected bandwidth changes at lock
 - Loss-of-lock recovery
 - Multi-channel isolation
 
@@ -310,8 +287,9 @@ stochastic tests. No flaky tests.
 | Costas atan | `atan(Q/I)` | +/-pi/2 | No (squares out nav bits) |
 | atan2 | `atan2(Q,I)` | +/-pi | Yes (fails on bit flips) |
 
-**Always use Costas for BPSK data channels.** The atan2 variant is
-for pilot channels only.
+Use a data-insensitive discriminator for BPSK with unknown signs. Four-quadrant
+atan2 is also usable after verified data/secondary-code wipeoff; a pilot may
+still carry a secondary code. Handle zero prompt power explicitly.
 
 ### Frequency (FLL)
 
@@ -330,7 +308,8 @@ halves the unambiguous range to +/-1/(4T) Hz. At T=1ms: +/-250 Hz.
 | Normalized envelope | `(|E|-|L|) / (|E|+|L|)` where `|X|=sqrt(IX^2+QX^2)` |
 | Power | `(|E|^2-|L|^2) / (2*|P|^2)` |
 
-Normalized envelope is unanimous across production implementations.
+Normalized envelope is common; detector gain also depends on correlator spacing
+and the signal autocorrelation. Match the filter gain to that normalization.
 
 ---
 
@@ -342,9 +321,12 @@ Normalized envelope is unanimous across production implementations.
 M2 = mean(|P|^2)
 M4 = mean(|P|^4)
 Pd = sqrt(2*M2^2 - M4)     (clamp Pd_sq >= 0)
-SNR = Pd / (M2 - Pd)       (clamp denom > 0, else 60 dB)
+SNR = Pd / (M2 - Pd)       (valid only for a positive noise estimate)
 C/N0 = 10*log10(SNR / T)
 ```
+
+Invalid finite-window moment estimates need an explicit status or documented
+bound, not an unexplained perfect-lock value.
 
 EMA smoothing: `cn0 = alpha*raw + (1-alpha)*cn0_prev`, with warmup
 period using unsmoothed values.
@@ -354,10 +336,12 @@ period using unsmoothed values.
 ```
 NBP = (sum(IP))^2 + (sum(QP))^2    (coherent power)
 WBP = sum(IP^2 + QP^2)              (total power)
-LI = (NBP/WBP - 1) / (M - 1)       (normalized to [0,1])
+LI = (NBP/WBP - 1) / (M - 1)       (M > 1, WBP > 0)
 ```
 
-Coherent signal: LI -> 1.0. Noise: LI -> 0.
+Coherent signal: LI -> 1.0. Noise: expected LI -> 0; individual estimates
+can be negative. Coherent sums require sign-aligned windows or verified bit
+wipeoff. A navigation transition can collapse the sum without loss of tracking.
 
 ### PLI (Phase Lock Indicator)
 
@@ -370,7 +354,7 @@ Equivalent to cos(2*phi). Strong phase lock: PLI -> 1.0.
 ### Lock Criteria
 
 Require ALL of: C/N0 >= threshold AND LI >= threshold AND PLI >=
-threshold for N consecutive epochs. Typical: C/N0 >= 25 dB-Hz,
+threshold for N consecutive epochs in this example policy. Example: C/N0 >= 25 dB-Hz,
 LI >= 0.6, PLI >= 0.85, N=100 (100 ms).
 
 ---
@@ -392,10 +376,11 @@ FPGA implementation:
 
 ### Representation
 
-- **Correlator inputs:** 4-bit (0.05 dB loss vs 12-bit, Hegarty 2011)
-- **NCO phase accumulator:** 32-bit unsigned (0.001 Hz resolution at 100 MHz)
-- **Accumulator outputs:** 32-bit signed (4096 samples * 4-bit input = 24-bit max, plus margin)
-- **Loop filter coefficients:** Fixed-point with enough fractional bits to represent the smallest gain (w0p ~ 0.01 needs ~10 fractional bits minimum)
+Derive widths from the actual input/replica ranges and summation length.
+A W-bit phase accumulator has frequency resolution `fs / 2**W`; compute it
+for the clock actually advancing the accumulator. Specify rounding, saturation
+versus wrap, and coefficient resolution separately. Quantization loss depends
+on scaling and signal/noise statistics; no universal bit-count loss applies.
 
 ### Python Fixed-Point Model
 
@@ -410,6 +395,7 @@ class CorrelatorFixedPoint:
         self.input_bits = input_bits
         self.accum_bits = accum_bits
         self.accum_max = (1 << (accum_bits - 1)) - 1
+        self.accum = 0
 
     def accumulate(self, sample, replica):
         product = int(sample) * int(replica)  # exact integer multiply
@@ -422,9 +408,9 @@ class CorrelatorFixedPoint:
 When the FPGA must process multiple channels:
 
 - **Time-shared correlator:** One multiply-accumulate engine processes
-  N channels sequentially within each sample period. At 4.096 MSPS
-  with 100 MHz clock: 24 clock cycles per sample = up to 12 channels
-  with E/P/L * I/Q = 6 correlations each (2 cycles per correlation).
+  N channels within each sample period. Budget available fabric cycles against
+  correlations per channel, MAC issue rate, number of parallel lanes, context
+  load/store, and pipeline overhead. Pipeline latency is not the issue interval.
 - **Pipeline registers:** Insert pipeline stages at multiply output
   and accumulator input. Match latency in the control path.
 - **Context switching:** Store per-channel state (NCO phase, code
@@ -451,17 +437,18 @@ When a tracking loop diverges or oscillates:
 
 4. **Check gain scaling.** Do the gains include T factors appropriate
    for the convention? Total-correction: w2p = b*wn (no T).
-   Incremental: w2p = b*wn*T (includes T).
+   An incremental realization must be derived as a complete recurrence;
+   multiplying the proportional gain by T is not a convention conversion.
 
 5. **Run in isolation.** Feed constant phase error into the filter
-   alone (no NCO, no discriminator). The output should grow
-   monotonically (integrators accumulating). If it oscillates or
-   diverges, the filter math is wrong independent of the loop.
+   alone and compare the predicted state sequence, including initial state.
+   Unbounded growth under constant error is expected for an integrator;
+   open-loop growth alone is not evidence of a defect.
 
 6. **Run closed-loop simulation** (Section 5, Tier 3). Pure Python,
    no IQ generation. If this diverges, the loop dynamics are wrong.
-   If it converges but the full receiver diverges, the bug is in
-   wiring (sign, units, timing).
+   If it converges but the receiver diverges, inspect wiring and omitted
+   dynamics (noise, data transitions, integration, quantization and saturation).
 
 7. **Add noise.** A loop that's stable without noise but diverges with
    noise may be marginally stable. Check wn*T and consider bilinear-z.
