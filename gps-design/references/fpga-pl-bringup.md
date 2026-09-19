@@ -152,6 +152,77 @@ structure `socks.json` + `src/` + `sw/` + `tb/` + `constraints/` +
 project data — read them from the block's regmap JSON /
 `shared-interfaces.json`, don't quote from memory.
 
+## Tracking correlators — measured facts as of 2026-09-10
+
+Re-run on primary artefacts by the tracking-campaign orchestrator (three of
+eight prior claims moved on that re-run; assume the same rate for anything
+older than this block).
+
+- **Neither tracking correlator is in the image of record.** The deployed
+  pipeline is `d5,b1,b2,b1l1c,b2l1c`; the build's Vivado log prints
+  `b3l1c=0`, and the C/A instance sits inside `if {$gps_streaming_has_b3}`
+  in `post_bd_mods.tcl`. `ADDRESS-MAP.md`'s "live windows" row for
+  `pl_b3_correlator_0` is stale, and so is its `:1145` citation.
+- **The C/A correlator and the acquisition mux's C/A feed are mutually
+  exclusive in today's block design.** The BD builds the correlator in one
+  arm and the B1 packer that feeds the ingress mux's C/A feed in the other
+  (`post_bd_mods.tcl:794-801`); the `has_b3 && has_b2` arm serves only the
+  retired legacy passive tap. A tracking image needs a NEW fan-out after
+  the bit-select (an `axis_broadcaster` precedent exists at `:742`) or the
+  tracker has nothing to seed it.
+- **A tracking correlator must always outrun the incoming IQ** (operator
+  ruling 2026-09-10, tracking cache decision 155): a valid-only tap is
+  legal only with cone capacity strictly above the input under every legal
+  configuration AND a sticky lost-sample counter every gate asserts is
+  zero. The C/A correlator at 100 MHz qualifies (6.67 MSPS capacity against
+  4.096 MSPS); "0.92×, fits with no margin" never does.
+- **The cadence law is documented, not folklore:** ADR-PL-B3_L1C-003,
+  `cadence = max(ceil(CHANNEL_COUNT/LANE_COUNT) + drain_init + 1, 4)`,
+  `drain_init = 2`, measured 15 / 9 / 7 cycles at one, two, three lanes;
+  the drain is trimmable (priced at zero in the ADR).
+- **The L1C correlator's full-project timing history is three points, not
+  one:** −0.704 ns at the 2026-08-08 entry gate (80.59 % Block RAM Tile —
+  78.6 % is the RAMB36/FIFO sub-line), then **closed at +0.002 ns with the
+  block present** (ADR-PL-B3_L1C-004: replicated config-apply enables and a
+  registered dump-readback shadow), then −0.481 ns on the C/A acquisition
+  path with the island clean (plan05-phase7, unmerged), then dropped from
+  the recipe 2026-08-14 by operator ruling **for area**, not timing. It is a
+  known-closable island.
+- **The C/A correlator already generates its C/A codes in fabric** (shared
+  G1/G2 ROM + per-PRN G2 delay, `pl_b3_correlator_axi.vhd:316-342`); only
+  the L1C correlator is walled by literal tables (four PRNs,
+  `pl_b3_l1c_codes_pkg.vhd:925-958`). Generating L1C costs 1.84 KiB for 63
+  PRNs against 171 KiB stored (desk number; the RTL sizing hop replaces it).
+- **The register map collides at channel 16** (`REG_CH_BASE 0x100`, stride
+  32, dump-B base `0x300`); the map is hand-laid at three points.
+- **The 64-bit L1C accumulator containers are not a defect:** ADR-PL-B3_L1C-001's
+  41 is the worst-case bound; `accum_word` scales by 1/32767 to the dump
+  word.
+- **No L2C or L5 tracking golden exists in Python** (`pl_b2_l2c.py`,
+  `pl_b2_l5.py` are acquisition); those engine modes cannot be gated until
+  the receiver thread writes them.
+- **Both siblings retire by replacement** under the band-agnostic correlator
+  engine (`fpga/20260910-correlator-engine`); the acquisition engine keeps
+  its DDR replica library (decision 145) — the code source is split by
+  engine, on purpose, and ADR-PL-B3_L1C-002 was amended to the generator.
+- **ADR-030 flavors are RECORD / TEST-GPS / TEST-IRIDIUM (+ optional
+  TEST-IRIDIUM+GPS)** since 2026-09-10; the tracking image is TEST-GPS.
+
+**The stand-in's polled aperture is bus-bound (measured on the desk
+2026-09-10, firmware thread `b1f62f27`).** Driving the C/A stand-in from the
+R5_1 1 kHz loop costs **29 AXI-Lite transactions per channel-epoch** (1 status
+read + 24 dump-word reads + 1 pop + 2 NCO writes + 1 arm), **348 per
+millisecond at 12 channels**, against 2.17 µs of loop math — thirty to one,
+linear in channels and in record size. AXI-Lite moves one 32-bit word per
+bridge round trip and cannot burst. That measurement is why the correlator
+engine's data plane is DMA in both directions (tracking cache decision 161):
+an S2MM dump ring R5_1 drains and an MM2S command ring it fills, the same
+DataMover shape the acquisition engine gets for its descriptor ring, with the
+AXI-Lite map shrunk to control and status. MM2S there carries command
+records, never codes (the generator ruling stands). The stand-in keeps its
+polled aperture for the proof leg; the board leg measures the real
+per-transaction cost beside the desk's 348.
+
 ## When to consult this chapter
 
 - Porting any `gps_receiver/blocks/pl_*.py` golden to VHDL, or
