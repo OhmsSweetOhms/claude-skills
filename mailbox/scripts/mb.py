@@ -116,6 +116,34 @@ def read_blocks(mailbox: Path) -> list[dict]:
         return []
 
 
+def refuse_a_stranger_as_worker(mailbox: Path) -> None:
+    """`--from worker` is the packet's BOUND session and nobody else.
+
+    A Codex worker's sub-agents start with as much of its conversation as it
+    chose to fork, and a forked `MAILBOX` pointer plus the turn-1 rules is a
+    complete invitation to answer as the worker: on the first live packet
+    (2026-09-19) a review sub-agent ACKed a block that way. A sub-agent's shell
+    carries ITS OWN `$CODEX_THREAD_ID` (measured the same day), so the caller can
+    be checked against the session `bind-session` recorded.
+
+    With no worker record, or none bound yet, there is nothing to check against
+    and the send goes through — the launcher owns binding, not this file.
+    """
+    try:
+        bound = worker_state(mailbox).get("session_id")
+    except LookupError:
+        return
+    if not bound:
+        return
+    caller = os.environ.get("CODEX_THREAD_ID", "")
+    if caller != bound:
+        raise ValueError(
+            f"refusing --from worker: this session ({caller or 'no $CODEX_THREAD_ID'}) "
+            f"is not the packet's bound worker session ({bound}). A spawned "
+            "sub-agent never writes to the mailbox — return your result to the "
+            "agent that spawned you")
+
+
 def send(mailbox: Path, sender: str, to: str, kind: str, body: str) -> int:
     if sender not in ROLES:
         raise ValueError(f"--from must be one of {ROLES}")
@@ -125,6 +153,8 @@ def send(mailbox: Path, sender: str, to: str, kind: str, body: str) -> int:
         raise ValueError("--kind must be an uppercase token, e.g. QUESTION")
     if not body.strip():
         raise ValueError("refusing to send an empty body")
+    if sender == "worker":
+        refuse_a_stranger_as_worker(mailbox)
     # A body line that starts with the marker prefix is indented one space so it
     # can never be read as a header or an end marker.
     safe = "\n".join(" " + l if l.startswith("===") else l

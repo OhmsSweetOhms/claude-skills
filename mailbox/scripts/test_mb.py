@@ -50,13 +50,17 @@ class MailboxTest(unittest.TestCase):
         self.env = dict(os.environ,
                         XDG_STATE_HOME=str(self.tmp / "state"),
                         MB_CODEX_BIN=str(fake),
-                        FAKE_CODEX_ARGV=str(self.argv))
+                        FAKE_CODEX_ARGV=str(self.argv),
+                        # The tests speak as the BOUND worker unless they say
+                        # otherwise: write_worker_state's default session id.
+                        CODEX_THREAD_ID="codex-thread-uuid")
         self.env.pop("CLAUDE_CODE_SESSION_ID", None)
         self.env.pop("FAKE_CODEX_RC", None)
         self.env.pop("FAKE_CODEX_STDERR", None)
         # In-process helpers (mb.watch, mb.wait) read the same environment.
         self.restore = {k: os.environ.get(k) for k in
-                        ("XDG_STATE_HOME", "MB_CODEX_BIN", "FAKE_CODEX_ARGV")}
+                        ("XDG_STATE_HOME", "MB_CODEX_BIN", "FAKE_CODEX_ARGV",
+                         "CODEX_THREAD_ID")}
         os.environ.update({k: self.env[k] for k in self.restore})
         self.addCleanup(self._restore_env)
         self.sid = "sess-0123456789ab"
@@ -135,6 +139,52 @@ class BlockFormat(MailboxTest):
             out = run_mb("send", str(self.box), *case, env=self.env)
             self.assertEqual(out.returncode, 2, case)
         self.assertFalse(self.box.exists())
+
+    def send_as_worker(self, **env):
+        return run_mb("send", str(self.box), "--from", "worker", "--to", "orchestrator",
+                      "--kind", "ACK", "--body", "block 2: on it", env=dict(self.env, **env))
+
+    def test_a_sub_agent_cannot_write_as_the_worker(self):
+        # The first live packet, 2026-09-19: a review sub-agent forked with the
+        # worker's conversation read the pointer and ACKed as the worker.
+        self.write_worker_state(session_id="the-bound-worker")
+        out = self.send_as_worker(CODEX_THREAD_ID="a-spawned-sub-agent")
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("refusing --from worker", out.stderr)
+        self.assertIn("the-bound-worker", out.stderr)
+        self.assertIn("a-spawned-sub-agent", out.stderr)
+        self.assertFalse(self.box.exists(), "a refused send must leave no block")
+
+    def test_a_caller_with_no_codex_thread_id_cannot_write_as_a_bound_worker(self):
+        self.write_worker_state(session_id="the-bound-worker")
+        env = dict(self.env)
+        env.pop("CODEX_THREAD_ID")
+        out = run_mb("send", str(self.box), "--from", "worker", "--to", "orchestrator",
+                     "--kind", "ACK", "--body", "x", env=env)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("no $CODEX_THREAD_ID", out.stderr)
+        self.assertFalse(self.box.exists())
+
+    def test_the_bound_worker_writes_as_itself(self):
+        self.write_worker_state(session_id="the-bound-worker")
+        out = self.send_as_worker(CODEX_THREAD_ID="the-bound-worker")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(mb.read_blocks(self.box)[0]["sender"], "worker")
+
+    def test_with_nothing_bound_there_is_nothing_to_check(self):
+        # Before bind-session, and with no worker record at all (a bare mailbox).
+        self.assertEqual(self.send_as_worker(CODEX_THREAD_ID="anyone").returncode, 0)
+        self.write_worker_state(session_id=None)
+        self.assertEqual(self.send_as_worker(CODEX_THREAD_ID="anyone").returncode, 0)
+
+    def test_the_orchestrator_is_not_a_codex_thread_and_is_not_checked(self):
+        self.write_worker_state(session_id="the-bound-worker")
+        env = dict(self.env)
+        env.pop("CODEX_THREAD_ID")
+        out = run_mb("send", str(self.box), "--from", "orchestrator", "--to", "worker",
+                     "--kind", "ANSWER", "--body", "reading two", env=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("RANG worker the-bound-worker", out.stdout)
 
     def test_concurrent_senders_never_share_a_number_or_interleave(self):
         procs = []
