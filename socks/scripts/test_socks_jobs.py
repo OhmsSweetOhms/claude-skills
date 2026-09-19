@@ -152,7 +152,13 @@ class TestStaleReclaim(JobsTestBase):
 
         r = self.run_sync("status")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("reclaimed-stale: 1", r.stdout)
+        self.assertIn("status is read-only", r.stdout)
+        self.assertEqual(len(slot_files(self.dir)), 1)
+
+        # The next host admission scan owns stale reclamation.
+        r = self.run_sync("wait", "--class", "sim", "--weight", "2",
+                          "--timeout", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(slot_files(self.dir), [])
 
 
@@ -235,7 +241,7 @@ class TestStatus(JobsTestBase):
     def test_clean_dir_status_is_empty_and_exit_zero(self):
         r = self.run_sync("status")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("reclaimed-stale: 0", r.stdout)
+        self.assertIn("reclaimed-stale: 0 (status is read-only", r.stdout)
         for cls in ("sim", "build"):
             self.assertRegex(r.stdout, rf"(?m)^{cls}\s")
 

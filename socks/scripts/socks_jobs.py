@@ -10,8 +10,10 @@ operator-killed holder wedged the queue behind a stale lock.
 
 This is a no-daemon governor. State is a directory of PID-stamped slot
 files under ${SOCKS_JOBS_DIR:-/tmp/socks-jobs}, mutated only while holding
-one flock'd meta lock (.meta.lock). Every scan reclaims slots whose owner
-PID is dead, so a killed job cannot wedge the queue.
+one flock'd meta lock (.meta.lock). Admission scans reclaim slots whose owner
+PID is dead, so a killed job cannot wedge the queue. The `status` command is
+strictly observational: a sandbox may not share the host PID namespace, so a
+status read must never delete a host job's live slot.
 
 Two classes, independent budgets, weights denominated in "cores":
 
@@ -146,11 +148,13 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def scan_slots(directory: str):
+def scan_slots(directory: str, *, reclaim: bool = True):
     """Return (live_slots, reclaimed_count). MUST be called under MetaLock.
 
-    Any slot whose owning PID is gone is deleted here -- this is the fix for
-    operator-killed jobs wedging the queue.
+    When reclaim=True, slots whose owning PID is gone are deleted. Admission
+    and wait paths use that mode on the same host namespace as launched jobs.
+    status uses reclaim=False because PID invisibility from a sandbox is not
+    proof that a host process died.
     """
     live = []
     reclaimed = 0
@@ -169,7 +173,7 @@ def scan_slots(directory: str):
                 pass
             continue
         rec["path"] = path
-        if not pid_alive(int(rec.get("pid", -1))):
+        if reclaim and not pid_alive(int(rec.get("pid", -1))):
             try:
                 os.unlink(path)
                 reclaimed += 1
@@ -418,7 +422,7 @@ def cmd_run(args) -> int:
 def cmd_status(args) -> int:
     directory = jobs_dir()
     with MetaLock(directory):
-        slots, reclaimed = scan_slots(directory)
+        slots, _ = scan_slots(directory, reclaim=False)
     now = time.time()
     print(f"SOCKS job slots  dir={directory}")
     print(f"{'CLASS':<7} {'BUDGET':>6} {'USED':>5} {'PID':>8} {'W':>3} "
@@ -436,7 +440,7 @@ def cmd_status(args) -> int:
             print(f"{cls if i == 0 else '':<7} {b if i == 0 else '':>6} "
                   f"{used if i == 0 else '':>5} {s['pid']:>8} "
                   f"{s['weight']:>3} {str(age) + 's':>6}  {label}")
-    print(f"reclaimed-stale: {reclaimed}")
+    print("reclaimed-stale: 0 (status is read-only; admission/wait reclaims)")
     return 0
 
 

@@ -65,7 +65,7 @@ python3 scripts/socks_jobs.py run --class sim --weight 2 --label my_tb -- \
 python3 scripts/socks_jobs.py run --class build --timeout 3600 -- \
     vivado -mode batch -source build.tcl
 
-# What is running right now
+# What slot records exist right now (strictly read-only)
 python3 scripts/socks_jobs.py status
 
 # Serialize around a phase without wrapping a command
@@ -83,6 +83,12 @@ gate wants.
 slot and exits with the child's status (`128 + signal` when the child died on
 a signal). A SIGKILLed wrapper leaves its slot behind, but the next scan
 reclaims it.
+
+`status` never reclaims. This is deliberate: a sandbox may not see host PIDs,
+and PID invisibility is not proof that a host job died. Stale reclamation occurs
+only in `run`/`wait` admission scans, which must execute in the same host PID
+namespace as the jobs they govern. A status call is safe from any context but
+reports slot files, not independent proof that every recorded PID is visible.
 
 ## Reentrancy — `SOCKS_JOB_HELD`
 
