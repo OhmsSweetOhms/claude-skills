@@ -18,9 +18,11 @@ python3 scripts/socks_build.py <recipe.json> --describe
 # Exact commands + tree state, no Vivado license (Codex handback form)
 python3 scripts/socks_build.py <recipe.json> --plan [--stage hdl|linux|all]
 
-# Run it (licensed host). HDL/no-OS works today; Linux is a stub until
-# the plan-03 hop ports the cold_rebuild stages + reproducibility gates.
-python3 scripts/socks_build.py <recipe.json> --execute --project-dir <sysdir>
+# Run it (licensed host). --stage all produces the COMPLETE deploy set:
+# bit, XSA, kernel Image, DTB, R5 capture ELF, BOOT.BIN -- banked under
+# systems/builds/<run-label>/deploy/ beside the ledger and build-output.json.
+python3 scripts/socks_build.py <recipe.json> --execute --project-dir <sysdir> \
+    --stage all --run-label <label>
 
 # One-pointer default: with no recipe argument, the project's
 # socks.json::build.recipe is used. An explicit argument ALWAYS wins.
@@ -95,8 +97,11 @@ committed patched state bit-exact.
 
 - `scripts/build.py` is the **module** clean-and-rebuild pipeline —
   unrelated to this driver.
-- `platforms/tools/cold_rebuild.py` is the **interim** Linux executor;
-  its kernel/boot stages and reproducibility gates port into
-  `--execute --stage linux` in the plan-03 hop, after which it retires
-  (gated on the first driver-validated cold rebuild).
+- There is **one executor**. The interim Linux cold-rebuild orchestrator was
+  retired 2026-07-25 once this driver had produced all six deployables from a
+  clean tree and a reduced cross-check showed the two agreed on every artifact
+  where agreement is physically possible (DTB bit-identical; kernel `Image`
+  normalized-identical, its raw hashes differing only in the two declared GNU
+  build-ID fields). Its stages, gates and traps live in `--execute --stage
+  linux`; git history holds the script.
 - Vendoring/profile background: `references/adi-vendoring-profiles.md`.
