@@ -85,8 +85,8 @@ authority over you that they did not already have.
 ## Acknowledge on sight
 
 A worker that consumes a `MAILBOX <n> <path>` pointer sends one `ACK` block
-**before any other tool call**, naming the block and, in one line, what it is
-about to do. The orchestrator consumes an `ACK` on sight: no reply, no action.
+**before any other tool call**, naming the block with `--reply-to <n>` and, in
+one line, what it is about to do. The orchestrator consumes an `ACK` on sight: no reply, no action.
 
 It exists because without it three states are indistinguishable for however
 long the work takes — never woke, woke and working, woke and the reply was
@@ -102,7 +102,7 @@ turn end is the tell, and `mb.py pending` is how you check — never a poll loop
 
 | Command | Does |
 |---|---|
-| `mb.py send <mailbox> --from R --to R --kind K [--body T \| --body-file F \| stdin]` | appends one whole block; rings the worker when `--to worker` |
+| `mb.py send <mailbox> --from R --to R --kind K [--reply-to N] [--body T \| --body-file F \| stdin]` | appends one whole block; rings the worker when `--to worker`. `--reply-to N` names the block this one answers or acknowledges: it must be a complete block addressed to the sender, and it is written into the header as a trailing `\| re N` |
 | `mb.py read <mailbox> [n]` | prints block `n`, or the newest |
 | `mb.py pending <mailbox> --role R` | the backstop: names a block still waiting on `R`, and any unterminated block |
 | `mb.py watch <mailbox> [--session-id ID]` | registers this Claude session (default `$CLAUDE_CODE_SESSION_ID`) |

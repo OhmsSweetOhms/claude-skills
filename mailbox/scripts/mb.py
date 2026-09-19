@@ -8,6 +8,9 @@ in it is a block:
     free text, as long as the sender likes
     === end 7
 
+A block sent with `--reply-to N` carries one more header field, ` | re N`: the
+complete block, addressed to the sender, that it answers or acknowledges.
+
 Nobody edits the file by hand. `send` takes a file lock, numbers the block,
 composes header + body + end marker in memory and appends them in ONE write, so
 a half-written block never exists and the end marker is never the agent's job.
@@ -64,7 +67,7 @@ import time
 from pathlib import Path
 
 ROLES = ("orchestrator", "worker")
-HEADER = re.compile(r"^=== (\d+) \| (\w+) -> (\w+) \| (\S+) \| ([A-Z][A-Z0-9_]*)$")
+HEADER = re.compile(r"^=== (\d+) \| (\w+) -> (\w+) \| (\S+) \| ([A-Z][A-Z0-9_]*)(?: \| re (\d+))?$")
 END = re.compile(r"^=== end (\d+)$")
 KIND = re.compile(r"^[A-Z][A-Z0-9_]*$")
 SESSION_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")   # also a filename in the registry
@@ -92,7 +95,8 @@ def parse(text: str) -> list[dict]:
                 blocks.append(cur)          # unterminated: a new header cut it off
             cur = {"n": int(head.group(1)), "sender": head.group(2),
                    "to": head.group(3), "at": head.group(4),
-                   "kind": head.group(5), "body": [], "complete": False}
+                   "kind": head.group(5), "body": [], "complete": False,
+                   "re": int(head.group(6)) if head.group(6) else None}
             continue
         end = END.match(line)
         if end and cur is not None and int(end.group(1)) == cur["n"]:
@@ -144,7 +148,8 @@ def refuse_a_stranger_as_worker(mailbox: Path) -> None:
             "agent that spawned you")
 
 
-def send(mailbox: Path, sender: str, to: str, kind: str, body: str) -> int:
+def send(mailbox: Path, sender: str, to: str, kind: str, body: str,
+         reply_to: int | None = None) -> int:
     if sender not in ROLES:
         raise ValueError(f"--from must be one of {ROLES}")
     if to not in ROLES or to == sender:
@@ -164,10 +169,18 @@ def send(mailbox: Path, sender: str, to: str, kind: str, body: str) -> int:
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         text = mailbox.read_text(errors="replace")
-        n = max((b["n"] for b in parse(text)), default=0) + 1
+        blocks = parse(text)
+        if reply_to is not None and not any(
+                b["n"] == reply_to and b["complete"] and b["to"] == sender for b in blocks):
+            # Checked under the lock, against the file as it is: a reply names a
+            # complete block that was addressed to the one replying.
+            raise ValueError(f"--reply-to {reply_to}: no complete block {reply_to} "
+                             f"addressed to {sender} in {mailbox}")
+        n = max((b["n"] for b in blocks), default=0) + 1
         now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lead = "" if not text or text.endswith("\n") else "\n"
-        block = (f"{lead}\n=== {n} | {sender} -> {to} | {now} | {kind}\n"
+        re_field = f" | re {reply_to}" if reply_to is not None else ""
+        block = (f"{lead}\n=== {n} | {sender} -> {to} | {now} | {kind}{re_field}\n"
                  f"{safe}\n=== end {n}\n").encode()
         view = memoryview(block)
         while view:                          # one write in practice; never stop short
@@ -447,6 +460,8 @@ def main() -> int:
     p.add_argument("--kind", required=True)
     p.add_argument("--body")
     p.add_argument("--body-file")
+    p.add_argument("--reply-to", type=int, metavar="N",
+                   help="the block this one answers or acknowledges")
     p = sub.add_parser("read")
     p.add_argument("mailbox")
     p.add_argument("n", nargs="?", type=int)
@@ -478,7 +493,7 @@ def main() -> int:
                 body = a.body
             else:
                 body = sys.stdin.read()
-            n = send(mailbox, a.sender, a.to, a.kind, body)
+            n = send(mailbox, a.sender, a.to, a.kind, body, a.reply_to)
             print(f"SENT {n} {mailbox}")
             if a.to == "worker":
                 session_id, why = ring_worker(mailbox, n)
@@ -492,7 +507,8 @@ def main() -> int:
             if not pick:
                 raise ValueError(f"no complete block {a.n if a.n else ''}".strip())
             b = pick[-1]
-            print(f"=== {b['n']} | {b['sender']} -> {b['to']} | {b['at']} | {b['kind']}")
+            re_field = f" | re {b['re']}" if b["re"] is not None else ""
+            print(f"=== {b['n']} | {b['sender']} -> {b['to']} | {b['at']} | {b['kind']}{re_field}")
             print(b["body"])
         elif a.cmd == "pending":
             for line in pending(mailbox, a.role):

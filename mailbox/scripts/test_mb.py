@@ -186,6 +186,30 @@ class BlockFormat(MailboxTest):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("RANG worker the-bound-worker", out.stdout)
 
+    def test_reply_to_names_the_block_in_the_header_and_old_headers_still_parse(self):
+        # The first live packet's worker reached for this flag and was refused.
+        mb.send(self.box, "orchestrator", "worker", "ANSWER", "reading two")      # an old-form header
+        out = run_mb("send", str(self.box), "--from", "worker", "--to", "orchestrator",
+                     "--kind", "ACK", "--reply-to", "1", "--body", "on it", env=self.env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("| ACK | re 1\n", self.box.read_text())
+        first, second = mb.read_blocks(self.box)
+        self.assertEqual((first["re"], second["re"], second["complete"]), (None, 1, True))
+        shown = run_mb("read", str(self.box), "2", env=self.env).stdout
+        self.assertTrue(shown.startswith("=== 2 | worker -> orchestrator |"), shown)
+        self.assertIn("| ACK | re 1", shown.splitlines()[0])
+
+    def test_reply_to_a_block_that_is_not_there_or_not_yours_is_refused(self):
+        mb.send(self.box, "orchestrator", "worker", "ANSWER", "reading two")
+        before = self.box.read_text()
+        for n, sender, to in (("9", "worker", "orchestrator"),        # no such block
+                              ("1", "orchestrator", "worker")):       # block 1 was TO the worker
+            out = run_mb("send", str(self.box), "--from", sender, "--to", to, "--kind", "ACK",
+                         "--reply-to", n, "--body", "x", env=self.env)
+            self.assertEqual(out.returncode, 2, (n, sender))
+            self.assertIn("--reply-to", out.stderr)
+        self.assertEqual(self.box.read_text(), before)
+
     def test_concurrent_senders_never_share_a_number_or_interleave(self):
         procs = []
         for i in range(8):

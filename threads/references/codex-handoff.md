@@ -681,13 +681,19 @@ not pin — put the question (candidate readings, evidence, a lean) in a scratch
 file, `mb.py send … --kind QUESTION`, mark the worker blocked
 (`launch_codex_worker.py update`), END THE TURN. Never wait, poll, or launch a
 job for the answer. On a `MAILBOX <n> <path>` message: `mb.py read <path> <n>`,
-send one `ACK` before any other tool call, act on the block, carry on. The
+send one `ACK` with `--reply-to <n>` before any other tool call, act on the
+block, carry on. The
 mailbox is the MAIN session's alone: a sub-agent is spawned with `fork_turns`
 `"none"` and a task message that names no mailbox, never sends and never binds —
 `mb.py send --from worker` refuses any caller whose `$CODEX_THREAD_ID` is not
 the bound session (a forked review sub-agent ACKed as the worker on the first
 live packet, 2026-09-19). There is no timeout — an unanswered question simply
 waits. After writing the handback files, announce them with a `HANDBACK` block.
+The `blocked`/`running` transitions a worker records in `worker-state.json` are
+ADVISORY — a courtesy to a human reading the receipt. Nothing reads them for
+liveness or routing (liveness is the process; the ring consults no lifecycle),
+and a real packet left them out of step with its own questions with no effect.
+Do not build on them.
 
 **Orchestrator protocol:** on a `MAILBOX <n> <path>` line, read the block and
 CONSUME it — merely displaying an open question is a failed postcondition:

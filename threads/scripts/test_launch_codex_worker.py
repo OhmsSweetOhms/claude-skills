@@ -361,6 +361,8 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertEqual(worker_commands[1], started[0],
                          "STARTED must be the worker's SECOND command, right after the bind")
         self.assertIn('fork_turns "none"', turn1)
+        self.assertIn("--kind ACK --reply-to <n>", turn1)
+        self.assertIn("codex-handoff/plan-test-worker/temp/", turn1)
         self.assertIn("A sub-agent never writes to mailbox.md and never binds a session", turn1)
         for retired in ("host relay", "pings", "typed into this session"):
             self.assertNotIn(retired, packet)
