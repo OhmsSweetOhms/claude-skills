@@ -408,6 +408,68 @@ section opening:
   board and `engine.ref_offset_evidence_dir` is null, so the stage falls
   back to `RUN_DIR` (tmpfs) with a logged warning — one `mkdir`/key.
 
+## R5 firmware loading, and the reference-receiver sidecar (as of 2026-09-10)
+
+- **R5 firmware loads through Linux remoteproc, never a BOOT.BIN
+  partition.** `linux/capture/board_bringup.py` inserts
+  `zynqmp_r5_remoteproc.ko` by path, writes the firmware name to
+  `/sys/class/remoteproc/remoteproc0/firmware`, writes `start`, and checks
+  an OCM marker; `COLD-REBUILD-GATE.md` gates `no_r5_partitions == true`.
+  ADR-011's rejection is of OpenAMP with rpmsg, not of the loader. The
+  firmware is a "bare-rproc" ELF: no BSP boot object, its own boot shim and
+  linker (`no-os/capture/r5_0_dmac_probe_rproc.{S,ld}`, ATCM at 0, BTCM at
+  0x20000, DDR carve at `0x7000_0000`), and the **`standalone_v8_0` BSP is
+  a hard pin** — v9_0 wedges in `Xil_SetMPURegion` (bench-proven
+  2026-07-09). The device tree declares `r5f_1` in split mode on
+  `0x7800_0000` with TCM 1a/1b, so R5_1 follows the same recipe through
+  `remoteproc1`; whether `remoteproc1` enumerates on the running board is
+  unverified until the firmware thread's step 0 runs it.
+- **The reference receiver is now the EVK-X20P all-band module** (replaces
+  the ZED-F9P). The sidecar reaches the daemon through gpsd JSON rawdata
+  rows, not raw UBX. **GPS L1C has no UBX sigId on the X20P** (HPG
+  2.02–2.11: a `gps_L1C` capability bit in `MON-GNSS` only), so L1C
+  observables cannot be expressed in UBX without a documented extension.
+  **`RXM-SFRBX` word packing is unspecified by both vendor interface
+  descriptions**, and gpsd (per-word D30* inversion) and RTKLIB (none)
+  disagree — the in-tree PS.TLM-vs-F9P harness's assumption needs one real
+  capture. `pyubx2` encodes and decodes UBX and tracks the X20 firmware.
+  Interface descriptions and the vendor JSON: `.research/session-20260910-144850/`.
+- **The reference drift is a trajectory; every board row carries uptime
+  and measured drift** (operator ruling; tracking cache and plan-30
+  `drift-both-halves`); the `measured_declares` slot in `AcqFdTolerance`
+  is the tier-1 input, unwired until that hop.
+
+- **There is no free-running u-blox capture on the appliance (checked
+  2026-09-10).** The reference-receiver sidecars exist only inside a
+  recording window: `gps-live-ctl record-start` spawns them beside the IQ
+  recording and `record-stop` finalizes them. Both go through gpsd, which
+  OWNS `/dev/ttyACM0` as the sole tty reader by design (`gps_live_ctl.py`
+  §F9P GNSS truth sidecar): one logger is `gpspipe -r` (NMEA only, no
+  Doppler), the other `gpspipe -w` (gpsd's DECODED JSON of `RXM-RAWX`).
+  Nothing we have ever kept is raw UBX — which is why the `RXM-SFRBX`
+  word-packing convention (gpsd inverts per-word D30*, RTKLIB does not) is
+  unverified. The UBX contract's raw-capture recipe
+  (`docs/spec-ubx-output-contract.md` §16: two `CFG-VALSET` frames, the
+  nine-message set at 1 Hz, 460800 on UART because the 38400 default
+  silently drops ~30 % of it, `cat`/`gnssdump` to a `.ubx` file) keeps gpsd
+  OUT of the path, so on the board it needs gpsd stopped; host-attached
+  over USB CDC (no baud to set) is the simpler route. A free-running raw
+  logger would be a new `gps-live-ctl` verb, not a flag.
+- **`test_acq_engine.HostSpansInstrumentTests` is flaky by construction**
+  (2026-09-10): its wall-clock self-tests compare millisecond spans with a
+  1.0 ms tolerance and fail about half the time even in isolation (missed by
+  3.18 ms under load), so "suite green" on the boot-autonomy tree is a coin
+  flip until they get the load-tolerant or serial-only treatment from
+  `docs/test-conventions.md`. Re-run a failing suite once alone before
+  believing either result.
+- **Per-unit state matters the day the hardware is swapped** (2026-09-10):
+  the SD card's `/boot/gps-receiver-state.json` prior and the
+  `engine.centers_hz` lists belong to the unit that wrote them; a different
+  unit's prior narrows the sweep around the WRONG ppm, worse than none. Move
+  it aside before first sky on a new unit; the drift anchors (+3.4 Hz/s at
+  40 min, −0.65 at 6 h) and the 441 s excursion-gate floor derived from them
+  are one unit's measurements, re-derived from each unit's own record.
+
 ## Vectors and gating
 
 - **Freezing a vector tree after a split must be a metadata STAMP; a
