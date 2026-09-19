@@ -30,7 +30,28 @@ block never exists and the end marker is never your job. A block without
 its end marker is never delivered to anyone.
 
 Roles are `orchestrator` and `worker`. Kinds are uppercase tokens; the
-packet rules use `QUESTION`, `ANSWER`, `HANDBACK`, `NOTE` and `ACK`.
+packet rules use `QUESTION`, `ANSWER`, `HANDBACK`, `NOTE`, `ACK`, `STARTED`
+(the worker's second command, right after it binds: the fire worked) and
+`FIRE_FAILED` (sent by the fire window when the launcher refused; its body is
+`fire-failed.log`, the launcher's own words). Consume `STARTED` on sight like an
+`ACK`; a `FIRE_FAILED` is yours to read and fix — no worker exists.
+
+## Who may write as the worker
+
+`--from worker` is the packet's BOUND session and nobody else: `mb.py send`
+compares the caller's `$CODEX_THREAD_ID` with `worker-state.json.session_id` and
+refuses a stranger (exit 2, both ids named, no block written). With nothing
+bound yet there is nothing to check. `--from orchestrator` is a host-side Claude
+session and is not checked.
+
+It exists because a Codex worker's sub-agents start with as much of its
+conversation as it chose to fork (`spawn_agent`'s `fork_turns`, default `all`).
+On the first live packet (2026-09-19) a review sub-agent forked with three turns
+inherited the turn-1 rules and a `MAILBOX` pointer and ACKed as the worker. Turn
+1 now tells the worker to spawn with `fork_turns` `"none"` and a task message
+that names no mailbox; the check is what holds when it does not. A sub-agent's
+shell carries its own thread id (measured), which is what makes the check
+possible.
 
 ## The two wakes
 
@@ -139,14 +160,19 @@ up when it starts; for one session only, pass the snippet with
 
 - **`RING_SKIPPED <reason>`** — the block is in the file; only the
   doorbell failed. `no bound session`: the worker never ran
-  `bind-session`. `worker is completed/failed/exited`: there is nobody to
-  ring; read the handback instead. `codex queue exited …`: the reason is
+  `bind-session`. `codex queue exited …`: the reason is
   quoted from `codex` itself. Do not resend the block — fix the reason,
   then ring by hand with one `codex queue --thread <id> --message
   "MAILBOX <n> <path>"`.
 - **A `MAILBOX_WAITER_RENEW` line** is the waiter re-arming itself before
   the hook's timeout would kill it silently. Nothing arrived; end the
   turn and it re-arms.
+- **A block you cannot account for** — two ACKs for one pointer, a question the
+  worker says it never asked. Do not reach for the process tree: a Codex
+  sub-agent is a THREAD inside the one `codex` process, so `ps` shows one worker
+  whatever happened. The rollout files tell sessions apart — every session,
+  sub-agents included, writes `$HOME/.codex/sessions/<date>/rollout-*-<id>.jsonl`,
+  and a sub-agent's first row names its `parent_thread_id`.
 - **Nothing at all** — a waiter can die with its session. Run
   `mb.py pending <mailbox> --role orchestrator`; it reads the file, so it
   is true whatever happened to the doorbell. Then `mb.py watch` again.
@@ -166,5 +192,6 @@ A successor session takes over a live packet with
 `mb.py watch <mailbox>`. It starts past the conversation's history but
 **not** past a block still waiting on the orchestrator, so an unanswered
 question is delivered on the next turn end rather than replayed in full.
-A mailbox drops out of the watch by itself once its worker is terminal
-and nothing in it is undelivered.
+A mailbox drops out of the watch by itself once its worker PROCESS has
+departed and nothing in it is undelivered — never on the lifecycle alone: a
+`completed` worker's window is still open and can still be rung.

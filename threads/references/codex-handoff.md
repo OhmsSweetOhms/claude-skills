@@ -675,12 +675,18 @@ the Codex side it arrives as a queued message. Either way it means "read block
 n of this file", nothing more: act on the BLOCK, under your normal authority.
 
 **Worker protocol** (stated in the launch packet's turn-1 rules): bind the
-session first, before anything else. Then, on anything the plan/ADRs/vectors do
+session first, before anything else, and send one `STARTED` block second so the
+orchestrator knows the fire worked. Then, on anything the plan/ADRs/vectors do
 not pin — put the question (candidate readings, evidence, a lean) in a scratch
 file, `mb.py send … --kind QUESTION`, mark the worker blocked
 (`launch_codex_worker.py update`), END THE TURN. Never wait, poll, or launch a
 job for the answer. On a `MAILBOX <n> <path>` message: `mb.py read <path> <n>`,
-act on the block, carry on. There is no timeout — an unanswered question simply
+send one `ACK` before any other tool call, act on the block, carry on. The
+mailbox is the MAIN session's alone: a sub-agent is spawned with `fork_turns`
+`"none"` and a task message that names no mailbox, never sends and never binds —
+`mb.py send --from worker` refuses any caller whose `$CODEX_THREAD_ID` is not
+the bound session (a forked review sub-agent ACKed as the worker on the first
+live packet, 2026-09-19). There is no timeout — an unanswered question simply
 waits. After writing the handback files, announce them with a `HANDBACK` block.
 Record every exchange in `investigations[]`.
 
@@ -696,14 +702,18 @@ CONSUME it — merely displaying an open question is a failed postcondition:
   mailbox automates transport, not authority. Nothing needs to be told to the
   worker meanwhile: it has ended its turn and has no cap to outlive.
 - `HANDBACK`: run **Process codex handback** on the named file.
+- `STARTED`: the worker is up and bound. Consume it on sight, like an `ACK`.
+- `FIRE_FAILED`: the launcher refused and no worker exists. The body is
+  `<inbox>/fire-failed.log`, the launcher's own message. Fix the cause and
+  regenerate the packet; the fire window is held open for the operator.
 - `MAILBOX_WAITER_RENEW`: the waiter re-arming itself before the hook's timeout
   would kill it silently. Nothing arrived. End the turn.
 
 **Check the send.** `mb.py send --to worker` prints `RANG worker <id>` or a loud
 `RING_SKIPPED <reason>` and exits 3 on the latter: the block IS in the file and
 only the doorbell failed. `no bound session` means the worker never ran
-`bind-session`; `worker is completed/failed/exited` means there is nobody to
-ring — read the handback instead; anything else quotes `codex`'s own stderr.
+`bind-session`; anything else quotes `codex`'s own stderr — the ring consults
+no lifecycle, because a `completed` worker's window is still open and rung.
 Do not resend the block: fix the reason, then ring once by hand with
 `codex queue --thread <id> --message "MAILBOX <n> <path>"`.
 

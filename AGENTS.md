@@ -38,7 +38,12 @@ Do not bulk-read the catalog or treat a skill's trigger as authorization to act.
   rule 33). Read the block with `mb.py read <path> <n>`, send one `ACK` block
   before any other tool call, then act on the block. Never edit or delete
   `mailbox.md`. The worker rings nobody: `codex queue` fails from inside the
-  sandbox, and the orchestrator is woken by its own harness.
+  sandbox, and the orchestrator is woken by its own harness. These rules bind
+  the packet's MAIN session only. If you are a spawned sub-agent, none of this
+  is yours: never send to a mailbox (`mb.py` refuses a caller that is not the
+  bound session), never bind a session, and return what you found to the agent
+  that spawned you. If you spawn one, use `fork_turns` `"none"` and a task
+  message that names no mailbox.
 - For Codex-to-Codex mailbox events, read
   `threads/references/codex-mailbox-doorbell.md`. Write content to the mailbox
   first; the notification contains only an event and path. The intended session
