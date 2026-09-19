@@ -14,7 +14,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 LAUNCHER = HERE / "launch_codex_worker.py"
-WATCHER = HERE / "watch_codex_worker_launch.py"
 SCHEMA = HERE.parent / "assets" / "schemas" / "codex-worker-state.schema.json"
 EMITTER = HERE / "emit_codex_launch_packet.py"
 
@@ -217,7 +216,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertIn("not schema-valid", state["events"][-1]["detail"])
         self.assert_schema_valid(state)
 
-    def test_duplicate_live_worker_is_refused_and_watcher_rings_once(self) -> None:
+    def test_duplicate_live_worker_is_refused(self) -> None:
         first = subprocess.Popen(
             self.command(), cwd=self.repo, env=self.environment(FAKE_SLEEP="30"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -230,13 +229,7 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         )
         self.assertEqual(bind.returncode, 0, bind.stderr)
         self.assertEqual(self.read_state()["session_id"], "test-session-id")
-        watch = subprocess.run(
-            [sys.executable, str(WATCHER), "--inbox", str(self.inbox),
-             "--timeout-seconds", "2", "--interval-seconds", "0.02"],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(watch.returncode, 0, watch.stderr)
-        self.assertEqual(watch.stdout.strip(), f"WORKER_LAUNCHED {self.inbox / 'worker-state.json'}")
+        self.assertIn("WORKER_LAUNCHED", [row["event"] for row in self.read_state()["events"]])
 
         duplicate = subprocess.run(
             self.command(), cwd=self.repo, env=self.environment(),
@@ -293,19 +286,13 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertEqual(validate.returncode, 2)
         self.assertIn("not schema-valid", validate.stderr)
 
-    def test_watcher_preserves_fast_launch_event_after_exit(self) -> None:
+    def test_a_fast_exit_keeps_its_launch_event_in_the_record(self) -> None:
         first = subprocess.run(
             self.command(), cwd=self.repo, env=self.environment(),
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(first.returncode, 0, first.stderr)
-        watch = subprocess.run(
-            [sys.executable, str(WATCHER), "--inbox", str(self.inbox),
-             "--timeout-seconds", "2", "--interval-seconds", "0.02"],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(watch.returncode, 0, watch.stderr)
-        self.assertEqual(watch.stdout.strip(), f"WORKER_LAUNCHED {self.inbox / 'worker-state.json'}")
+        self.assertIn("WORKER_LAUNCHED", [row["event"] for row in self.read_state()["events"]])
 
     def test_emitter_builds_lifecycle_owning_launch_command(self) -> None:
         emitter = load_module(EMITTER, "emit_codex_launch_packet_test")

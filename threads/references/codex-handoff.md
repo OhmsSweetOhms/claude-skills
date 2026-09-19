@@ -731,37 +731,32 @@ replayed the whole file.
 **Purpose:** automate the transport of the stop-on-ambiguity rule.
 When a running Codex session hits an architecture/contract decision
 the plan/ADRs/golden vectors do not pin, it must not infer through it
-— it writes a question file into the inbox and blocks; the main
-session is woken by a background watcher, resolves (or escalates to
-the user), and writes the answer into the **same file**. No human
-copy-paste shuttle; both sides cap their wait at 1 hour so idle
-sessions don't burn tokens, and the timeout degrades to exactly the
-manual flow (question recorded as a blocker, handback
-`gate-incomplete`).
+— it writes a question file into the inbox, rings the orchestrator,
+and ends its turn; the orchestrator resolves (or escalates to the
+user), writes the answer into the **same file**, and rings back. No
+human copy-paste shuttle, and nothing on either side holds a wait: the
+asker is resumed by the answerer's doorbell, never by a timer.
 
 **Layout:** `<worktree>/codex-handoff/<plan-id>/questions/q-NN.md`,
 one file per question (NN sequential), scaffolded from
 `assets/templates/codex-question-template.md`. Frontmatter `status`
-is the state machine: `open → answered | escalated → answered`, or
-`open → timeout` (set by Codex at its cap). Question files are part
-of the session record — committed with the inbox; keep paths
-repo-relative (fingerprint discipline).
+is the state machine: `open → answered | escalated → answered`.
+Question files are part of the session record — committed with the
+inbox; keep paths repo-relative (fingerprint discipline).
 
-**Codex protocol** (stated in the launch packet's generic rule):
+**Asker's protocol** (a Codex worker under a Codex orchestrator; a
+Claude worker follows the doorbell rules below):
 
 1. Write `questions/q-NN.md` with `status: open`, the candidate
    readings, and the evidence for each. Do not proceed on an assumed
    reading.
-2. Put `await_codex_answer.sh <file> 3600` in a mailbox-job JSON contract,
-   launch it through `launch_codex_mailbox_job.py`, then end the model turn.
-   Never run the wait directly in a model-visible tool call. Exit 0 means
-   `answered` (read `## Resolution`, proceed);
-   `escalated` means a user decision is in flight. Do not use model-visible
-   `write_stdin` calls to watch the wait.
-3. On timeout (exit 3): set `status: timeout`, record the question as
-   a `blockers[]` entry AND an `investigations[]` entry, write the
-   handback (`gate-incomplete`/`blocked`), end the session.
-4. Every mailbox exchange — answered or not — is duplicated into the
+2. Ring `OPEN_QUESTION` through `ring_codex_mailbox.py`
+   (`references/codex-mailbox-doorbell.md`) and end the model turn.
+   The `ANSWER_READY` doorbell resumes the session: read `## Resolution`
+   and proceed. `escalated` means a user decision is in flight. There is
+   no wait to launch and no cap to reach — an unanswered question is
+   visible as `status: open` in the file and to the hook scan below.
+3. Every mailbox exchange — answered or not — is duplicated into the
    handback's `investigations[]`.
 
 **Doorbell transport (Claude↔Claude sessions, ruled 2026-08-17).**
@@ -778,23 +773,17 @@ exactly why the file stays the record. Rules, both legs:
   never travels in the message; history stays 100 % in the file.
 - Asker (a Claude worker): write `q-NN.md` (`status: open`, add
   `asked_by: <its ListAgents session name>`), ring the orchestrator,
-  then launch `await_codex_answer.sh` through the detached mailbox-job
-  supervisor and end the model turn. The await is the fallback, not the
-  transport, and never runs as a model-visible foreground wait.
-- Answerer: `## Resolution` body FIRST, `status` flip LAST (unchanged),
-  and the body must LAND: a Codex worker's later question files may carry
-  NO `## Resolution` heading at all — a writer that anchors on the heading
-  writes nothing while the status flip still persists; the await script
-  then (correctly) refuses the empty body and the worker times out into a
-  `gate-incomplete` handback (2026-09-05, plan-25 q-08…q-10). APPEND the
-  heading + body, flip status, then run `await_codex_answer.sh <file> 5 1`
-  and require exit 0 before any doorbell. To re-enter a Codex worker that
-  blocked on such a timeout, launch a short re-wait contract (the same
-  `await_codex_answer.sh <file> 60 5` under `codex-self`) — its
-  `JOB_TERMINAL` doorbell resumes the worker.
-  add `answered_by: <session name>`, then ring `ANSWERED <path>` (or
-  `ESCALATED <path>` so the worker knows a user decision is in flight
-  and does not time out into a blocker).
+  and end the model turn. The answerer's ring resumes it; the file is
+  the record if the ring is lost, and the hook scan below surfaces it.
+- Answerer: write through `answer_question.py` and nothing else — it
+  puts the `## Resolution` body and the `status` flip down in one
+  atomic replace, appends the heading when the file has none, and
+  refuses an empty body. Hand edits anchored on the heading wrote
+  nothing on files that carried no heading while the flip still
+  persisted, and the asker read "answered" over an empty body
+  (2026-09-05, plan-25 q-08…q-10). It stamps `answered_by` from `--by`;
+  then ring `ANSWERED <path>` (or `ESCALATED <path>` so the worker knows
+  a user decision is in flight).
 - Handback leg: the worker writes and commits the handback per the
   owning contract, then rings `HANDBACK <path>`. The orchestrator runs
   verify-before-accept on the FILE; the ring is only the wake.
@@ -851,12 +840,10 @@ load-bearing:
      (`~/.claude/hooks/mailbox-flip-guard.py`, Edit|Write) DENIES any
      hand edit that would produce `status: answered` on a `q-*.md`
      without a Resolution body, and prints the command above. Rationale
-     (kept for history): the two edits were not atomic and the Codex-side
-     `await_codex_answer.sh` keys on `status`, so a status-first edit
-     can be read as an "answered" question with an empty Resolution
-     body (observed twice, each burning a duplicate q-NN round trip;
-     the await script now also requires a non-empty body as a
-     backstop, but the write order is the real fix). Correct the
+     (kept for history): the two hand edits were not atomic and the
+     asker keys on `status`, so a status-first edit can be read as an
+     "answered" question with an empty Resolution body (observed twice,
+     each burning a duplicate q-NN round trip). Correct the
      plan/ADR in the same pass if the question exposed a drafting
      error (cite the commit in the resolution).
    - **`escalated`** — the question requires a NEW decision

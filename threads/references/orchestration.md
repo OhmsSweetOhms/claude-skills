@@ -167,6 +167,6 @@ Moved verbatim from that project's `CLAUDE.md` (2026-09-04).
 - **A Claude-session packet worker ends its turn on `OPEN_QUESTION` and
   does not resume when the answer file lands** — `ListAgents` and
   `SendMessage` it by name after `answer_question.py`, or it idles
-  (plan-16 lost ~4 h). The question watcher rings only on `q-NN.md`; poll
-  for `handback.json` separately; check every operator rider has a metric
-  key before accepting.
+  (plan-16 lost ~4 h). Its handback arrives the same way, as a
+  `HANDBACK <path>` ring; check every operator rider has a metric key
+  before accepting.
