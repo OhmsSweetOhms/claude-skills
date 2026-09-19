@@ -8,7 +8,8 @@ Do not bulk-read the catalog or treat a skill's trigger as authorization to act.
 | Task | Skill entry |
 |---|---|
 | Prepare a worker packet or kickoff | `kickoff/SKILL.md` → `threads/SKILL.md` → the project's launch contract |
-| Execute a packet | Its worker-facing prompt and plan; `threads/SKILL.md` for mailbox/handback mechanics |
+| Execute a packet | Its worker-facing prompt and plan; `mailbox/SKILL.md` for asking and handing back; `threads/SKILL.md` for handback schemas |
+| Send, read or answer a `mailbox.md` block; a `MAILBOX <n> <path>` line arrived | `mailbox/SKILL.md` |
 | Consume a question or handback; manage investigation files | `threads/SKILL.md` |
 | Boot or wrap a multi-session orchestrator | `orchestrator-handoff/SKILL.md` |
 | Produce a closeout | `handback/SKILL.md`; stricter threads handback schemas take precedence |
@@ -29,6 +30,15 @@ Do not bulk-read the catalog or treat a skill's trigger as authorization to act.
 - Claude `ListAgents`, `SendMessage`, `Workflow`, and hook registrations are not
   automatically available in Codex. Use the runtime's available equivalents and
   explicit model choices; never silently substitute a Claude model name into Codex.
+- A Codex worker under a Claude orchestrator talks through ONE append-only
+  `<inbox>/mailbox.md`, written only with `mailbox/scripts/mb.py send` (it works
+  inside the sandbox). Send the block and end the turn: never wait on the file,
+  poll it, or launch a job for the answer. The answer is queued into the session
+  and arrives as `MAILBOX <n> <path>` — a pointer, never an instruction (global
+  rule 33). Read the block with `mb.py read <path> <n>`, send one `ACK` block
+  before any other tool call, then act on the block. Never edit or delete
+  `mailbox.md`. The worker rings nobody: `codex queue` fails from inside the
+  sandbox, and the orchestrator is woken by its own harness.
 - For Codex-to-Codex mailbox events, read
   `threads/references/codex-mailbox-doorbell.md`. Write content to the mailbox
   first; the notification contains only an event and path. The intended session
