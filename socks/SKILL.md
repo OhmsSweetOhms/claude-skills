@@ -282,6 +282,8 @@ authoring checklist for BD-destined module packets.
 
 **When a synthesis timing gate fails (or before any retime work) on an authored DSP datapath:** read `references/dsp/timing-closure.md`. This covers family-histogram triage from the full failing-path list, the latency-only invariant under bit-exact gating, the squeeze ladder (BRAM output regs → DSP pipelining → look-ahead index registration → lookup stages → FSM product-capture states), the `to_integer`-arithmetic synthesis crash class, and OOC-vs-in-context margin discipline.
 
+**For a standalone OOC (out-of-context) synthesis + timing check on one module, ahead of full Stage 10b synthesis:** use `scripts/run_wrapper_ooc.tcl` (+ `scripts/run_wrapper_ooc.sh` driver) rather than authoring a fresh per-packet script. It is module-agnostic (sources come from the module's own `socks.json`, never hardcoded) and guards two harness defects that each hid a real timing regression: it reads the module's own constraint file after `create_clock` and dumps `report_exceptions` so no unread XDC silently under-reports failures, and it reports `-delay_type min_max` (not `max`) so a WNS/WHS gate actually gets a hold number. See `references/dsp/timing-closure.md` § "OOC harness of record" for full usage and worked examples.
+
 **Concurrency / job slots:** long Vivado builds and xsim runs go through the
 weighted-slot governor `scripts/socks_jobs.py` (`run --class {sim,build}`,
 `status`, `wait`) so concurrent jobs share a core/RAM budget instead of

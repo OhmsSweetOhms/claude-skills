@@ -136,3 +136,46 @@ emit `failing_paths.txt` when timing fails; a root-cause proposal must
 be consistent with the family histogram. If timing still fails after
 the directed fixes, hand back with the histogram — do not freelance
 another restructuring pass.
+
+## 7. OOC harness of record
+
+`scripts/run_wrapper_ooc.tcl` (+ `scripts/run_wrapper_ooc.sh` driver) is a
+generalized, module-agnostic OOC synthesis + timing harness for a single
+module. Reach for it before forking a fresh per-packet OOC script — a
+per-packet copy of the harness rots the moment the next packet copies an
+older one, which is exactly how it accumulated two defects that had each
+been hiding something before they were promoted here:
+
+1. **Read the module's own constraint file, AFTER `create_clock`.** An OOC
+   project that reads no XDC reports timing failures the full project
+   (which does apply the module's `constraints/*.xdc`) would not have — an
+   OOC envelope carrying LESS than production is worse than no OOC at all,
+   because the extra failures look real and cost a closure investigation to
+   discover the constraint set was the difference. `read_xdc` runs after
+   the clocks exist because same-clock exceptions (multicycle, false path)
+   resolve against clock objects. `report_exceptions` is dumped so "no
+   unexpected exception applies" is checkable, not asserted.
+2. **`report_timing_summary -delay_type min_max`, never `max`.** `max`
+   reports setup (WNS) only and produces no hold (WHS) number at all, while
+   any gate stated as "WNS/WHS >= 0" needs both. Hold on an unplaced OOC
+   netlist is not a release gate by itself (hold is dominated by routing;
+   the routed/implemented build is the timing authority) — but a bar that
+   names a number should get one.
+
+Sources are read from the module's own `socks.json` (`dut.sources`), never
+hardcoded in the script, so the harness cannot silently drift behind the
+module's real file list and synthesize a different design than the one the
+sim/vector gates proved. Invoke via the `.sh` driver (repo root, module dir,
+top entity, run root, clock spec, optional constraints/generics — see the
+`.tcl` header for full argument semantics and three worked examples drawn
+from the packets that used to carry their own copy):
+
+```
+scripts/run_wrapper_ooc.sh $WORKBASE/socks modules/<module> <top_entity> \
+  <run_root> "<clk_port>:<period_ns>[,<clk_port>:<period_ns>...]" \
+  [<constraints_csv>] [<generics_csv>]
+```
+
+Provenance: promoted from `build-day-3-fold` packet 4b's fold-setup-path OOC
+closure (gps_design), where both defects were found and fixed locally before
+being generalized here.
