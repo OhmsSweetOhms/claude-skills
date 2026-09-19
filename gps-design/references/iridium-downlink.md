@@ -3,13 +3,13 @@
 The Iridium signal-of-opportunity path: the on-air downlink structure, the
 reference decoder used as an acceptance oracle, our own burst detector and
 `PS.B<n>ir` receive chain, and the constellation/TLE work behind emitter
-identity. Everything below is a MEASURED fact; the dates are preserved as
-written. Live thread state lives in `.threads/`, not here, and the durable
-decision record is the ADR stores (`docs/decision-log.md`, the
-`ADR-PS-B3IR-*` per-block store).
+identity. Measured facts retain their dates and bounds; explicitly labelled
+proposals are not measurements. Live thread state lives in `.threads/`, not
+here, and the durable decision record is the ADR stores
+(`docs/decision-log.md`, the `ADR-PS-B3IR-*` per-block store).
 
-Moved verbatim from the project `CLAUDE.md` (2026-09-04). Original
-section opening:
+Originally extracted from the project `CLAUDE.md` (2026-09-04), then maintained
+against source and benchmark corrections. Original section opening:
 
 > Hard-won and re-derivation-costly. Live thread state lives in
 > `.threads/receiver/*iridium-receiver-golden/`, **not here**.
@@ -70,9 +70,21 @@ section opening:
 - **gr-iridium's time base is 439.07 ms behind the golden's** (its
   512-block priming); a median-of-nearest alignment reads ~0 and matches
   9.5 % — align by histogram peak under a ±3 kHz gate (92.7 %).
-- **The single-process golden is O(n²) in `merge_events`** — a 774 s tape
-  needs the sharded driver (64 shards, 2 s pad, equivalence self-tested);
-  the fix is a time-ordered break, owed.
+- **`merge_events` was O(n²) and the fix LANDED — do not shard on this
+  account any more** (`199cdad1`, 2026-08-27). The original rescanned the whole
+  merged list per raw event: ~2.1e10 comparisons and **~41 min of pure
+  bookkeeping** on the 773.94 s live-sky capture at ~236 detector events per
+  tape-second, which is one of the two reasons
+  `data/plan-08-evidence/scripts/run_golden_sharded.py` exists. `_PrefixMax`
+  carries `max(t_end_sample)` over the sorted merged list in O(log n) so the
+  reverse scan stops at the first unreachable position; the output is identical
+  **by construction**, not by test. Measured merge cost is now ~0.18 ms per
+  short probe. The sharded driver still exists and still has its OTHER reason,
+  but note its `run_shard` calls `measure_events` and therefore performs
+  acquisition and decoding — wrong vehicle for a detection-only pass.
+  **Detection-only full-record scan costs, measured 2026-09-11 on this capture:
+  float ~13–18 min serial; the fixed-point backend ~77 HOURS.** Select on float;
+  fixed point stays mandatory for any bit-exact gate.
 
 ## Detection, acquisition, and operating points
 
@@ -220,6 +232,131 @@ section opening:
   authority. Linear 24-bit clipping remains REJECTED: 22.5 dB statistic
   corruption at exact ΔP_d parity.
 
+## Bench runtime estimation — scale by REPLAY, never by SCORED duration
+
+- **The drain is a fixed cost and does not shrink with the scored window.** A
+  calibration that scores 8 ms while replaying 29.2 ms carries 21.2 ms of drain;
+  scaling the whole calibration by the scored ratio multiplies that fixed cost.
+  Measured on plan-36: the scored-basis formula predicted **14,644 s** against a
+  true **4,079 s** (the run landed at 3,672 s) — **3.6x high**, enough to close
+  a packet gate-incomplete against its own cap. Use
+  `calibration_simulation_seconds / calibration_replay_ms` as the rate.
+- Corollary worth keeping: **an integrated Iridium bench costs ~66 s per
+  replayed millisecond** on this host at the five-module desk top, and a
+  combined five-module OOC costs **~350-520 s**. Single-module OOC is 24-60 s.
+
+## Association across bursts — bounded facts
+
+- The earlier 24,242 Hz minimum and related separation percentiles compare
+  **absolute received carriers** averaged per decoded satellite. Iridium
+  satellites use different assigned RF channels, so those differences mix
+  channel assignment with Doppler. They do not prove unique same-channel
+  satellite separation, four-satellite subband separability, or a general
+  association margin. Do not use them to size a gate.
+- Channel-relative offsets also cannot be treated as continuous Doppler tracks;
+  they reset on channel handoff. Association must carry nominal channel,
+  absolute received frequency, time, uncertainty and identity provenance rather
+  than collapsing them into one separation statistic.
+- The deterministic IRA/ITL relationship remains useful within its measured
+  scope: 24 structurally paired rows placed IRA four channel widths above ITL,
+  within the stated ±300 Hz join tolerance. It is not a population-wide traffic
+  association proof.
+- IBC exposes `sat`, `cell`, `aq_sb` and `aq_ch` in the reference toolkit.
+  `aq_sb`/`aq_ch` describe acquisition assignments where a handset finds the
+  satellite; they are not a complete traffic-channel map or proof of a future
+  duplex schedule. The current receiver does not decode them. Any predictive
+  use needs a causal held-out measurement first.
+- Sharing one coarse output does **not** establish an RF collision. Output
+  centres are 160 kHz apart (about 3.8 Iridium raster spacings), with 320 kS/s
+  per output. Simultaneous signals can remain distinct carriers. Collision
+  classification requires measured spectral/time overlap under the receiver's
+  declared rule.
+- Association errors are correlated and self-concealing. Keep decoded,
+  geometry-matched and unresolved identity provenance distinct, preserve
+  competing hypotheses, and reject ambiguity rather than force-assigning it.
+
+## Capture pool and real-sky evidence — bounded current facts
+
+- Capture length is a **global** `cfg_samples_i` setting. The arm-to-sink command
+  carries valid/ready, slot, subband, block, epoch, token and first sample; it
+  carries no per-command length. A descriptor helper accepting `samples` does
+  not change that interface.
+- Buffers remain owned longer than capture slots in the measured model: 30.75 ms
+  versus 20.75 ms. Cost the two pools separately: an ideal service ceiling is
+  `min(slot_count / slot_hold_s, buffer_count / buffer_hold_s)`, before arrival
+  clustering, subband contention and PS limits. Increasing one pool only helps
+  until another resource becomes limiting; it does not establish system capacity.
+  Both modules currently assert `N <= 16`.
+- The corrected queueing check uses 32.6 declares per 90 ms frame against 34.7
+  nominal captures of capacity at eight slots, or about 0.94 offered
+  utilization. Erlang-B at that assumed load gives 20.75% blocking and points
+  toward 12–16 servers; it flags eight as undersized under those assumptions.
+  This analytic result is not production sizing because arrival independence,
+  per-subband eligibility, buffer holding, PS service and sustained target load
+  are not established together.
+- Do not use the old per-event 73-concurrency, 54.9/28.3/5.5/0.6% refusal curve,
+  or 102-event window maximum as fabric pool sizing. Those arrays count detector
+  events and omit the subband field needed to enforce one live capture per
+  subband. A physical per-subband demand peak cannot be reconstructed from them.
+- One retained 40 ms real-sky slice did saturate its instantiated resources:
+  eight of eight slots and sixteen of sixteen buffers, with 395
+  `ALREADY_ARMED` and 352 `ALL_SLOTS_BUSY` run decisions. The 763 run rows are
+  candidate/decision records, not 763 unique waveforms or a sustained-rate
+  measurement.
+- Duplex is the short 8.28 ms burst and simplex the long 20.32 ms burst. The
+  real slice remained bit-exact despite its lower converter loading. These facts
+  do not by themselves select a capture length or pool size.
+- IBC is duplex and carries `iri_time`; a design serving that observable cannot
+  simply stop all duplex reception. About one third of IBC block-1 variants
+  carry the clock, and the variant is known only after decoding.
+- A generated truth file embeds the source commit. Its byte hash is a commit
+  stamp as well as content authentication; do not require reproduction at a
+  different commit to match the old hash.
+
+## Plan-37 saved-buffer benchmark lessons
+
+The immutable pre-SADR diagnostic, retained inputs/results and portable verifier
+are archived under repo-root `iridium-SADR/pre-sadr-benchmark/`; start at
+`iridium-SADR/README.md`. They establish a comparison baseline only; they do not
+implement or qualify the proposed SADR design.
+
+- The coarse PFB output lattice advances 64 native samples. Its group-delay
+  centre is 767.5 native samples, while earliest FIR support is 1,535 samples
+  before the output endpoint. Stored channel I/Q is signed integer data divided
+  by the exact coefficient gain 64; preserve the original coordinate metadata.
+- A fixed detector tag is band-relative and needs the fixed implementation's
+  +4,032 FFT-bin origin. It is not the float detector bin. The measured 12,345
+  epoch offset and 532,480 floor-prime offset belong to this retained fixture;
+  they are not RTL constants.
+- The accepted census has 63 receiver-relative reference groups, 44 acquired.
+  Saved buffers matched 17 accepted and 14 acquired groups. One group is
+  strictly preserved, already in the trigger baseline, so net additional strict
+  preservation is zero. Reference decoded frames are zero.
+- Keep **accepted**, **acquired**, **decoded**, and **strictly preserved** as
+  separate levels. The 103 unmatched accepted saved rows, including 28
+  acquisition passes, remain unresolved. Nineteen reference groups have no
+  eligible pair and 110 reference rows lack full retained context; none of
+  these counts is automatically physical-burst truth or unusable RF.
+- Narrowing a timing/frequency search does not remove required preamble,
+  noise-reference, filter-support, payload or tail context. Restoration results
+  show leading and combined context matter, but they do not establish a universal
+  minimum look-back because context also changes noise estimation and the winner.
+- The full matrix made 5,231 new isolated consumer calls and completed in
+  2,971.598 s. Pilot process startup/exit was about 0.40–0.45 s around only
+  0.12–0.15 s of consumer work. That is host harness overhead, not PS throughput
+  or proof that a target processor keeps up.
+
+## Current SADR proposal boundary
+
+The proposed SADR architecture and specification live at
+`docs/architecture/iridium-sadr/`; its draft proof is the receiver thread's
+plan 38. Per satellite, duplex admission remains closed until an identified
+simplex track is causally valid. There is no pre-unlock recovery requirement.
+The proposal carries continuous 1.024 MS/s simplex data through DDR and measures
+held-out same-satellite carrier/UW-time residuals versus age with complete-work
+accounting. The proof is draft and unrun: no performance, pool-size, gate-width,
+track-lifetime, PS-throughput or implementation claim follows yet.
+
 ## Capture path: BRAM delay, arm-only recognition, subband DDR sink
 
 Earned by plan-31 Steps 0–4 (2026-09-08/09), measured in simulation. Lane
@@ -281,16 +418,27 @@ cache decision 72 holds the full numbers; this is the re-derivation-costly core.
   absolute sample counter must count the detector's **enabled valid edges** — a
   shared reset alone does not establish an epoch, and `A0 + b*8192` holds only
   in a loss-free one.
-- **Holding an arm slot until PS release makes slot occupancy dominated by PS
-  latency, not capture duration.** Measured: PS release 1 ms → 10 ms took peak
-  live slots 4 → 5. N sizing therefore carries a PS-latency term, not only an
-  arrival-rate term.
+- **Coupled-lifecycle lesson:** holding an arm slot until PS release made slot
+  occupancy depend on PS latency. In that earlier experiment, PS release
+  1 ms → 10 ms took peak live slots 4 → 5. The current decoupled lifecycle
+  releases the slot at capture retirement; PS service/release instead extends
+  buffer ownership. Apply the latency term to the pool that actually retains
+  ownership, not indiscriminately to capture-slot count.
 - **There is no UltraRAM on the xczu9eg** (912 BRAM36, 0 URAM). Do not offer
   URAM as a BRAM-relief option on this part.
 - **`PL_B1IR_DEPTH = 7` is empirical and was already swept** at fixed P_fa:
   depth 5 drops P_d at 45 dB-Hz from 0.992 to 0.827, failing the P_d ≥ 0.9 bar;
   depths 4 and 6 were never measured. Separately, 30 of the detector's 166
-  BRAM36 are recoverable bit-exact with no ADR amendment — the largest single
-  piece being 12 tiles from a seventh history row that exists only as a write
-  target, since only six rows are ever read and the read address already leads
-  the write by the RAM's 2-cycle latency. Recon only; nothing implemented.
+  BRAM36 were recoverable bit-exact with no ADR amendment: 19 tiles removed
+  (13 from an unread history row and six
+  from narrower history words) and 11 relocated (nine from FFT tails and two
+  from `rf_mem`). The read address already leads the write by the RAM's 2-cycle
+  latency. **All thirty LANDED
+  2026-09-10** (detector 166 → 136, bit-exact, no ADR amendment, no cycle
+  cost), and the five-module chain re-measured **166.5 BRAM36 / 76 DSP /
+  WNS +2.742 ns** on socks main 2026-09-11. Distributed RAM accounts for the
+  11 relocated tiles, not all 30 removed from the BRAM total. Combined LUT
+  rose 44,522 → 48,806 with 4,758
+  LUT-as-memory, and setup/hold endpoints grew **34 %** because LUTRAM and
+  SRL cells are timing endpoints where a BRAM is not — invisible at unplaced
+  OOC, and exactly the class of thing that bites at placement and routing.
