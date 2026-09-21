@@ -99,9 +99,11 @@ Same standard, applied inward — then two additions:
 - **Chat-only artifact sweep.** Launch prompts, rulings, escalation
   drafts, and analysis that exist only in the conversation get banked as
   files now or lost.
-- **Watch items.** End the dated session narrative with the specific
-  things the next orchestrator must verify or expect: unverified
-  transitions ("close authorized — confirm it executed"), expected
-  escalations, pending pushes/syncs, known coverage gaps. Watch items
-  encode your unfinished suspicions — they are the part of your judgment
-  that would otherwise die with the session.
+- **Watch items.** Write into your boot surface — your charter thread's
+  Current truth, its OPEN and NEXT bullets — the specific things the next
+  orchestrator must verify or expect: unverified transitions ("close
+  authorized — confirm it executed"), expected escalations, pending
+  pushes/syncs, known coverage gaps. Watch items encode your unfinished
+  suspicions — they are the part of your judgment that would otherwise die
+  with the session, so they go where the successor boots, never into the
+  dated narrative, which is history and on no boot path.

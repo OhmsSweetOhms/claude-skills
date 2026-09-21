@@ -38,9 +38,12 @@ One enum, applied to both **threads** (`thread.json.status`,
 | Status | Meaning |
 |---|---|
 | `active` | In progress. |
-| `blocked` | Awaiting external input (research, decision, hardware). |
+| `blocked` | Awaiting external input (research, decision, hardware) — **and the state of a plan that is drafted but not fired**: register its hop as `blocked`, with what it waits on (the operator's "fire", a ruling, another hop) in `notes`. |
 | `superseded` | Replaced by a successor (thread: successor thread; plan hop: next plan hop in the same thread). |
 | `closed` | Done. The `outcome` field carries the substance (resolution, inconclusive completion, or refutation). |
+
+A drafted plan always gets a hop. There is no `drafted` status (the indexer rejects it),
+and a plan file with no hop is invisible to every registry poll.
 
 Don't invent new status values. If you need to distinguish
 "resolved with a clear answer" from "ran to completion but
@@ -84,17 +87,50 @@ in a thread falls into exactly one class:
 top-line banner** pointing to its successor (`> SUPERSEDED by findings-YYYY-MM-DD-…`)
 — a forward-pointer only, exactly like an ADR supersession. The body stays frozen.
 
-**Enforcement.** Beyond convention, a **pre-commit guard** mechanically enforces the
-immutable + append-only classes across *all* committers (Claude, Codex, you):
-`scripts/check_record_discipline.py` rejects any staged diff that removes/edits a
-`findings-*.md` body (only a leading `> SUPERSEDED by …` banner may be added) or that
-edits/deletes a past Session-log entry (prepending a new entry, and editing the
-Current-truth block above the header, stay allowed). It no-ops on commits with no
-`.threads/` artifacts. Install once by dropping a `pre-commit` hook (in `.git/hooks/`
-or your `core.hooksPath` dir) that runs the script; override a specific commit with
-`git commit --no-verify` (the committer's explicit choice). The guard **channels**
-back-editing to the one sanctioned place (the Current-truth block) and now **blocks**
-the destructive kind rather than relying only on `git blame` + review.
+**Enforcement.** Beyond convention, a **pre-commit guard** mechanically enforces all
+three classes across *all* committers (Claude, Codex, you).
+`scripts/check_record_discipline.py` rejects a staged diff that:
+
+- removes or edits a `findings-*.md` body (only a leading `> SUPERSEDED by …` banner
+  may be added);
+- edits or deletes a past Session-log entry (prepending a new entry stays allowed);
+- touches a `handoff.md` whose `## Current truth` section is over **8,192 B** without
+  making that section smaller than HEAD's — or creates a handoff whose block is already
+  over. Only that section is measured (its heading to the next `## `), never the other
+  sections an owner keeps above the Session log. While a block is over the bound,
+  **every** commit to its handoff must shrink it, including one that only adds a
+  Session-log entry or another session's ORCHESTRATOR NOTE: the owner shrinks the block
+  first. The bound is a no-growth bound: nothing crosses it, and nothing touches a block
+  already over it without shrinking it;
+- adds a `START HERE`, `READ THIS FIRST` or `supersedes … below` line to an
+  `ORCHESTRATOR-CACHE*.md` (a second whiteboard on top of the first);
+- grows a file the project lists in `.threads/record-discipline.json` past its
+  `max_bytes`, or touches one already over without shrinking it. The list is explicit
+  and the project's own — a lane whose cache has not been filtered is simply not on it.
+  An entry may leave one `## ` section out of the measure (`excluding_section`: a
+  cache's decisions in force, which gain a line with every ruling) and hold it to its
+  form instead: a line added there is one numbered `<NNN>. **ruling sentence** (who,
+  date)` line of at most `entry_line_max_bytes` — the full entry goes in the registry.
+  Or an entry may measure ONLY listed `## ` sections, summed (`only_sections`: the
+  sections of a lane charter that its resume protocol reads at boot), leaving the rest
+  of the file free to grow;
+- edits a `SESSION-HANDOFF-*.md` narrative after creation (except adding the pinned
+  banner), or creates one without the pinned banner in its first ten lines, exactly:
+  `> Immutable session narrative — history, not a boot surface.`
+
+It no-ops on commits with no `.threads/` artifacts and no listed file. A clean `git merge` never runs the
+hook; on the one commit that concludes a conflicted merge (`MERGE_HEAD` present) the
+Current-truth, size-bound, cache and narrative checks are switched off — you are importing the other
+branch's pages as they are — while the findings and Session-log checks stay on, because
+a healthy merge only adds pages and they catch a resolution that tore some out.
+`git merge --squash` sets no `MERGE_HEAD`, so every check runs: squash-merging
+`.threads/` is not supported. `--range <revs>` dry-runs the checks over committed
+history and only reports. Install once by dropping a `pre-commit` hook (in
+`.git/hooks/` or your `core.hooksPath` dir) that runs the script; override a specific
+commit with `git commit --no-verify` (the committer's explicit choice). The guard
+**channels** back-editing to the one sanctioned place (the Current-truth block), keeps
+that place bounded, and **blocks** the destructive kind rather than relying only on
+`git blame` + review.
 
 **The "RULED OUT" line is load-bearing.** Keep refuted dead-ends visible (one-liner +
 why) in the Current-truth block — deletion loses the "don't re-run this" signal that
@@ -106,8 +142,14 @@ thread's Current-truth, plans, findings, or `thread.json` it doesn't own; its si
 sanctioned write is an **append-only, clearly attributed Session-log entry**
 (`### <date> — ORCHESTRATOR NOTE: <topic>`) carrying directives/context decided above
 the thread — never a restatement of the thread's own status. Committed by explicit
-path only (concurrent sessions). Full pattern (coordinator/charter threads,
-orchestrator cache, concurrency hygiene): threads skill `references/orchestration.md`.
+path only (concurrent sessions). If that thread's Current truth is over the bound, the
+guard refuses the note until the owner shrinks the block — a non-owner may not do it for
+them. **One exception: a lane orchestrator that closes a hop in a thread with no live
+owner session** (it emitted, fired and verified that hop's packet) overwrites that
+thread's Current truth in the closing commit and says so, attributed, in the Session-log
+entry it prepends — otherwise the block every cold session reads goes stale behind a
+stack of notes. Full pattern (coordinator/charter threads, orchestrator cache, concurrency
+hygiene): threads skill `references/orchestration.md`.
 
 ---
 

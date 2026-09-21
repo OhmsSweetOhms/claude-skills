@@ -223,26 +223,36 @@ deserves its own plan rather than appending to the current one.
    to reference the previous hop.
 8. Update the thread's `README.md` "Plan lineage" table — add the
    new row, update the previous row's status/outcome.
-9. **Update `handoff.md`** — the forward-looking sections reference
-   the old plan by name and go stale immediately:
+9. **Run Promote facts, then update `handoff.md`** — the closed hop's
+   facts leave first (**Promote facts** below), then the forward-looking
+   block is rewritten, because it references the old plan by name and
+   goes stale immediately:
    - Bump the `**Last updated:**` line to today.
-   - Rewrite the `**Active plan:**` bullet in "Current state" to
-     point at the new hop's filename + current hypothesis + anchor
-     data (if any).
-   - Re-check `**Blockers / in flight:**` and `**Confirmed-green
-     baseline:**`. Drop anything that was specific to the closed
-     hop; add anything new the new hop introduces.
-   - Replace `**What the next session should do first:**` with the
-     new hop's first steps (not the old hop's). If the new plan
-     has a "Steps" section, derive the next-session items from it.
-     Prefer cheapest-first ordering so a cold-start reader has a
-     low-friction entry.
-   - Update "Cross-references to carry forward" — add the new
-     plan's anchor data files, new diagnostics dirs, any new
-     reference docs the hop introduced.
+   - **Overwrite** the `## Current truth` block — never append to it —
+     against the new hop, bullet by bullet as the handoff template
+     (`assets/templates/thread-handoff.md`) defines them:
+     - `**Focus:**` — the new hop's filename, its hypothesis or first
+       step, and anchor data if any.
+     - `**PROVED:**` — live proved claims, each with its evidence
+       pointer (findings / commit / capture). A claim the closed hop
+       finished with goes to findings, not here.
+     - `**OPEN:**` — live competing hypotheses and the experiment that
+       decides between them; unsettled suspicions.
+     - `**NEXT:**` — the new hop's first steps, not the old hop's.
+       Derive them from the new plan's Steps section, cheapest first,
+       so a cold-start reader has a low-friction entry.
+     - `**Baseline (green):**` — what is green now, with suite,
+       pass/fail and timestamp; drop what was specific to the closed
+       hop.
+     - `**RULED OUT (do not re-run):**` — keep it current; add what the
+       closed hop refuted, as one-liners.
+     The block stays within **8,192 B**: the pre-commit guard refuses a
+     block over that bound unless the commit shrinks it, so a block
+     that is already over must shrink in this very commit.
    - Update "Reading order for a cold start" — point at the new
-     active plan file; demote the closed hop to a "retains recipe
-     value only" slot if still useful, or drop if not.
+     active plan file and the newest findings; demote the closed hop
+     to a "retains recipe value only" slot if still useful, or drop
+     it.
    - Append a **new Session-log entry at the top** describing the
      transition in prose: why the previous hop closed/superseded,
      what the new hop tests, what the key decision points are.
@@ -292,10 +302,14 @@ deserves its own plan rather than appending to the current one.
 - `thread.json.plan_hops[]` is in `num` order with one and only
   one `active`.
 - `thread.json.current_plan` matches the new active hop's filename.
-- `handoff.md`'s "Current state" bullet names the new plan file,
-  not the closed one.
-- `handoff.md`'s "What the next session should do first" reflects
-  the new hop's steps, not the closed hop's.
+- `handoff.md`'s `## Current truth` `**Focus:**` bullet names the new
+  plan file, not the closed one.
+- Its `**NEXT:**` bullet reflects the new hop's steps, not the closed
+  hop's.
+- The block is ≤ 8,192 B, or smaller than it was at HEAD (the
+  pre-commit guard checks this).
+- Promote facts ran over the closed hop: each of its facts is in a
+  findings file and, if durable, proposed for its skill chapter.
 - **If the thread has an active codex worktree, the worktree branch
   and HEAD are unchanged** by this workflow (this is bookkeeping-only
   on `main`; source work happens in a separate codex session against
@@ -511,6 +525,62 @@ test class.
 
 ---
 
+## Promote facts
+
+**Trigger:** a plan hop is closing (called from **New plan hop** step
+9 and **Close thread** step 6), or a wrap is putting session-earned
+facts somewhere. Promote diagnostic moves a SCRIPT to where it runs
+forever; Promote facts moves a SENTENCE to where it is found on demand
+instead of read at every boot.
+
+**Why at hop close:** the findings are being written anyway and the
+context is fresh. Facts parked in a boot surface (a Current-truth
+block, an orchestrator cache, a project `CLAUDE.md`) are paid for by
+every future session's startup, and they accumulate: one program's
+startup reading grew to 604 KB this way.
+
+**The filter.** Ask of each line in the closing hop's findings and in
+the Current-truth block: **is it still true after the next hop
+closes?**
+
+| The line is | It goes to |
+|---|---|
+| a ruling | a decision entry or ADR, amended in place |
+| a mechanism, a trap, a measured number | the hop's `findings-*.md` first; then the owning skill reference chapter, under a "Hard-won facts" header (create one if the chapter has none), with a provenance line naming the thread |
+| a hop result | `findings-*.md` and the hop's `outcome` in `thread.json` |
+| position, in-flight work, next move, bench state, a suspicion | Current truth — overwritten, and it expires into git |
+| already written somewhere | nowhere new: delete it **after reading both sides sentence by sentence**; at most a one-line pointer stays |
+
+**Steps:**
+
+1. List the candidate lines: the closing hop's findings, and the
+   Current-truth bullets that will not survive the rewrite.
+2. Classify each with the filter. A cheap read-only agent (Sonnet or
+   Haiku) may do this and PROPOSE the insertions — chapter, location,
+   exact text — but the owning session approves every one; the agent
+   never writes to a skill.
+3. Before a line leaves a boot surface, find each of its SENTENCES at
+   the destination. A token hit is not evidence: a key name present in
+   a chapter is not the lesson about that key. Record the comparison
+   in the hop's findings.
+4. **Scrub before a skill chapter.** Skill repositories may be public.
+   Fingerprint-scan the text and grep it for surveyed coordinates, unit
+   serials, hostnames, usernames and absolute paths; a fact carrying any
+   of them goes in as the lesson only, and the data stays in the
+   project.
+5. Insert into the chapter (read the chapter in full first), commit the
+   skill change, then remove the line from the boot surface in the
+   project commit. A fact is never at zero homes in between: it may sit
+   in two for a while, never in none.
+
+**Verification:**
+- Every line removed from a boot surface is found at its destination,
+  sentence by sentence, and the findings say where.
+- No skill insertion carries a fingerprint hit.
+- The Current-truth block after the rewrite holds only present state.
+
+---
+
 ## Close thread
 
 **Trigger:** investigation is complete (or supersded by another
@@ -536,17 +606,25 @@ thread, or blocked indefinitely).
 4. Update `<threads-path>/threads.json`: find this thread's entry,
    update `status` and `updated`.
 5. Update the thread's `README.md` status header.
-6. **Update `handoff.md`** — it was pointing at an active plan that
-   no longer exists:
+6. **Run Promote facts, then update `handoff.md`** — the thread's
+   durable facts leave first (**Promote facts** below; for a closing
+   thread this is the last chance), then the block that pointed at an
+   active plan is rewritten:
    - Bump the `**Last updated:**` line to today.
-   - Rewrite the `**Active plan:**` bullet to reflect closure
-     (e.g. `"(none — thread closed YYYY-MM-DD)"` with a pointer
-     to the final findings snapshot and the thread's outcome).
-   - Shorten or remove `**What the next session should do first:**`
-     — for a closed thread this is either empty, or points at
-     downstream threads that consumed the outcome. For a
-     `superseded` thread, name the successor thread explicitly.
-     For `blocked`, name the blocker + what unblocks it.
+   - **Overwrite** the `## Current truth` block against the closure,
+     using the template's bullets:
+     - `**Focus:**` — the closure itself, e.g. `(none — thread closed
+       YYYY-MM-DD)`, with a pointer to the final findings snapshot and
+       the thread's outcome.
+     - `**PROVED:**` / `**RULED OUT (do not re-run):**` — what the
+       thread established and refuted, as one-liners with evidence
+       pointers; the detail lives in findings.
+     - `**OPEN:**` and `**NEXT:**` — for a `closed` thread, empty or
+       pointing at the downstream threads that consumed the outcome;
+       for `superseded`, name the successor thread explicitly; for
+       `blocked`, name the blocker and what unblocks it.
+     - `**Baseline (green):**` — the last green state, or drop it.
+     The block stays within 8,192 B, or shrinks (the pre-commit guard).
    - Simplify "Reading order for a cold start" — the reader is
      consulting the thread as history, not to continue work.
      Point them at the final findings snapshot and the outcome
@@ -556,9 +634,8 @@ thread, or blocked indefinitely).
      where follow-up work (if any) lives. Include the closure
      commit hash. Preserve older session-log entries as history.
    - Flush any skill friction this thread surfaced into the session
-     skill tracker (SKILL.md §"Session-skill tracker"), and check
-     whether the thread produced durable domain knowledge a project
-     skill reference should now cover — update it or log the gap.
+     skill tracker (SKILL.md §"Session-skill tracker"). Durable domain
+     knowledge the thread produced was handled by Promote facts above.
 7. Don't delete the thread directory in this workflow — Close
    leaves the directory in place as the live record. Working-tree
    deletion is a separate, audited operation; see **Retire thread**
@@ -569,8 +646,11 @@ thread, or blocked indefinitely).
 **Verification:**
 - `thread.json.status` and `threads.json.threads[].status` agree.
 - The active plan hop's `outcome` is filled.
-- `handoff.md` no longer names a plan as "active" — it either
-  reflects closure, names a successor, or describes the blocker.
+- `handoff.md` no longer names a plan as "active" — its Current-truth
+  `**Focus:**` either reflects closure, names a successor, or
+  describes the blocker.
+- Promote facts ran: every durable fact of the thread is in a findings
+  file and, where it belongs in a skill chapter, proposed there.
 
 ---
 

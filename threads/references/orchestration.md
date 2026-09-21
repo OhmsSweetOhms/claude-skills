@@ -15,7 +15,11 @@ against one checkout, without stepping on each other.
   coordinator is a worker whose deliverable is other threads.
 - **Orchestrator session** — supervises the program. Owns no worker
   thread. Reads everywhere; writes only (a) its own artifacts (cache,
-  session-handoff records), (b) ORCHESTRATOR NOTES (below).
+  session-handoff records), (b) ORCHESTRATOR NOTES (below), and (c) when
+  its launch prompt names one, the `## Current truth` block of its
+  campaign's charter thread — its own boot surface, overwritten at wrap
+  (orchestrator-handoff `references/wrap-protocol.md` step 1). A cache is
+  never that surface.
 
 ## The ownership rule (extends Record discipline)
 
@@ -38,6 +42,16 @@ cross-session write is the **ORCHESTRATOR NOTE**:
 The existing pre-commit record-discipline guard already permits this
 (prepending Session-log entries is allowed); the ownership rule is
 what makes it safe.
+
+**One exception — a hop closed in a thread with no live owner.** A lane
+orchestrator emits, fires and verifies packets in worker threads that no
+session owns between packets. When it closes such a hop it overwrites
+that thread's Current truth to present state in the closing commit
+(Promote facts first, as any hop close), and says so, attributed, in the
+Session-log entry it prepends. A note alone leaves the block every cold
+session reads describing the hop as it stood before the fire. It still
+never touches a thread that has a live owner session, and it still never
+edits that thread's findings.
 
 ## Coordination (charter) threads
 
@@ -80,8 +94,10 @@ rules, in tension order:
 4. **Updated in place, same commit as the change it reflects** (a
    decision lands → its cache line lands with it). History in git.
    Dated `SESSION-HANDOFF-*.md` files remain immutable per-session
-   records; the cache supersedes them as the resume surface and each
-   handoff gets a superseded-as-resume-surface banner.
+   records and are on no boot path; each carries, in its first ten
+   lines, exactly `> Immutable session narrative — history, not a boot
+   surface.` The pre-commit guard refuses a new one without it and any
+   edit of one after its commit (adding that banner line excepted).
 
 ## Concurrency hygiene (all sessions, all the time)
 
@@ -140,8 +156,8 @@ If the operator wants periodic visibility, an orchestrator-side loop may read
 the branch tip, governor state and mailbox locally and report them without
 asking or waking the worker. Unchanged state never creates a worker turn.
 When no compatible doorbell exists, the terminal result remains authoritative
-and the operator resumes the worker manually. `REPLY_READY` still ends any
-orchestrator-side status display.
+and the operator resumes the worker manually. The packet's `HANDBACK` block
+ends any orchestrator-side status display.
 
 Three files own three different facts; never merge them into prose or duplicate
 their fields:

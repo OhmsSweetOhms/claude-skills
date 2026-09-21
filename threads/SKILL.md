@@ -179,6 +179,7 @@ section in `references/workflows.md`:
 | "Register this diagnostic" / "track diagnose_*.py in thread.json" | **Register diagnostic** |
 | "Import Codex/claude.ai/colleague feedback" / "add external comment" | **Import external review** |
 | "Promote this diagnostic to a test" / "it's a regression gate now" | **Promote diagnostic** |
+| "Promote facts" / "where does this fact go" / a hop is closing and its findings or Current truth hold facts / a wrap is placing session-earned facts | **Promote facts** |
 | "Close the thread" / "mark thread as done" | **Close thread** |
 | "Retire closed threads" / "audit and delete closed thread directories" / "clean up the working tree" / "garbage-collect closed threads" | **Retire thread** |
 | "Thread status" / "thread review" / "what's blocked" / "/threads --review" / triage stale threads as a batch | **Status review** |
@@ -331,7 +332,13 @@ seed the union of the non-derived blocks (`closure_log`,
   findings file; a dead one may gain only a `> SUPERSEDED by …`
   banner). `scripts/check_record_discipline.py`, wired as a pre-commit
   hook, **blocks** commits that edit a findings body or a past
-  Session-log entry. Don't bypass it with `--no-verify` without a
+  Session-log entry, push a `## Current truth` section past 8,192 B (or
+  touch a handoff whose block is already over without shrinking it — even
+  a Session-log-only commit), add a `START HERE`-class
+  marker to an orchestrator cache, grow a boot file the project lists in
+  `.threads/record-discipline.json` past its bound, or edit a `SESSION-HANDOFF` narrative /
+  create one without its pinned banner (template §Enforcement has the
+  exact rules). Don't bypass it with `--no-verify` without a
   reason — it is catching exactly the back-edit that poisons threads.
 
 ## Sanity checks before acting

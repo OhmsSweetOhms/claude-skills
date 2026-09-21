@@ -17,11 +17,25 @@ the survivable failure.
 ## The order
 
 **1. Overwrite the boot surface FIRST (current-truth / state block).**
+Your boot surface is a thread's `## Current truth` block, and which one
+depends on your role:
+
+- a **worker** or **coordinator**: the Current truth of the thread you own;
+- a **campaign or lane orchestrator**: the Current truth of your charter
+  thread — your launch prompt names it;
+- **never an orchestrator cache.** A cache holds pointers and decisions,
+  never status; a ruling enters it in the commit that makes the ruling,
+  not at wrap.
+
 Full rewrite to present state: what is DONE (with commits), what is
-ACTIVE, what is next, what rulings landed. Delete every claim that
-describes the past ("X is pending" when X shipped). Update the file's
-header/date metadata in the same edit. If you write nothing else before
-dying, this was the right thing to have written.
+ACTIVE, what is next, which rulings landed (pointing at where each one is
+recorded), and your **watch items** — what the successor must verify or
+expect, the suspicions you have not settled and how to settle them.
+Delete every claim that describes the past ("X is pending" when X
+shipped). Update the file's header/date metadata in the same edit. Keep
+the block within its bound (8,192 B; the threads pre-commit guard refuses
+one that grows past it). If you write nothing else before dying, this was
+the right thing to have written.
 
 **2. Capture in-flight work explicitly.**
 Anything running or unprocessed — recons, subagents, background jobs,
@@ -35,11 +49,18 @@ One line: what of yours is uncommitted, or "nothing of mine — all
 committed (last: <hash>)". The successor cannot tell your intentional
 working tree from another session's debris without this.
 
-**4. Then the wrap narrative (session-log entry).**
-The story: what happened, what was decided, evidence pointers. Point it
-AT the boot surface ("Current-truth above is current as of this wrap"),
-never the reverse — the narrative is backfill, the boot surface is the
-product.
+**4. Then the wrap narrative (session-log entry, or a dated `SESSION-HANDOFF-*.md`).**
+History only. Its allowed content: what happened; what was decided, with
+commits; what the session got wrong; evidence pointers. Nothing
+forward-looking — next moves and watch items went into the boot surface
+in step 1, and a narrative is on no one's boot path. Point it AT the boot
+surface ("Current-truth is current as of this wrap"), never the reverse.
+A `SESSION-HANDOFF-*.md` file carries, in its first ten lines, exactly:
+
+    > Immutable session narrative — history, not a boot surface.
+
+and is never edited after its commit; the threads pre-commit guard refuses
+a new one without that line and any later edit of one.
 
 **5. Leave the successor pointer.**
 Where the next session starts: the boot surface, the active plan, and —
@@ -47,14 +68,19 @@ if one exists — the banked launch prompt. If you have budget left, draft
 the launch prompt yourself (see `launch-prompt-template.md`); you know
 the mechanics better than anyone who will audit you.
 
-**6. Fold session-earned facts into the durable knowledge surfaces.**
-Before the final commit, update the project/worktree `CLAUDE.md` (or the
-project's equivalent hard-won-facts surface) with anything this session
-PROVED that a future agent would otherwise re-derive at board/build
-cost: mechanisms, gotchas, diagnosis patterns, retired approaches. Facts
-that live only in findings files get found; facts that live only in the
-transcript die. Scrub any claims the session refuted (live docs
-reference current state).
+**6. Put session-earned facts where they are found, not where they are read every boot.**
+Before the final commit, write anything this session PROVED that a future
+agent would otherwise re-derive at board/build cost — mechanisms, gotchas,
+diagnosis patterns, measured numbers, retired approaches — into the hop's
+`findings-*.md`. From there each fact reaches the owning **skill reference
+chapter** when the hop closes (the threads skill's **Promote facts**
+workflow), where a session loads it on demand. The project `CLAUDE.md` —
+and any file every session reads at startup — gets at most a one-line
+pointer, never the fact itself: a fact written there is paid for by every
+future boot (one program's `CLAUDE.md` regrew 45 KB of facts in 16 days
+this way). Facts that live only in findings files get found; facts that
+live only in the transcript die. Scrub any claims the session refuted
+(live docs reference current state).
 
 **6a. Reconcile the work-order surfaces your boot protocol points at.**
 The cache is not the only thing a cold successor reads. Walk your own

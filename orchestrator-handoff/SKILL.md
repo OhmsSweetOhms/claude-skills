@@ -31,15 +31,19 @@ else is transcript, and transcripts don't survive.
    live status. Template: `references/cache-template.md`.
 2. **Dated immutable session narratives** (e.g.
    `SESSION-HANDOFF-<date>-<slug>.md`) — one per orchestrator session,
-   written at wrap, never edited after. Backfill only; the cache must be
-   sufficient without them.
+   written at wrap, never edited after, carrying the pinned banner
+   (`references/wrap-protocol.md` step 4). History only and on no boot
+   path; the cache and the Current-truth blocks must be sufficient without
+   them.
 3. **Banked launch prompts** — every cold-boot prompt for a worker or
    successor session lives as a committed file, not only in chat.
    Template: `references/launch-prompt-template.md`.
 4. **Worker boot surfaces** — each worker's own current-truth block. The
    orchestrator doesn't own these but is responsible for AUDITING them at
    succession points, because a successor boots from them.
-   Checklist: `references/succession-audit.md`.
+   Checklist: `references/succession-audit.md`. A lane orchestrator's OWN
+   boot surface is the Current truth of its charter thread, which its
+   launch prompt names; it overwrites that block at wrap.
 
 ## Core rules (each earned the hard way)
 
@@ -133,14 +137,29 @@ because successors may run from different checkouts.
 
 ### You (any session) are running out of context
 
-Follow the ordered wrap protocol in `references/wrap-protocol.md`:
-**overwrite your boot surface FIRST, narrative second**, capture
-in-flight work, state uncommitted state, leave the successor pointer,
-commit. The order is survival-ranked — if you die mid-wrap, the boot
-surface is right and only the narrative is missing, which is the
-recoverable failure. This applies to workers and coordinators as much as
-orchestrators; it is the other half of the audit below, and doing it
-means the audit finds nothing.
+**Open `references/wrap-protocol.md` and follow it in full — do not wrap
+from this summary.** (A session that wrapped from an earlier, shorter
+summary skipped four steps.) Its steps, in order:
+
+1. Overwrite your boot surface FIRST — the Current truth of the thread you
+   own, or your charter thread's if you are a lane orchestrator; never a
+   cache. Watch items go here.
+2. Capture in-flight work, or write the explicit re-commission line.
+3. State what of yours is uncommitted.
+4. Write the narrative — history only, the pinned banner on a
+   `SESSION-HANDOFF` file, nothing forward-looking.
+5. Leave the successor pointer (boot surface, active plan, launch prompt).
+6. Put session-earned facts in the hop's findings (they reach skill
+   chapters at hop close) — never in a file every session reads at boot.
+6a. Reconcile every work-order surface your boot protocol points at.
+7. Commit, explicit paths.
+8. End with the USER's next moves, copy-paste-ready with absolute paths.
+
+The order is survival-ranked — if you die mid-wrap, the boot surface is
+right and only the narrative is missing, which is the recoverable failure.
+This applies to workers and coordinators as much as orchestrators; it is
+the other half of the audit below, and doing it means the audit finds
+nothing.
 
 ### A worker session wraps or dies
 
@@ -187,15 +206,22 @@ Run the self-audit — the same standard applied to workers, on yourself:
   cache was updated correctly all session while the playbook it pointed
   at still listed a capability as un-started that two closed packets had
   built and repaired that same day.)
-- Write the dated session narrative: what was decided and done (with
-  commit hashes), then **watch items** — the specific things the next
-  orchestrator must verify or expect (an unexecuted close, an expected
-  escalation, a pending push). Watch items are the highest-value part;
-  they encode your unfinished suspicions.
-- Fold session-earned facts into the durable knowledge surfaces (the
-  project/worktree CLAUDE.md hard-won facts): mechanisms proven,
-  approaches refuted, diagnosis patterns — anything a future agent
-  would re-derive at board/build cost. Scrub claims the session
+- Put your **watch items** in your boot surface — your charter thread's
+  Current truth (its OPEN and NEXT bullets) — not in the narrative: the
+  specific things the next orchestrator must verify or expect (an
+  unexecuted close, an expected escalation, a pending push). Watch items
+  are the highest-value part of a handoff; they encode your unfinished
+  suspicions, which is exactly why they belong on the surface a successor
+  boots from, and not in a narrative that is on no boot path.
+- Write the dated session narrative: what happened, what was decided and
+  done (with commit hashes), what the session got wrong, evidence
+  pointers. History only, with the pinned banner (`references/wrap-protocol.md`
+  step 4).
+- Put session-earned facts — mechanisms proven, approaches refuted,
+  diagnosis patterns, anything a future agent would re-derive at
+  board/build cost — into the hop's findings; they reach the owning skill
+  reference chapter at hop close (threads **Promote facts**). The project
+  `CLAUDE.md` gets at most a one-line pointer. Scrub claims the session
   refuted.
 - Commit everything, explicit paths, in as few commits as coherent.
   On shared checkouts, check `git diff --cached --name-only` first — a

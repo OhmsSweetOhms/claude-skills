@@ -47,25 +47,30 @@ INSTEAD of bulk reading.
 <!-- List the dated SESSION-HANDOFF files, newest last, each with a
      three-word scope note. -->
 
-## Decisions in force (stable until explicitly changed)
+## Decisions in force (full text: <threads-path>/DECISIONS.md, same number)
 
-<!-- Numbered list. Numbers are append-only addresses — never renumber
-     or reuse (other docs cite them). Each entry: the ruling AS WORDS
-     (never as an option-letter — labels collide across documents),
-     who decided (user vs orchestrator) and when, one line of why, and
-     provenance pointers. When a decision is superseded or completed,
-     amend it in place with the update rather than deleting.
+<!-- ONE LINE per decision in force: `NNN. **<the ruling sentence, as
+     words>** (<who: user or orchestrator>, <date>)`. The full entry —
+     the ruling as words (never as an option-letter — labels collide
+     across documents), who decided and when, one line of why, and
+     provenance pointers — lives in the program's decisions registry
+     (`<threads-path>/DECISIONS.md`), under the same number, in one
+     address space shared by every lane. Numbers are append-only
+     addresses — never renumber or reuse (other docs cite them). When a
+     decision is superseded or completed, amend the registry entry in
+     place with a dated note and the line here to match.
 
-     Include one entry that IS the decision ladder: which decision
+     Include one line that IS the decision ladder: which decision
      classes are reserved for the user, which are orchestrator remit.
      Successors inherit the boundary instead of guessing it. -->
 
 ## Update rule
 
 Add/adjust a pointer or decision the moment it lands, in the same
-commit as the change it reflects. Never add status lines ("X is
-running/paused") — that class of fact lives in handoffs and the
-registry only.
+commit as the change it reflects: a new ruling is appended in full to
+the decisions registry and gets its one line here, in that one commit.
+Never add status lines ("X is running/paused") — that class of fact
+lives in handoffs and the registry only.
 ```
 
 ## Maintenance rules

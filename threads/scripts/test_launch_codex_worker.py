@@ -383,30 +383,53 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         From the installed skill the portable forms are kept."""
         emitter = load_module(EMITTER, "emit_codex_launch_packet_localize_test")
         # A packet names two skills now: the worker runs `mailbox`'s mb.py and
-        # `threads`' launcher, and BOTH must come from the checkout under trial.
+        # `threads`' launcher, and BOTH come from the checkout under trial when
+        # it supplies both.
         text = ('python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" and '
                 '~/.claude/skills/threads/references/x.md')
         here = str(HERE.parent)
-        root = str(HERE.parent.parent)
         if emitter.SKILL_DIR == emitter.LIVE_SKILL_DIR.resolve():
             self.assertEqual(emitter.localize(text), text)
         else:
-            out = emitter.localize(text)
-            self.assertIn(f'"{root}/mailbox/scripts/mb.py"', out)
-            self.assertIn(f"{here}/references/x.md", out)
-            self.assertNotIn(".claude/skills/", out.replace(root, ""))
+            self.assertIn(f"{here}/references/x.md", emitter.localize(text))
         emitter.SKILL_DIR = emitter.LIVE_SKILL_DIR.resolve()       # as if installed
         self.assertEqual(emitter.localize(text), text)
-        emitter.SKILL_DIR = Path("/somewhere/else/threads")        # as if a worktree
-        out = emitter.localize(text)
-        self.assertIn('"/somewhere/else/mailbox/scripts/mb.py"', out)
-        self.assertIn("/somewhere/else/threads/references/x.md", out)
-        command = emitter.build_worker_launch_command(
-            handback_inbox=Path("/worktree/codex-handoff/plan-x"), thread_id="a/b", plan_id="plan-x",
-            branch="b", base_sha="0123456", codex_model="m", reasoning_effort="low",
-            auto_compact_token_limit=1, turn1_file=Path("/worktree/codex-handoff/plan-x/turn1.md"),
-        )
-        self.assertIn("/somewhere/else/threads/scripts/launch_codex_worker.py", command)
+        with tempfile.TemporaryDirectory() as tmp:                 # as if a skills-repo worktree
+            root = Path(tmp).resolve()
+            (root / "threads").mkdir()
+            (root / "mailbox").mkdir()
+            emitter.SKILL_DIR = root / "threads"
+            out = emitter.localize(text)
+            self.assertIn(f'"{root}/mailbox/scripts/mb.py"', out)
+            self.assertIn(f"{root}/threads/references/x.md", out)
+            self.assertNotIn(".claude/skills/", out.replace(str(root), ""))
+            command = emitter.build_worker_launch_command(
+                handback_inbox=Path("/worktree/codex-handoff/plan-x"), thread_id="a/b", plan_id="plan-x",
+                branch="b", base_sha="0123456", codex_model="m", reasoning_effort="low",
+                auto_compact_token_limit=1, turn1_file=Path("/worktree/codex-handoff/plan-x/turn1.md"),
+            )
+            self.assertIn(f"{root}/threads/scripts/launch_codex_worker.py", command)
+
+    def test_a_renamed_single_skill_copy_rewrites_only_what_exists(self) -> None:
+        """A trial may be ONE skill copied under another name (`threads-next`
+        beside no `mailbox`). Its packet names the copy for the threads skill and
+        keeps the installed path for a skill the trial does not supply — never a
+        `threads/` or `mailbox/` directory that is not there (it killed every
+        script path of a real packet, 2026-09-21)."""
+        emitter = load_module(EMITTER, "emit_codex_launch_packet_renamed_copy_test")
+        text = ('python3 "$HOME/.claude/skills/mailbox/scripts/mb.py" and '
+                '~/.claude/skills/threads/scripts/fire_codex_worker.py and '
+                '$HOME/.claude/skills/fingerprint/fingerprint_scan.py')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "threads-next").mkdir()
+            emitter.SKILL_DIR = root / "threads-next"
+            out = emitter.localize(text)
+            self.assertIn(f"{root}/threads-next/scripts/fire_codex_worker.py", out)
+            self.assertIn('"$HOME/.claude/skills/mailbox/scripts/mb.py"', out)
+            self.assertIn("$HOME/.claude/skills/fingerprint/fingerprint_scan.py", out)
+            self.assertNotIn(f"{root}/threads/", out)
+            self.assertNotIn(f"{root}/mailbox/", out)
 
     def test_staged_env_file_sources_cleanly_under_errexit_without_an_envrc(self) -> None:
         """fire.sh runs `set -euo pipefail` then sources env.sh. A worktree with no

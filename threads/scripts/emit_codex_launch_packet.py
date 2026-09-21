@@ -389,9 +389,9 @@ def write_fire_script(
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 LIVE_SKILL_DIR = Path.home() / ".claude" / "skills" / "threads"
-# The skills ROOT, not this one skill: an emitted packet names `threads` AND
-# `mailbox`, and a checkout under trial has to supply both from itself.
-LIVE_SKILLS_ROOT_FORMS = ("$HOME/.claude/skills", "~/.claude/skills")
+# An emitted packet names `threads` AND `mailbox`. A path is matched skill by
+# skill, not by the skills root, because a trial may supply only some of them.
+LIVE_SKILL_PATH_RE = re.compile(r"(?:\$HOME|~)/\.claude/skills/([\w.-]+)")
 
 
 def localize(text: str) -> str:
@@ -400,12 +400,24 @@ def localize(text: str) -> str:
     right and the text is returned unchanged. From any other checkout — a
     branch worktree under trial — a packet that named the installed skill would
     run the installed scripts against the branch's rules, so the paths become
-    this checkout's absolute path (the inbox is host-local and gitignored)."""
+    this checkout's absolute path (the inbox is host-local and gitignored).
+
+    Only what exists is rewritten. The threads skill becomes SKILL_DIR itself,
+    whatever that directory is called (a trial copy may be renamed); any other
+    skill becomes its sibling there only if the trial supplies one, and keeps
+    the installed path otherwise. Rewriting by the skills root alone sent a
+    renamed single-skill copy's packet to `threads/` and `mailbox/` directories
+    that did not exist (2026-09-21)."""
     if SKILL_DIR == LIVE_SKILL_DIR.resolve():
         return text
-    for form in LIVE_SKILLS_ROOT_FORMS:
-        text = text.replace(form, str(SKILL_DIR.parent))
-    return text
+
+    def here(match: re.Match) -> str:
+        if match.group(1) == LIVE_SKILL_DIR.name:
+            return str(SKILL_DIR)
+        sibling = SKILL_DIR.parent / match.group(1)
+        return str(sibling) if sibling.is_dir() else match.group(0)
+
+    return LIVE_SKILL_PATH_RE.sub(here, text)
 
 
 TURN1_NAME = "turn1.md"   # the launch command names it before it is written
