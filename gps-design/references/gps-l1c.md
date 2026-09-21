@@ -362,3 +362,19 @@ Verbatim, moved 2026-09-04.
   separability guarantee (`FOLD_N_MAX` is the silicon dependency). An 18 s
   anchor slip is invisible to the consumer by construction; containment is
   the producer's 3σ tripwire + a HOW-TOW cross-check.
+
+## Two deferred gaps (moved from the project CLAUDE.md, 2026-09-20)
+
+Verbatim, from its §Deferred Gaps (plan-01 Step 3b of
+`cross-cutting/20260920-orchestrator-context-diet`). The clip's L1C half is §3 above;
+the bullet adds that it is still a gap for the C/A path.
+
+- Frequency error clipping — **implemented for L1C**: a ±40 Hz FLL
+  frequency-error clip, profile-wired via `receiver-block-profiles.json`;
+  it rejects the ±100 Hz cross-dot alias captures at the 10 ms L1C epoch.
+  Still a gap for the C/A path.
+- CNAV-2 L1C-D nav message (IS-GPS-800) — generator synthesizes L1C-D
+  with no message content (`l1cd_data_bits=None`); the samplemajor
+  kernel's data-lane bit-modulation hook is landed and tested inert,
+  so adding CNAV-2 is message generation/encoding + data wiring, not
+  kernel rework. Operator ruling: "an oversight, needs to be added".

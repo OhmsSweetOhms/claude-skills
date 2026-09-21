@@ -52,6 +52,42 @@ phase-error inputs but adds the newly updated acceleration state directly to
 the velocity state. This is not a cascade of trapezoidal updates for every
 state. Do not change the measured algorithm merely to match a transform label.
 
+### The full-receiver table (moved from the project `CLAUDE.md`, 2026-09-20)
+
+Verbatim, moved on 2026-09-20 (plan-01 Step 3b of
+`cross-cutting/20260920-orchestrator-context-diet`). It covers every block, where the
+table above covers the C/A tracking chain, and it words some rows more narrowly (PL.B2's
+same-row second peak, PS.B5's aiding factor, PS.B9's PLI). The scoping sentence above
+the first table, and §Candidate improvements below, govern how far the survey's
+agreement reaches.
+
+The receiver topology (algorithms, variants, methods) is fixed across
+all profiles. These choices are backed by consensus across 6
+implementations (GNSS-SDR, PocketSDR, SoftGNSS, sturdr, GNSS-DSP-tools,
+gps-walkthrough) extracted in Sessions A/B/C.
+
+| Block | Fixed Choice | Provenance |
+|-------|-------------|------------|
+| PL.B1 | Dynamic MSB select, 12→4 bit | Majoral thesis; Hegarty 2011 |
+| PL.B2 | PCPS (FFT), peak1/peak2 detection — second peak searched within peak1's Doppler row only | GNSS-SDR (`first_vs_second_peak_statistic`); universal |
+| PL.B3 | 32-bit NCO, 3-tap E/P/L, 1 kHz dump | gps-fpga, GNSS-SDR, PMC |
+| PS.B4 | Normalized E-L envelope: (|E|-|L|)/(|E|+|L|) | **Unanimous** 6/6 |
+| PS.B5 | 2nd-order, ζ=0.707, carrier-aided (SF=1/1540) | GNSS-SDR, Kaplan |
+| PS.B6 | atan(Q/I) Costas | **Unanimous** 6/6 |
+| PS.B7 | 3rd-order PLL, FLL-assisted hard switch | GNSS-SDR, sturdr, Kaplan |
+| PS.B8 | Cross-dot atan2 FLL discriminator | PocketSDR, Foucras 2014 |
+| PS.B9 | M2M4 C/N0, PLI cos(2φ) lock detect | GNSS-SDR (code-verified) |
+| PS.TLM | Telemetry decoder: consolidated bit-sync + preamble sync + TLM/HOW + parity + SF1/2/3 ephemeris decode. Replaces the legacy PS.B10 + PS.B10a + PS.B11 chain (runtime); those standalone files survive only to support nav_gen round-trip tests. | GNSS-SDR `bit_synchronizer.cc` + `gps_l1_ca_telemetry_decoder_gs.cc` pattern |
+| PS.B12 | WLS + Cholesky iterative PVT solver, clock-bias state | Kaplan Ch.2; scipy `linalg.cholesky` (golden model only — firmware port uses `math.h`) |
+| PS.B12a | Residual-based RAIM: weighted chi-square global test (p=0.001 thresholds) + single-SV exclusion FDE retest | RAIM residual-screening standard practice; `gps_receiver/blocks/ps_b12a_raim.py` |
+| PS.B13 | Per-channel SV-transmit-time interpolator, anchored to HOW TOW via PS.TLM cursor | SoftGNSS `tracking.m:331` pattern |
+
+Only tuning parameters (bandwidths, spacings, thresholds) vary across
+profiles. See `receiver-block-profiles.json`.
+
+See `.research/ps-b8-to-ps-b7-integration-robustness.md` for the
+decision constraint and gap questions.
+
 ## Tracking State Machine
 
 ```
@@ -218,6 +254,14 @@ Verbatim, moved from gps_design's project `CLAUDE.md` §Durable facts on 2026-09
   against the F9P's 0.5 m on the same antenna.
 - **Recorded correlator outputs cannot rank tracking-loop settings; only a closed-loop re-run on the raw IQ can (measured 2026-09-14).** The prompt I/Q a run records already contain THAT run's NCO phase, so feeding them to a different loop filter never changes the next input — every variant reproduces the base statistics by construction. Re-correlating the raw tape with each variant's own NCO is the experiment.
 - **The live-sky tape's carrier wobble is a shared receiver-clock-class slow phase term that a 5 Hz locked PLL cannot follow (tape plan-06, decision 185).** Hundreds of degrees of slow input phase on the strong PRNs, same-sign correlated 0.80–0.99 across satellites (ionospheric scintillation is per satellite, so it is not the ionosphere); the loop error at 5 Hz was ~33°. Holding 18 Hz in LOCKED takes it to ~5° with full lock coverage, and edge-handling fixes (bumpless narrowing, zeroing the acceleration integrator) do nothing. The tape was recorded 72 min after boot (0.44 Hz/s drift before it), warm but not settled; no specific oscillator is identified. Synthesis models no receiver clock, so a synthetic control can only show this term's absence (follow-on registered). Weak synthetic satellites below `open_sky`'s ~37 dB-Hz floor cycle lock and can wander in pull-in without returning to acquisition (follow-on registered).
+
+- **Bit-exact C ports of the Python goldens mirror numpy's PAIRWISE
+  summation (measured 2026-09-10).** `np.mean`/`np.sum` are a plain loop
+  below eight elements and a balanced tree of eight partial accumulators at
+  or above; a naive windowed sum in C leaves ~1 ULP in every PS.B9 mean.
+  The R5_1 port reached zero relative error over 6518 vectors only after
+  mirroring it; the A53 nav port will hit the same class. Firmware-internal
+  loop state stays `double` (decision 159 binds boundary records only).
 
 ## Candidate improvements require current evidence
 

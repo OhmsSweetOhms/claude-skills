@@ -69,6 +69,7 @@ in the order the data flows through.
 | ZCU102 acquisition appliance | `references/zcu102-acquisition-appliance.md` | Current | Hard-won measured facts for the ZCU102 appliance: bit-select windows and rail levels, the acquisition daemon (bring-up, code-lib, arming, credibility), engine artefacts (dark-rail lag-0 declares, the L5 coherent fold on silicon), recording/replay/bulk-pull, board clock and per-boot reference offset, vector freezing and gating. **Read before any board leg, daemon change, replay or recording work.** |
 | Iridium downlink | `references/iridium-downlink.md` | Current | Hard-won measured facts for the Iridium SoOP path: band split and what is in the clear, the gr-iridium/iridium-toolkit reference decoder as an acceptance oracle and its traps, detection/acquisition operating points and P_fa discipline, `iri_time` as the only clear-text clock, constellation/TLE plane-slot derivation, blind tracking, `PL.B1ir` detector RTL. **Read before any Iridium receiver, detector, or constellation work.** |
 | Common SDF FFT core | `references/common-sdf-fft-core.md` | Current | Hard-won measured facts for the shared radix-2² SDF FFT core: mandatory generics and the elaboration trap, `OUT_WIDTH` growth bound, frame serialization/cadence, fixed-N pruning, channelizer FIR DSP cost, detector golden floor prime, measured RTL resource rows, frozen-bundle and witness lessons. **Read before instantiating, re-parameterizing, or costing the core.** |
+| Program and spec stack | `references/program-and-spec-stack.md` | Current | Moved verbatim from the project `CLAUDE.md` (2026-09-20): the receiver's substrate/PL shape, the seven structural pipeline layers, and the JSON spec stack's newer tree and file roles, CLI surface (`--mode` / `--scenario-root` / `--set`), scenario-orchestration module ownership, the editing rules §Invariants below does not carry (one clock per scenario, `schema_version` per file), and the loaders & walkers table. Read before changing how a scenario is loaded, overridden or split across `gps_scenario*.py`. |
 | Ingesting a foreign capture | `references/ingesting-foreign-iq.md` | Current | Rare one-off: land an **outside-source** raw IQ capture (foreign rate / bits / layout / center) on our 4.096 (or 49.152) rail and run the receiver/analysis on it. `read_iq_raw` → `to_receiver_rail` (exact-rational `resample_poly`, optional `f_shift_hz`) → cold-start `GPSReceiver` → C/N0 / `compare_rails` / `detect_interference`. Uncalibrated-amplitude + onset-detector + don't-commit-raw-IQ caveats. NOT for our own captures (those choose a clean rate → on-rail `.iq16`). |
 
 For project-wide thread state across all active work, the
@@ -199,6 +200,10 @@ tracking-mode-profiles.json        thin-pointer registry ("test this scenario")
   `receiver-block-profiles` are **receiver tuning** the scenario binds
   below it. The scenario is the hub, not either profile file.
 
+The CLI surface, the module ownership across `gps_scenario*.py`, the loaders
+table, the remaining editing rules, and a newer tree and file table (moved from
+the project `CLAUDE.md` 2026-09-20) are in `references/program-and-spec-stack.md`.
+
 ### Visualizing & regenerating the spec stack (HTML atlas)
 
 `docs/json-structure/index.html` is a browser view of the spec stack —
@@ -314,10 +319,45 @@ Key sessions:
 | session-20260405-170000 (C) | All | Cross-implementation synthesis |
 | session-20260414-132039 | Anchor timing | SoftGNSS preamble-position anchor; IS-GPS-200 TOW convention |
 | session-20260704-080759 | Acquisition | Leclere FFT-acquisition corpus (re-banked; the original session-20260322-142449 is missing on disk) + the 204800-pt L1C PCPS architecture trade (x8/25 -> 2^16, BOC(1,1)-only replica) |
+| `session-20260407-141454` | IQ gen | Research-backed IQ impairment and mode profile parameters |
+| `session-20260412-115500` | PS.B12 | PVT solver: PS vs HLS trade-off, rate per profile, RTKLIB pattern |
+| `GPS-SV-velocity-and-acceleration.pdf` | PS.B12 | Thompson 2019 ICWG paper — SV position/velocity/acceleration from broadcast ephemeris |
+| `tracking-sensitivity-analysis.md` | All | 3-profile 30s tracking tests, NBPW fragility (on what actually gates lock, see the next row), bootstrap-first integration, cislunar gap analysis |
+| `implementation-findings.md` | All | Discoveries not in reference implementations: NBPW nav-bit fragility (real but secondary — the binding lock gate is the carrier PLI; see the file's dated correction note), lenient lock rationale, FLL blend trade-off, downstream risks, applications |
+| `ps-b8-to-ps-b7-integration-robustness.md` | PS.B7-B8 | FLL-to-PLL integration robustness constraints |
 
 Per CLAUDE.md preference: **scan local `.research/` directories before
 external queries.** Many questions have already been investigated; the
 answers are in those directories, not elsewhere.
+
+The six rows after `session-20260704-080759` above, and the two tables below, were
+moved verbatim from the project `CLAUDE.md` on 2026-09-20 (plan-01 Step 3b of
+`cross-cutting/20260920-orchestrator-context-diet`). Not moved: its row listing
+`session-20260322-142449` upstream, which the Acquisition row above records as missing
+on disk. The upstream directory is relative to the gps_design checkout and was absent
+on the workstation on 2026-09-20; read the tables as where the sessions and clones
+were recorded, not as a check that they are present.
+
+### Upstream sessions (`../../research/.research/`)
+
+| Session | Topic | Key Content |
+|---------|-------|-------------|
+| `session-20260328-203606` | Cislunar GPS on FPGA | AGGA-4, LuGRE, weak-signal |
+| `session-20260328-222755` | Python GPS IQ generation | GNSS-DSP-tools, gps-sdr-sim |
+| `session-20260329-095505` | AD9361 signal chain | Majoral thesis, GNSS-SDR params |
+| `session-20260330-231528` | FPGA VHDL implementation | GNSS-VHDL PRN generators |
+
+### Cloned repos (reference code)
+
+| Repo | Location | License | Used For |
+|------|----------|---------|----------|
+| GNSS-DSP-tools | `session-20260328-222755/repos/` | MIT | C/A code gen, acquisition, tracking, IQ I/O |
+| gps-walkthrough | `session-20260328-222755/repos/` | — | Complete Python GPS receiver, validation |
+| python-gps-receiver | `session-20260328-222755/repos/` | GPL-3.0 | Nav message decoder |
+| gps-fpga | `session-20260329-095505/repos/` | MIT | SystemVerilog correlator + AXI4-Lite |
+| GNSS-VHDL | `session-20260330-231528/repos/` | — | Pure VHDL PRN code generators |
+| gps-sdr-sim | `session-20260328-222755/repos/` | MIT | Nav message encoder |
+| gps_sim | `session-20260330-231528/repos/` | MIT | FPGA-internal GPS signal synthesizer |
 
 ---
 
@@ -349,6 +389,18 @@ project includes multiple substrates and deployment stages.
 - **Transport:** use the endpoint defined by the selected deployment. The
   Linux acquisition daemon and earlier lwIP firmware are distinct servers;
   do not infer a transport or firmware load route from the generic skill.
+- **ADR pointers (moved from the project `CLAUDE.md` 2026-09-20; each ADR in
+  `docs/decision-log.md` holds the ruling's full text):** ADR-022 graceful
+  re-acquisition after sustained loss of lock (extends ADR-009) — read before
+  changing loss-of-lock handling; ADR-023 the dual-rate L1C scenario receiver;
+  ADR-024 L1C cold-start aided acquisition as `GPSReceiver` policy; ADR-029 the
+  acquisition sample rate per band; ADR-031 the reference-clock offset, no NTP
+  aiding ever — read before touching a record producer; ADR-034 ISR discipline —
+  read before any firmware change on a tick path. The substrate: ADR-001 and
+  ADR-007 (the active profile and the rate ladder), ADR-002 (Tx aggregation in
+  Python), ADR-004 (the wideband-substrate split), ADR-006 (the quad-band
+  groundwork), ADR-011 as amended by ADR-012 (the PS partition and the PS.RX
+  control plane).
 
 ---
 

@@ -826,3 +826,55 @@ the bullet here adds the 2026-09-13 re-find.
   estimate points over 9,617 s. **A null from an instrument is not a measurement
   until the key is verified**, and note the servo proves nothing either way: a
   least-squares fit runs through noise declares as readily as through satellites.
+
+## Host live display — the SDRangel spectrum transport (moved 2026-09-20)
+
+Verbatim, moved from the project `CLAUDE.md` §Key Architecture Decisions → "Host live
+display (SDRangel spectrum transport)" on 2026-09-20 (thread
+`cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3b). Homed here because
+the display is a sink on the capture pipe this chapter already covers (§Recording,
+capture rails, and pulls).
+
+Durable facts from the SDRangel-server host-display work (per-band spectra
+to a host over 1 GbE; a custom 5-band viewer lives in
+`gps_design/spectrum_viewer/`). These are hard-won and re-derivation-costly;
+**live thread state lives in `.threads/cross-cutting/*sdrangel-host-perchannel-sigmf/`,
+not here.**
+
+- **Live host display is spectrum-only — raw IQ never crosses ethernet**
+  (user hard requirement). The host receives per-band FFT frames; full-rate
+  IQ stays on NVMe.
+- **An unthrottled FFT spectrum stream is NOT cheaper than raw IQ on the
+  wire** — it is ~4 bytes/sample (one float32 per input sample), the same
+  order as ci16 IQ (~655 Mbps for a 20.48 MSPS band). The link-budget win of
+  "send spectrum, not IQ" only materializes with a **time-domain fps
+  throttle** (a display needs ~20 fps, not `sample_rate/fftSize`). Do not
+  assume spectrum-only auto-fits a link budget.
+- **Stock headless SDRangel has no such throttle** — `fpsPeriodMs` is
+  GUI-repaint-only and doesn't instantiate headless. Our SDRangel fork
+  carries a small `sdrbase/dsp/spectrumvis.{cpp,h}` FORK PATCH that honors
+  `fpsPeriodMs` on the `WSSpectrum` path (upstreamable; the setting was
+  already REST-plumbed, only the consumer was missing).
+- **Per-band live IQ reaches SDRangel via a Linux `ring_fanout` shim**
+  (`CRP1` capture ring → per-band `UDMAIQ1` mmap rings), homed in the socks
+  capture tree — **not** a "smart plugin" that parses `CRP1` directly. This
+  keeps the `CRP1` capture contract socks-internal (a public-fork plugin
+  parsing it would make every producer-contract change a cross-repo break)
+  and reuses `ring_drain`'s HW-proven coherency instead of re-porting it.
+  The shim is one de-interleave engine with pluggable sinks (ring = live,
+  file = the born-per-channel/SigMF writer). Spec:
+  `.threads/cross-cutting/*sdrangel-host-perchannel-sigmf/design-ring-fanout-spec.md`.
+- **The capture side channelizes into 4 bands** (`ADC_BAND_L5/L2/L1/IRID`;
+  **Iridium CF 1621.200 MHz** since 2026-07-23 — see ADR-006, amended in
+  place; the former 1619.28 MHz survives only in pre-retune captures, which
+  replay **+1.92 MHz high** because the TX FDUC moved with the RX FDDC).
+  **Recording and live display are TWO SINKS ON ONE PIPE, not two features
+  (2026-09-12, decision 169):** `ring_fanout` reads the CRP1 capture ring and its
+  sink vtable serves the file sink (per-band SigMF) and the ring sink (the
+  UDMAIQ1 mmap rings SDRangel displays) from ONE writer thread per rail. So an
+  image without the capture rails has neither — disabling recording does not
+  preserve the display, because the display was never independent of it.
+  SDRangel's "1 fast + 4 slow = 5" feeds are real:
+  the 4 slow are the channelized bands; the "RF Wideband (fast)" tile is the
+  full-rate `CAPTURE_ROLE_FAST` ring (a real capture rail, single-band mask),
+  not one of the 4 channelized bands and not synthesized.
