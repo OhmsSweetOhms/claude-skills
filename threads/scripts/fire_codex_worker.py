@@ -34,7 +34,13 @@ import sys
 from pathlib import Path
 
 SKILLS_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(SKILLS_ROOT / "mailbox" / "scripts"))
+# The mailbox skill beside this checkout when the checkout supplies one (a skills-repo
+# worktree under trial), the installed one otherwise. A trial may be ONE skill copied
+# under another name, with no sibling: it could not import `mb` at all (2026-09-21).
+MAILBOX_SCRIPTS = SKILLS_ROOT / "mailbox" / "scripts"
+if not MAILBOX_SCRIPTS.is_dir():
+    MAILBOX_SCRIPTS = Path.home() / ".claude" / "skills" / "mailbox" / "scripts"
+sys.path.insert(0, str(MAILBOX_SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mb  # noqa: E402
 from launch_codex_worker import LaunchError, existing_worker_is_live, read_state  # noqa: E402

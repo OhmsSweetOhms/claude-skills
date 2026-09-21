@@ -19,6 +19,8 @@ HERE = Path(__file__).resolve().parent
 FIRE = HERE / "fire_codex_worker.py"
 LAUNCHER = HERE / "launch_codex_worker.py"
 MB = HERE.parent.parent / "mailbox" / "scripts" / "mb.py"
+if not MB.is_file():                  # a renamed single-skill trial copy has no sibling
+    MB = Path.home() / ".claude" / "skills" / "mailbox" / "scripts" / "mb.py"
 sys.path.insert(0, str(MB.parent))
 sys.path.insert(0, str(HERE))
 import mb  # noqa: E402
@@ -225,6 +227,24 @@ class FireOnPrivateTmux(unittest.TestCase):
         self.assertTrue((self.inbox / "fire.sh").exists())
         self.assertEqual(self._tmux("list-windows", "-a", "-F", "#{window_id}"), before)
         self.assertFalse((self.inbox / "worker-state.json").exists())
+
+
+class RenamedSingleSkillCopy(unittest.TestCase):
+    """A trial may be ONE skill copied under another name, with no `mailbox/` beside it.
+    The fire script must still import `mb` — from the installed mailbox skill — instead
+    of dying at import (`No module named 'mb'`, 2026-09-21)."""
+
+    def test_the_fire_script_imports_from_a_copy_with_no_sibling_mailbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "threads-next" / "scripts"
+            copy.mkdir(parents=True)
+            for name in ("fire_codex_worker.py", "launch_codex_worker.py"):
+                shutil.copy(HERE / name, copy / name)
+            self.assertFalse((Path(tmp) / "mailbox").exists())
+            run = subprocess.run([sys.executable, str(copy / "fire_codex_worker.py"), "--help"],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertNotIn("No module named", run.stderr)
 
 
 if __name__ == "__main__":

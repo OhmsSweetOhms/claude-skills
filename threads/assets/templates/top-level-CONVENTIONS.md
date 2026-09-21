@@ -148,7 +148,8 @@ them. **One exception: a lane orchestrator that closes a hop in a thread with no
 owner session** (it emitted, fired and verified that hop's packet) overwrites that
 thread's Current truth in the closing commit and says so, attributed, in the Session-log
 entry it prepends — otherwise the block every cold session reads goes stale behind a
-stack of notes. Full pattern (coordinator/charter threads, orchestrator cache, concurrency
+stack of notes. In such a thread it also writes, attributed, the `thread.json` hop rows,
+the plans and the kickoffs of the packets it emits; never its findings. Full pattern (coordinator/charter threads, orchestrator cache, concurrency
 hygiene): threads skill `references/orchestration.md`.
 
 ---

@@ -49,9 +49,12 @@ session owns between packets. When it closes such a hop it overwrites
 that thread's Current truth to present state in the closing commit
 (Promote facts first, as any hop close), and says so, attributed, in the
 Session-log entry it prepends. A note alone leaves the block every cold
-session reads describing the hop as it stood before the fire. It still
-never touches a thread that has a live owner session, and it still never
-edits that thread's findings.
+session reads describing the hop as it stood before the fire. For the
+same reason it writes, attributed, the `thread.json` hop rows, the plans
+and the kickoffs of the packets it emits in such a thread — emitting,
+firing and closing a packet cannot be done without them. It still never
+touches a thread that has a live owner session, and it still never edits
+that thread's findings.
 
 ## Coordination (charter) threads
 
