@@ -188,6 +188,37 @@ PS.B9 window: a plain loop below eight elements, a balanced tree of eight
 partial accumulators at or above) — a naive windowed sum leaves ~1 ULP in
 every mean.
 
+## Hard-won facts
+
+Verbatim, moved from gps_design's project `CLAUDE.md` §Durable facts on 2026-09-20
+(thread `cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3).
+
+- **The lock detector on real RF (measured 2026-09-11, the first recorded
+  tape through the golden — `receiver/20260911-golden-tape-replay`).**
+  PS.B9's `carrier_lock_pli` (a windowed cos 2φ) and `lock_indicator`
+  (NBPW with signed sums) are two different statistics over the same sliding
+  20-epoch window; at the 1 ms epoch the window straddles a nav-bit edge in
+  19 of 20 positions and the NBPW collapses on the straddle — in synthesis
+  too, so the generator is not the difference. **The cause of the once-a-
+  second `LOCKED → PULL_IN` re-entries was the carrier-PLI term inside the
+  lock-HOLD test**, not the straddle: earning a lock and holding one are now
+  different tests, the NBPW is a GLRT over the one transition a 1 ms window
+  can contain (rectification's noise-only floor, 0.638, sits ABOVE the 0.6
+  lock floor and was disqualified). **Two traps banked:** a 1 Hz-decimated
+  telemetry column samples exactly one phase of a 20 ms (50 nav-bit) sawtooth
+  — plan-01's per-PRN indicator medians of 0.06 were that alias, the true
+  medians were 0.79–0.99 (never diagnose a 1 kHz statistic from a 1 Hz
+  series); and **the N-ms weak-signal lever had only ever activated because
+  the broken indicator kept channels out of `LOCKED`** long enough for its
+  bootstrap timeout to expire — the activation is repaired (runs from
+  `LOCKED`, its clock frozen in `PULL_IN` and reset only by a new seed) and
+  the R5 port must mirror it. With the detector fixed, the binding limit on
+  decode is PS.B7's carrier phase wander (3–10° at LOCKED entry → ~40° in
+  300 ms, C/N0-independent): 444 fixes in 306 s, but 15–23 m horizontal
+  against the F9P's 0.5 m on the same antenna.
+- **Recorded correlator outputs cannot rank tracking-loop settings; only a closed-loop re-run on the raw IQ can (measured 2026-09-14).** The prompt I/Q a run records already contain THAT run's NCO phase, so feeding them to a different loop filter never changes the next input — every variant reproduces the base statistics by construction. Re-correlating the raw tape with each variant's own NCO is the experiment.
+- **The live-sky tape's carrier wobble is a shared receiver-clock-class slow phase term that a 5 Hz locked PLL cannot follow (tape plan-06, decision 185).** Hundreds of degrees of slow input phase on the strong PRNs, same-sign correlated 0.80–0.99 across satellites (ionospheric scintillation is per satellite, so it is not the ionosphere); the loop error at 5 Hz was ~33°. Holding 18 Hz in LOCKED takes it to ~5° with full lock coverage, and edge-handling fixes (bumpless narrowing, zeroing the acceleration integrator) do nothing. The tape was recorded 72 min after boot (0.44 Hz/s drift before it), warm but not settled; no specific oscillator is identified. Synthesis models no receiver clock, so a synthetic control can only show this term's absence (follow-on registered). Weak synthetic satellites below `open_sky`'s ~37 dB-Hz floor cycle lock and can wander in pull-in without returning to acquisition (follow-on registered).
+
 ## Candidate improvements require current evidence
 
 The early survey did not establish a project policy for anti-windup, frequency

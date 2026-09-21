@@ -223,6 +223,110 @@ records, never codes (the generator ruling stands). The stand-in keeps its
 polled aperture for the proof leg; the board leg measures the real
 per-transaction cost beside the desk's 348.
 
+## Hard-won facts
+
+Verbatim, moved from gps_design's project `CLAUDE.md` §Durable facts on 2026-09-20
+(thread `cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3): the
+defect class that recurs across layers and gates, the C/A stand-in image's timebase and
+counters, and an XSA/bitstream identity trap.
+
+- **"One capture per job" is a defect CLASS, not a bug (build day 3,
+  2026-08-27 — four instances in one day).** The engine assumed one
+  capture in its handoff phase; the engine bench served capture k−1; the
+  wrapper captures ONE window whatever `REG_DWELL_COUNT` says; the daemon's
+  handoff oracle expects `search_start + n`, not `n·D`. Each was a property
+  proven at one layer and assumed at the next with nothing comparing them,
+  and each was invisible at D=1 / centre 0 by construction. Rules that came
+  out of it: a gate case must ASSERT the mechanism under test is non-vacuous
+  (the slew schedule at centre 0 is all zeros — use a high legal centre);
+  instantiate real units behind a model instead of hand-modelling them (the
+  row-S smoke bench); the wrapper's centre legality is the golden's
+  decision-35 bound `|centre| + doppler_max ≤ 65,535` on BOTH sides
+  (decision 106) — the old carrier-phase bound admitted a 30× wider field.
+  **Tally at 2026-08-28: seven instances, FOUR of them in gates rather
+  than the design** — the fold seed's row index mixed N-ths of a step with
+  whole steps and one period's drift with N (invisible at N=1 by
+  construction; caught only by an N=8 gate), and the engine bench's
+  grid-spill model was sized by the largest PCPS band (`ROWS_MAX = 15`)
+  while a fold job carries 33 rows (an out-of-range read returned X,
+  `>` said FALSE, peak2 published a plausible 0). Two rules that came out:
+  run the cheapest DISCRIMINATOR before any fix (one shard, not a
+  four-hour gate); a bench model's bounds come from the regmap mirror with
+  `$fatal` guards, never typed. Also: `xsim.py` reports a VHDL `severity
+  failure` abort as `RESULT: PASS` — registered gates grep the bench's own
+  pass line and are safe; a direct caller is not.
+- **The C/A stand-in image has no sticky pre-B3 input-loss counter, and the
+  counters that look like one are not (tracking-image q-01/q-02, 2026-09-11).**
+  `pl_b1_bit_select` `mon_overflow_count` counts saturating QUANTIZER CLIPS;
+  the firmware adapter's `lost_sample_count` is DERIVED (accepted − processed)
+  and is zero by construction while capacity exceeds the input rate. B1 never
+  drops: it backpressures. The place a sample is actually lost is the input of
+  the first valid-only-fed FIFO upstream — `gps_ladder_dec8_to_d5_cdc` (the
+  ladder's dec8 output ignores `tready`) — and loss is proven by elastic
+  capacity versus the longest B3 stall (scheduler + phase-load) plus a direct
+  `tready`-never-low-while-`tvalid` assertion there, on the desk and on an ILA
+  at the same point on the board. The band-agnostic engine owes the real sticky
+  counter (decision 155). Decision 155 forbids LOSING a sample, not a bounded
+  stall on a real handshake — a plan that says "tready never falls" over-states
+  it.
+- **A tape replayed through the loopback is NOT the IQ the correlator saw,
+  and no image both replays and records (2026-09-13, decisions 170/171).**
+  After the DAC, the pad, the ADC, the ladder and the 4-bit quantizer the
+  received samples are close in every tracking sense and useless for a
+  ±1 LSB accumulator gate: each accumulator sums 4096 four-bit samples, noise
+  alone is ~±130 LSB per epoch, two independent noise draws differ by ~180.
+  TEST-GPS carries no capture rails and RECORD has no TX, so a receive-side
+  recording during replay cannot exist on this image set; the exact IQ for a
+  parity proof is the acquisition engine's spill (`udmabuf-acq-spill`, the
+  same b1 fan-out PL.B3 consumes), window by window, with each dump carrying
+  its own NCO words and its predecessor's phases. Bulk data (dumps,
+  1.15 MB/s at 12 channels) lives in DDR, never OCM: the R5_1 carve's
+  `no-map` region is readable over `/dev/mem` like OCM is (hardening blocks
+  only system RAM), and the same region becomes the engine-written TM ring.
+- **Three C/A stand-in facts the proof-leg packets measured (2026-09-13/14),
+  all design inputs for the band-agnostic engine:** (1) the acquisition
+  engine's sample counter (`sample_tick_count_r`) clears on the daemon's
+  acquisition-local recovery reset while PL.B3's consumed-sample counter on
+  the tracking rail does not, so the acquisition→B3 coordinate is identity
+  from a global reset and DEAD after any local reset — the daemon fails
+  seeding closed until a full-chain reset, and a global-only reset for the
+  timebase is the RULED RTL fix (tracking cache decision 174: only the
+  timebase moves to the global reset; the rest of the engine keeps its local
+  recovery reset); (2) the 24-word dump record exports only
+  the LOW 32 bits of the 42-bit code-phase accumulator (word 9 is the code
+  cycle), so exact replay needs a full-phase anchor from a configure or
+  load-phase event and a contiguous dump chain; (3) the stand-in exposes no
+  acknowledged apply boundary for configure/enable/load-phase, so an
+  applied-state event is stamped at the FIRST captured dump that reflects it
+  (the dump is the fabric's acknowledgement), never at the nominated boundary.
+- **The C/A stand-in's timebase on silicon, as built before decisions 178–181 (measured at the desk 2026-09-14; the fixes are the approved `sample-timebase-global-reset` image and arm plan-05).**
+  - **R5_1's loop is unpaced.** `main()` spins `gps_tracker_service_epoch`, and before arm plan-05 `tracker->epoch_count += 1u` ran on every pass, so the capture's 90 000-epoch window closed within a fraction of a second of boot. The host fake bus paces one call per epoch, so no desk gate saw it; the epoch now comes from the stand-in's consumed samples.
+  - **B3's counters.** `sample_count_r`, `ms_sample_count_r` and `epoch_count_r` advance only while `cfg_global_enable_axis` is set, and the adapter's init writes `CTRL_DISABLE_RESET`, which drops enable and zeroes them. Only a channel start raises enable, and a seed waits on the frozen count, so on that image no channel can ever start. The acquisition engine's `sample_tick_count_r` meanwhile clears on its OWN local reset, because the rstgen's `aux_reset_in` is the engine's `reset_request_o`. Neither timebase matches the other across an R5_1 boot or an engine recovery.
+  - **The firmware name.** Nothing in the pipeline wrote `remoteproc1/firmware` until decision 175: the kernel's boot default `rproc-ff9a0000.r5fss:r5f_1-fw` does not exist, and a hand write is erased by reboot.
+  - **The acquisition engine has no live sample-count register.** Only a per-capture latch (`REG_CAPTURE_STAMP_L/H`) exists, so no software reading can recover an acquisition↔B3 offset. It is fabric by design or nothing.
+- **Opening an XSA beside a same-named `.bit` overwrites it (proven 2026-09-15,
+  shard 7 q-03/q-04).** Every HSI/xsct open of `system_wrapper.xsa` (the boot
+  packager's FSBL step, `gen_r5_bsp.tcl`, any xsct) unpacks the XSA's OWN
+  embedded `system_top.bit` beside it — the same fabric with a different
+  four-byte header time — so one build carries two bitstream identities and a
+  bank sitting beside its XSA is silently rewritten. This was shard 4's
+  "unidentified process" and the orchestrator's own in-place BSP generation.
+  Rules: never run xsct/HSI against an XSA beside a `.bit` you care about — take
+  a copy into a scratch directory; the packager takes repo-local inputs only
+  (`repo_rel()` refuses siblings) and stages `.bit` and `.xsa` in SEPARATE
+  directories. The structural fix (package from the XSA alone, a read-only bank,
+  fail-closed hashing) is the engine thread's
+  `findings-2026-09-15-bitstream-identity-and-xsa-extraction.md`.
+- **The C/A stand-in's timebase is fed through acquisition's C/A rail quantiser
+  tap (measured 2026-09-15, shard 7 row 4a).** B3's `REG_SAMPLE_COUNT` and
+  `REG_EPOCH_COUNT` advance only while the daemon has the C/A tap armed
+  (`arm_band_taps`, run in `setup_engine` BEFORE the tracking cold attach, and
+  restored as-found on close); with the daemon stopped the count freezes. A
+  hand-started or daemon-less R5_1 therefore boots against a frozen rail, and
+  `gps_epoch_irq_boot_check`'s sample-bounded timeout spins there instead of
+  faulting (plan-07 adds a wall-time bound). Design input for the band-agnostic
+  engine: the tracking feed must not be gatable by acquisition's tap policy.
+
 ## When to consult this chapter
 
 - Porting any `gps_receiver/blocks/pl_*.py` golden to VHDL, or

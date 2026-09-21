@@ -553,3 +553,276 @@ section opening:
   sweep tests 660 row-hypotheses per opportunity vs 5 for PCPS — on sky 2
   of 8 fold declares were noise at ratios 2.05–2.09, above the 283-job fed
   N = 8 ceiling (1.94).
+
+## Hard-won facts (moved 2026-09-20)
+
+Verbatim, moved from the project `CLAUDE.md` §Durable facts on 2026-09-20 (thread
+`cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3): the bench and
+the board clock, the R5_1 attach chain and tick path, and what the declare stream
+can and cannot tell you. `mmap.flush()` on `/dev/mem` is also in §Daemon above;
+the bullet here adds the 2026-09-13 re-find.
+
+- **A stub-linked ELF proves the linker script only as far as the stub reaches
+  (measured 2026-09-12).** `rproc-link-check` substitutes its own `_startup`, so
+  `xil-crt0.o` never joined the link and the whole crt0-to-linker-script contract
+  was unexercised — three real link failures (`.sbss` symbols, `_init`/`_fini`
+  under `-nostdlib`, a weak `_exit` behind newlib's in one archive pass) had been
+  sitting behind a green placement check. A placement gate is not a link gate.
+- **The bench is not a quiet room: it cycles 2.5 °C peak-to-peak every ~2040 s,
+  indefinitely (measured 2026-09-12, 5400 samples at 1 Hz from a true cold
+  start).** All four dies move together (PS against remote r = +0.983, PL +0.974,
+  AD9081 +0.942) against per-sample sigma of 0.67 °C, so it is the room, not the
+  sensors. The monotonic warm-up is over by ~800 s and then the board never
+  settles — it oscillates. **Consequences: a "settled" criterion that waits for
+  temperature to stop changing never fires here; the ruled 900 s fit window is
+  44 % of the cycle, so two honest fits at different phases differ by the full
+  amplitude, which is bias and does not average out; and every banked
+  settled-drift number (+3.4, +2.28, −0.65, +0.426, the pooled +2.04 with the
+  wrong sign) was taken over a window shorter than this cycle.** A drift number
+  from this bench without its uptime AND its cycle phase is not comparable to any
+  other. Die temperatures are a proxy for what the crystal sees, never its own.
+  Evidence: appliance-ops `findings-2026-09-12-coldboot-testgps-thermal.md`.
+- **The reference's DRIFT is a trajectory, not a constant, and it silently
+  prices the scheduler (measured 2026-09-09).** The 122.88 MHz reference is an
+  unovened free-running VCXO that follows bench temperature: about **+3.4 Hz/s
+  at L1 forty minutes into a boot** while the board heats (servo estimate
+  31985 → 34250 Hz over 660 s, with `warmup.state` already reporting
+  `settled`), **+2.28 Hz/s** on another boot, and a slow **−0.65 Hz/s** tail six
+  hours in. Code that assumes a settled clock pins `drift_hz_per_s` at 0.05,
+  i.e. 13× low at six hours and 68× low at forty minutes. That term is not
+  cosmetic: `budget_s = null_width_hz / (clock + geometry)` and the acquisition
+  round fence's whole time budget is `min over bands of budget_s`, so a wrong
+  drift silently shrinks or inflates every band's staleness budget AND the
+  round's cap together (L2C ~12–40 s, not 84 s). Three consequences worth not
+  re-deriving: **any design that stores drift as a configured constant is wrong
+  by construction**; a board number without its uptime and measured drift beside
+  it is not comparable to any other board number, and that need grows once the
+  drift is wired live because the cap then MOVES during a run; and "oven warm"
+  language removes only the positive heating term. The live slot exists —
+  `drift_hz_per_s` tier 1 `measured_declares` — and was unwired as of
+  2026-09-09.
+- **`mmap.flush()` raises EINVAL on a `/dev/mem` mapping and is not a
+  barrier (banked 2026-08-27, re-found 2026-09-13):** `msync` is invalid on
+  device memory; the daemon's `DevMemOcmRegion.barrier()` called it anyway,
+  so every seed publish would have died between the write and its readback.
+  Never call `flush()` on `/dev/mem`; readback-verify every header word.
+- **No drift fit before the board is settled by a MEASURED criterion
+  (decision 166).** The daemon's pooled declare fit read +2.04 Hz/s with a
+  220 Hz residual and the wrong sign against a servo that fell 977 Hz over the
+  same row; the clean number was the servo endpoint slope (−0.43 Hz/s). A fit
+  whose residual exceeds a rung-derived bound is not a measurement. The unit's
+  `drift.json` keeps the settled-phase number until a cold-boot row measures
+  the true worst case (queued).
+- **R5_1's first daemon-owned cold attach on silicon refused (2026-09-15, shard
+  7): the firmware halts in its init path before the status header** — the boot
+  shim's second marker present (it is written BEFORE `b _startup`, so `xil-crt0.S`'s
+  `__cpu_init`, `XTime_StartTimer`, MPU config, `__libc_init_array` and
+  `Xil_ClockInit` and `main` itself are all UNPROVEN on silicon), `REG_SAMPLES_PER_MS`
+  4096 (read by Linux, not by the firmware), the seed mailbox header
+  present, the dump-capture header at `0x7900_0000` never written, the ring
+  header stale, `epoch_irq_enable` 0, the boot-fault word 0. The header is
+  published BEFORE the interrupt start (`r5_1_tracking_main.c:139-142`), so a
+  missing header with a zero fault word is never an interrupt problem. `main`'s
+  early returns and a `pl_fault` abort leave nothing Linux can read; the fake
+  bus has no OCM, no DDR carve and a stubbed cycle counter, so it cannot see
+  this class. Plan-07 instruments the path (sixteen OCM progress slots at
+  `0xFFFE_4020`, slot = boot step, cleared by `main` before step 0; the abort
+  record at `0xFFFE_4060`). OCM survives an R5_1 stop/start: a boot-page trail
+  not cleared at boot is a previous boot's. **LOCATED 2026-09-16 (appliance-ops
+  hop 6): slots `00`–`03` ok, `gps_tracker_init` pending, one UNDEFINED-instruction
+  abort — the remoteproc boot shim never enables the FPU.** The BSP's `boot.S`
+  (`standalone_v8_0/src/boot.S:228-239`) grants CPACR `cp10/cp11` and sets
+  `FPEXC.EN`; a custom rproc shim that replaces `boot.S` must do both, or the
+  first hard-float instruction (`-mfloat-abi=hard`) traps, including the ISR's
+  own `vmrs FPEXC`. Host tests (FPU always on) and placement checks cannot see
+  it; the R5_0 shim it was copied from never ran float code.
+- **The R5_1 attach chain on silicon, 2026-09-16 (appliance-ops hops 7–9; arm
+  plans 08/09, PL plan-37) — three more defects a clean desk hid, one class:**
+  - **Hop 7: the status header left words unwritten.** R5_1 booted through its
+    boot check (slots `00`–`0A` ok), and the daemon refused
+    `reserved_geometry 0x910003fd`. The firmware's `gps_tracker_status_ring_init`
+    never wrote `reserved_geometry` or `reserved_1..15`; the daemon's reference
+    writer zeroes them and its validator checks one.
+  - **Hop 8: the daemon trusted a leftover header.** It refused in the same
+    second as `remoteproc1` start, on the PREVIOUS run's `magic`-valid header:
+    `_wait_for_status_header` trusted `ready()` (`magic` only), and the stale
+    guard covered only a nonzero head. Its exit then froze the C/A rail under
+    R5_1's boot check, so R5_1 faulted `NO_TICK_WALL` (code 4) exactly as designed.
+  - **Hop 9: the fix held.** With the daemon waiting for a changed
+    `prod_generation`, **the first successful cold attach on silicon** (tracking
+    active, coordinate valid).
+  - **Why no desk gate saw them:** the fake bus's zero-initialized memory and a
+    fake `remoteproc.start()` that published synchronously. **OCM and the carve
+    are never zero at boot and a real writer is never synchronous:** a fake
+    backing store must be POISONED (arm plan-09) and a fake writer must publish
+    after the caller polls (PL plan-37), or the test proves the wrong contract.
+    Same class as "one capture per job".
+- **RESOLVED 2026-09-17 (was OPEN): a live R5_1 wedged an APU core within minutes of that first attach
+  (2026-09-16, hop 9).**
+  - **The symptom:** SSH logins died while ICMP and TCP/22 answered.
+  - **The serial console** (`/dev/ttyUSB0`, 115200, the CP2108's first port) had
+    a shell that echoed but ran nothing.
+  - **Read-only Magic SysRq over a serial break** (`m`, `w`, `l`, `t`, with `8`
+    first so the task dumps actually print; the default console level hides them
+    and makes `w` look empty) showed:
+    - no reset and healthy memory;
+    - the daemon in D state in an AD9081 IIO read, behind the SPI controller's
+      runtime-PM resume;
+    - that `pm_runtime_work` "running" on CPU 3, which never answered a backtrace;
+    - an expedited RCU grace period stalled, and systemd-logind blocked in
+      `synchronize_rcu_expedited`, which kills logins.
+  - **CAUSE CONFIRMED 2026-09-17: a memory overlap (arm plan-10's rank-1 candidate;
+    tracking cache decision 189; proven by appliance-ops hop 10, where the relocated ring
+    took 37,334 records in 30 min with no hang and BL31 code intact).** The boot image loads the
+    ARM Trusted Firmware (BL31, 49,300 B) into OCM at `0xFFFEA000`, and R5_1's
+    channel-status ring at `0xFFFED000` (8 KiB) lies inside it. Four banked board
+    pre-states read BL31's instruction words at `0xFFFED000` before any R5_1
+    write; the `reserved_geometry 0x910003fd` hop 7 refused on is BL31's
+    `mov x29, sp`. Hop 9 was the first attach to write the record slots; CPU 3 then
+    hung inside a firmware call. The BSP-to-PMU lead weakened: the ELF links no
+    XPm/IPI client and the BSP defines no `XCLOCKING`. **Any OCM channel at or
+    above `0xFFFEA000` writes into EL3 code**; no R5_1 attach until every channel
+    is clear of it; the socks generator now refuses such a layout and the ring is
+    at `0xFFFE5000`. Evidence: hop 9's `serial-console-20260916/`, plan-10's
+    investigation, hop 10's `PROMOTED.md`.
+  - **SysRq over the serial console is the diagnosis path when userspace is
+    wedged but the kernel answers.**
+- **Board-side bench traps (2026-09-16):** the board's `journalctl --since`
+  rejects a `Z`-suffixed timestamp, and its Python predates 3.11, so
+  `datetime.fromisoformat` rejects `short-iso`'s `+0100` (normalize to `+01:00`);
+  both crashed attach-wait scripts after the attach had run. **And (2026-09-17):**
+  the ZCU102's USB-UART bridge stays enumerated from USB power, so
+  `/dev/ttyUSB*` survive a board power-off with their old device-node times and
+  no host USB event. Their presence or age says nothing about board power or a
+  reboot; read the board kernel's own timestamp (one misread became a phantom
+  "self-reset" record the same morning).
+- **The R5 ELF's hash is a per-build identity, never a reproducibility claim
+  (2026-09-15):** `gps_firmware_identity.h` embeds the commit words AND
+  `GPS_FW_BUILD_UNIX_TIME`, so two builds of one commit differ. Placement checks
+  hash the placed file; source identity is the commit words.
+- **The daemon's `engine.tracking.active` does not prove R5_1 is alive, and a
+  null read off a dead core looks like a triumph (measured 2026-09-19,
+  appliance-ops hops 11 and 13).** The flag stayed true while R5_1 sat halted at
+  its boot check and while it sat wedged inside one ISR pass; a first "zero
+  overruns at nine channels" was a halted core with the enable bit clear (the
+  overrun counter only counts while `epoch_irq_enable` is 1). **A window counts
+  only with, at both ends:** `REG_EPOCH_IRQ_ENABLE` (`0xA0003068`) = 1;
+  boot-trail slot `0x0A` (`0xFFFE4048`) = `0x54330A01`; the capture header's
+  firmware word (`0x79000038`) equal to the ELF under test; `serviced_ticks`
+  (`g_epoch_irq` + `0x20`, APU `0xFFEB01F8` on today's ELFs) ADVANCING; and no
+  `[EPOCH-IRQ-FAULT]` line on the serial console for that run — the cheapest
+  tell of all. R5_1's BTCM is readable from Linux at `0xFFEB0000` while the core
+  runs, which also gives the firmware's own `service_timing`/`append_timing`
+  histograms (10 ns per tick, MEASURED from TTC3) with no firmware change.
+- **The dump-capture header is a per-run object with three traps (2026-09-19):**
+  it is written at the first `MSG_ASSIGN` of an R5_1 run, not at boot, so
+  before the first declare it holds the previous run's image or power-on DDR;
+  `write_count` is published only at freeze and reads 0 throughout ACTIVE; and
+  the capture freezes at 90,000 epochs (`GPS_DUMP_CAPTURE_WINDOW_EPOCHS`) as
+  well as at capacity. A capture-state read is valid only beside a magic of
+  `0x47444331` taken in the same sample.
+- **The R5_1 tick path, as measured on silicon (2026-09-19), and the class that
+  produced it.**
+  - The ISR's drain loop left only on FIFO empty, so at the twelve channels the
+    daemon assigns (NOT two — every plan before this day assumed two) the core
+    entered one pass and never returned: mailbox, status and every later tick
+    dead while dumps drained. Fixed by arm plan-15 (bounded by the FIFO depth);
+    ADR-034 clause 3 had already said it. The fake bus could not see it: it
+    calls the service function once per epoch and its FIFO drops on overflow.
+  - Bounded, the path cost **~425 µs per TRACKED dump** (two windows and the
+    firmware's histograms agree within 1 %), of which the 26-transaction AXI-Lite
+    drain PLUS the whole capture path is **17 µs**. An APU-side AXI-Lite read is
+    ~0.15 µs. The extraction is not the bottleneck.
+  - The ~410 µs was the pull-in test: in `PULL_IN`, once its window fills, the
+    firmware recomputed a 500-sample median (`memcpy` + quickselect) on EVERY
+    dump, in buffers that live in DDR — and **the remoteproc boot shim runs this
+    core with the MPU and both caches OFF, so every DDR access is a single-beat
+    bus transaction.** The golden runs the same algorithm on a cached host and
+    never notices. Parity with the golden is a statement about VALUES, never
+    about where they live or how often they are recomputed (the pairwise-sum
+    lesson again). Arm plan-17 decides it by an exact running count.
+  - It is self-sustaining: lost dumps keep a channel in pull-in, pull-in costs
+    the median, the median saturates the ISR. And a declare that never locks
+    held its slot forever — ADR-033 had no edge out (decision 193).
+  - Per-dump costs quoted before this day (43 µs, 96 µs) were diluted by dumps
+    the loop pops and discards for channels not yet tracking. A per-dump number
+    without the channel STATES beside it is not a number.
+- **A sysfs stop/start of `remoteproc1` faulted `NO_TICK` two of two on the
+  wedging firmware and worked three of three on the bounded one (2026-09-19).**
+  Linux's stop is a PMU force-power-down of the core alone; nothing resets the
+  RPU GIC (shared with R5_0), B3's `epoch_irq_enable`/pending bits, or the DDR
+  carve. The firmware now ends an inherited active INTID 121 at init and
+  publishes what it found in boot-marker slot `0x0B` (`0x54330B00` = clean —
+  NOT "pending"). The stale-interrupt hypothesis is UNTESTED: no stale state was
+  ever found; what is established is that the fault went away with the wedge.
+  **A Linux `reboot` resets the PL and gives R5_1 a clean start** (B3's
+  AXI-reset-only counters restart); DDR and OCM across a reboot are unexamined.
+- **Two firmware-build traps, each cost real time on 2026-09-19** (the day's
+  third, an emitter trap, is in the threads skill's `references/orchestration.md`).
+  The firmware
+  Makefile never regenerates `build/rproc_tracking/r5_1_tracking_rproc.stripped.elf`
+  — a stale 2026-09-13 file sits there; strip the fresh ELF yourself and check
+  its segment sizes. The R5 object rule does not track flags, so a `-D` variant
+  build silently relinks the previous objects.
+- **THE RECEIVER CANNOT MEASURE ITS OWN ANTENNA FROM THE DECLARE STREAM, and a
+  board leg that tries produces a confident wrong answer (measured 2026-09-20,
+  appliance-ops hops 14 and 15).** Hop 14 concluded "no channel completes
+  pull-in" — a receiver finding — on a board whose **antenna LNA was
+  unpowered**, and nothing in its plan, its fourteen-finding pre-emission audit
+  or its handback asked whether the RF plant was alive. Two later attempts to
+  build a plant gate out of the declared-PRN set BOTH failed by construction,
+  for one reason: **the acquisition detector's false-alarm rate is
+  uncalibrated** (`threshold_num/den = 2/1`, which the project's own as-built
+  audit calls *"the single most load-bearing acquisition number in the system,
+  and the one with the weakest recorded basis"* — `claimed_basis: none for the
+  value`), so it declares continuously whether or not anything is there. Two
+  consequences that will recur until that bar is calibrated: **the declared-PRN
+  set is CUMULATIVE per daemon process and never plateaus** (measured 16 → 20 →
+  23 against daemon age, 30 of 32 on an older one, resetting to 3 on a daemon
+  restart — it is a statement about uptime, not about the sky), and **a full
+  twelve-channel pool does not suppress declares** (12 assigned while the set
+  climbed 17 → 23). **The gate that DOES work is C/N0 with PLI beside it**, and
+  the noise floor is now measured on this board: **~20 dB-Hz with
+  `carrier_lock_pli` ≈ 0 and random sign**, against 35–45 dB-Hz with PLI
+  climbing toward +1 for a real satellite. **PLI is the sharper half and costs
+  nothing** — it rides at +36 in the same 64-byte status record as `cn0_dbhz` at
+  +40, both `float32`. Any future plant check reads both, and reads them BEFORE
+  believing any receiver conclusion.
+- **The OCM channel-status ring is a rolling report HISTORY, not a per-channel
+  array — and `seq` and `epoch` BOTH reset on every R5_1 boot (measured
+  2026-09-20).** 64 slots written continuously, so one channel owns several
+  slots and a channel can be absent entirely: a board snapshot held 64 records
+  spanning only **nine** distinct channels with channels 9–11 missing, while
+  twelve were assigned. **Anything counted must come from the latest record per
+  channel**, never from raw slots. And the naive dedupe is worse than useless
+  across a restart: `memset(tracker, 0, sizeof(*tracker))` (`gps_channel.c:1557`)
+  zeroes `status_seq`, so after an R5_1 restart the FRESH records carry small
+  `seq`/`epoch` while stale slots carry large ones and **"highest seq wins"
+  selects the PREVIOUS run's records** — observed as 63 stale records beside a
+  daemon reporting one assigned channel. Anchor on the slot the producer wrote
+  last (`prod_head_lo` at the ring header +36) and accept only the cluster near
+  its epoch; check `msg_type` (+0) so never-written slots do not read as a
+  phantom channel 0; and the writer laps a slow reader with no per-slot seqlock,
+  so re-read `seq` after a slot and discard on change.
+- **The assignment hold's clock and the channel's progress toward lock are
+  DIFFERENT CLOCKS, and they diverge exactly when dumps are lost (measured
+  2026-09-20).** The status record's `epoch` is the FABRIC's count
+  (`ch->epoch = dump->epoch`, `gps_channel.c:1283`, zeroed at channel start
+  `:998`), but `pull_in_epochs` (`:1074`) and `tracking_epochs` (`:1125`)
+  advance only on PROCESSED dumps. Under the 80 %-loss regime measured before
+  plan-17, a 2000-epoch hold would have torn down **every** channel before any
+  could lock. Plan-17 fixed the loss (zero drops and zero overruns across a
+  600 s window on 2026-09-20), so the condition is satisfied today — but **the
+  mechanism is permanent, so any hold counted in record epochs carries a
+  loss≈0 precondition**, and the policy plane cannot see `pull_in_epochs`
+  because it is not a field of `channel_status_msg_t`. Related: that `epoch`
+  field is described THREE different ways across `seed_mailbox.h`,
+  `seed_mailbox_layout.py` and `gps_channel.h`, and none matches the code.
+- **`engine.offset_servo`, never `engine.servo` — and a reader of the wrong key
+  returns `None` on every board, forever (measured 2026-09-20).** The daemon
+  emits `offset_servo` (`acq_engine.py:14059`); a sampler reading
+  `("servo", "estimate_hz")` produced a null that was reported up the chain as
+  evidence of a dead plant, while the servo was in fact running with 502
+  estimate points over 9,617 s. **A null from an instrument is not a measurement
+  until the key is verified**, and note the servo proves nothing either way: a
+  least-squares fit runs through noise declares as readily as through satellites.

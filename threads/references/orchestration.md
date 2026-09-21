@@ -170,3 +170,24 @@ Moved verbatim from that project's `CLAUDE.md` (2026-09-04).
   (plan-16 lost ~4 h). Its handback arrives the same way, as a
   `HANDBACK <path>` ring; check every operator rider has a metric key
   before accepting.
+
+Verbatim, moved from the same file on 2026-09-20 (thread
+`cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3).
+
+- **Re-run a claim's evidence before trusting it, worker or reviewer** —
+  packet 4's "CRLB-efficient once acquired (0.246 Hz)" was a truth-selected
+  subset (the deterministic population gives 0.327 Hz median / 2.56 Hz
+  RMSE); its "1.63e-11 parity" was one bin (worst 2.07e-11, 20× outside
+  the taxonomy's Class-3 bound; operator-accepted as a documented
+  exception, lane decision 14); the adversarial review's "absolute paths in
+  lane docs" had zero hits in its own audit output. Roughly one claim in
+  three moved on re-run.
+- **A Codex worker's sandboxed mailbox job cannot reach the systemd user bus:
+  the record stays `queued` with an empty supervisor log (bitten three times by
+  2026-09-15: Iridium plan-25, shard 5, shard 7).** The remedy is a host launch
+  of the same contract (the orchestrator's, on the worker's `q-NN`, or the
+  operator relaunching the worker unsandboxed); the launcher-refuses-in-sandbox
+  fix is routed to the threads skill and has not landed.
+- **An emitter trap (2026-09-19):** the threads emitter resolves a MERGED worktree
+  when the thread's active `codex_worktrees[]` entry has no `path`: pass
+  `--worktree-path` on every emit until the skill is fixed.

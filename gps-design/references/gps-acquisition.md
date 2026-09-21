@@ -212,6 +212,24 @@ Verbatim, moved 2026-09-04.
   window is built; do not quote the golden's `t_start` accuracy for silicon
   until that number exists.
 
+Verbatim, moved 2026-09-20 (thread `cross-cutting/20260920-orchestrator-context-diet`,
+plan-01 Step 3).
+
+- **Dwell depth is not a sensitivity lever this program can use (measured
+  2026-09-09).** C/A costs ~11.7 ms per job at D = 2 and ~29.8 ms at D = 8 on the
+  board; the squaring-loss-corrected floors are 39.4 / 36.1 / 32.8 dB-Hz at
+  D = 2 / 8 / 64, with growth already sub-√N by D = 32. **D = 8 already clears the
+  open-sky 37 dB-Hz scenario floor, while urban (27) and indoor (24) are
+  unreachable at ANY depth**, so deeper dwelling lands in a gap between the
+  program's own targets — and 3–4 dB does not survive a 20–40 dB jam, so it is
+  not jam mitigation either. The L5 fold is coherent and worth more per dB but
+  costs 24.5 s for one PRN's 20-hypothesis sweep at N = 8, and its sky hit rate
+  is ~0.23 per opportunity once the two noise declares on absent PRNs are removed
+  from the 26-sweep sample — ordinary PCPS out-declares it ~30× per round-second.
+  Both were struck from the scored-scheduler scope on that evidence; the RTL
+  stays banked per ADR-016.
+- **The acquisition capture stamp is a sample index of the capture's OWN band — before decision 184 it was not (found by composition 2026-09-14, fixed on socks main `e0710991`).** The engine's timebase counted `s_axis_capture_tvalid`, i.e. whatever the 4:1 ingress mux presented, so every band switch re-based it (the regmap package said so; the daemon had even measured the blend) while `seed_mailbox.py` used the stamp as a B3 sample number, and a forward jump never tripped the backward-stamp guard. Now each mux feed counts its own presented samples from the global reset and the engine latches the selected feed's count. Two consequences worth not re-deriving: a stamp from one band is never a coordinate in another band's rail, and a desk bench that proves each counter alone does not prove the identity between them — the chain has to be composed link by link through every element between the fan-out and both counters (the same defect class as "one capture per job").
+
 ### Acquisition engine on silicon (durable facts, measured 2026-08-22)
 
 Hard-won on the ZCU102 appliance across the day-2 image board legs and the

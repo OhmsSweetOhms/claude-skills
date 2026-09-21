@@ -127,7 +127,9 @@ failures, inverted:
    the RTL does not have, a mid-epoch behavior the pipeline could not
    provide as written, and a gate script path that did not exist; every one
    cost a worker question, and one audit run before emission caught three
-   blockers that would have stopped a board leg.)
+   blockers that would have stopped a board leg.) The worked cases behind
+   this invariant, and what to ask beyond "does it exist": §Hard-won facts
+   at the end of this file.
 
 ## Routing notes per variant
 
@@ -176,3 +178,75 @@ physical_state), kind selection, the blocked-for-ruling resume protocol,
 and the pre-flight checks that have historically eaten fleet runs (args
 shape, smoke run, budget statement). The runtime policy itself lives in
 the project's workflow script — cite it, never restate its parameters.
+
+## Hard-won facts (from the gps_design program)
+
+Verbatim, moved from gps_design's project `CLAUDE.md` §Durable facts on 2026-09-20
+(thread `cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3). They are
+the cases behind invariant 11: what a pre-emission audit must ask beyond whether a
+name exists.
+
+- **A plan or packet is written from the code, and audited against it before
+  emission (global Core Rule 32; kickoff skill invariant 11; 2026-09-14).**
+  Every behavioral claim, status token, JSON path, register field, reset
+  semantic, file path, and gate command in a plan or kickoff is read from the
+  RTL, C, Python, Tcl, or config at the base commit and cited `file:line`, or
+  marked as inference; a cheap read-only audit agent checks every observable
+  against the code before the Fire Card is handed, and the producer re-verifies
+  its MISSING/CONDITIONAL rows. One session wrote seven wrong clauses from
+  memory of how the system "should" look: an `acq.json` `engine.tracking`
+  block that exists only when tracking is enabled, `engine.state == serving`
+  when the engine's tokens are `engine_wedged|warming|startup_health_check|running`,
+  "no `/dev/mem` holder" on a daemon that maps the engine by design, "every
+  other register reads its reset value" against decision 111's never-reset
+  job fields, a mid-epoch enable the B3 pipeline could not provide as written,
+  and a vector-gate script path that did not exist — plus a proof leg whose
+  expectation file, timing field and capture window did not exist on silicon,
+  caught only by the audit. **The tell is a worker's first question naming a
+  line of the plan against a line of the code.**
+- **A number that RANKS the work needs its derivation recorded, or it is not a
+  number (2026-09-18).** Rule 32 covers status tokens, field names and paths;
+  this is the quantitative half. A board leg ranked its rows on "~646 DDR
+  accesses per epoch at two channels with the capture ACTIVE against ~30
+  without", and that figure appeared in exactly two places — the plan and its
+  kickoff — with **no working anywhere in either thread**. Counted from the code
+  it was 66, roughly 10× out, and the row it promoted to first place was the one
+  a desk re-derivation demotes to last. Three rules came out of it. **State the
+  units and keep them consistent**: the same handback said "DDR reads 98 → 0,
+  writes 24 → 24", which is bytes for the reads and words for the writes, and
+  that mixed unit is most of how 66 became 646. **Count what BLOCKS, not what
+  moves**: after the bufferability determination the surviving traffic was
+  mostly posted writes the core never waits for, while the real serial cost was
+  24 AXI-Lite aperture reads per record that no row varied — a ranking built on
+  access COUNT inverts against one built on stall behaviour. And **a figure
+  survives only as long as the tree it was counted on**: this one was a true
+  pre-merge measurement that a merge the same operator ruled as a precondition
+  silently invalidated. **The tell is a headline number that no file derives —
+  grep the threads for it; if it appears only where it is used, re-derive before
+  anyone spends a board window on it.**
+- **When you argue a ratio is safe, price BOTH halves (2026-09-09).** A fence
+  mis-pricing was waved off as "cannot bite until the deep-dwell shape ships"
+  because the argument only examined demand. Subscription is demand over CAP,
+  and the cap was itself derived from the mis-pinned drift above — so the
+  condition was already present. The same shape recurs whenever a margin is
+  defended: name the numerator and the denominator, and check whether either is
+  itself derived from something unverified.
+  (The mis-pinned drift — a board reference drift stored as a constant when it is
+  a temperature trajectory — is in the gps-design skill's
+  `references/zcu102-acquisition-appliance.md` §Hard-won facts.)
+- **A plan clause names a tool's preconditions, not just its registers
+  (2026-09-15: six of seven shard-7 questions).** The packager's repo-local
+  input rule, a generator that needs its git repository (`gen_acq_regmap.py
+  --ref` cannot run on an archive), a field a payload does not publish
+  (`acq.json` has no boot id), a sibling path a helper refuses, the unit serial
+  after a hardware change — each was a correct stop on a clause written from
+  precedent. The pre-emission audit covers tool preconditions and the board's
+  physical identity, not only names and offsets.
+- **Six plan clauses were wrong on one board leg and none was a missing name
+  (hop 11, 2026-09-19)** — each was a WHEN (a header that exists only after an
+  event), a HOW MANY (twelve channels, not two; a 90 s window, not 540 s) or a
+  RECIPE (a flag that does not exist, an installer that clobbers a map, reused
+  scripts carrying the previous leg's assumptions, a 3 s wait against a ~100 s
+  attach). A pre-emission audit that only asks "does this exist" passes all six;
+  ask of every clause when it holds, how many, and whether the worker can run it
+  as written — and ask the auditor to try to BREAK any exactness argument.

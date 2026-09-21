@@ -147,3 +147,20 @@ i.e., 50 Hz) and PVT consumes at that rate. Our 5 Hz matches a
 typical navigation output rate, not their raw observable rate — not
 an accuracy concern, but worth noting when cross-comparing fix
 counts.
+
+---
+
+## Hard-won facts
+
+Moved from gps_design's project `CLAUDE.md` §Durable facts on 2026-09-20 (thread
+`cross-cutting/20260920-orchestrator-context-diet`, plan-01 Step 3). Location data —
+surveyed coordinates and heights — stays in the project (its decision 165), because
+this skills repository is public; only the lesson is here.
+
+- **A survey height must state its datum before it becomes an ECEF (decision
+  165).** The Trimble's survey height for the AG25 was orthometric (it matched the
+  F9P's `altMSL`, not its `altHAE`) and had been converted as if ellipsoidal;
+  the F9P on the same antenna sat 0.49 m horizontal / −28.4 m vertical from
+  that ECEF, within 1.5 m of the local geoid separation. A ~30 m
+  vertical bias against a "surveyed" truth is a datum artefact until proven
+  otherwise, not a lever arm and not a receiver error.

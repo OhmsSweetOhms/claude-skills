@@ -2054,4 +2054,7 @@ project facts.
   the working tree finds ignored files; scan `git archive HEAD` to test
   what a push would carry. `git rebase main --exec '<sed + amend>'` is
   a fine in-place scrub of an UNPUSHED branch, but it also moves the
-  branch onto the current main — state it.
+  branch onto the current main — state it. Module `build/` logs carry
+  absolute host paths the same way; scan tracked files, not worktrees.
+  (When the receipts rule landed on socks main, 54 tracked receipts were
+  removed — moved here from gps_design's `CLAUDE.md`, 2026-09-20.)
