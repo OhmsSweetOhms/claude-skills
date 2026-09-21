@@ -152,6 +152,10 @@ summary skipped four steps.) Its steps, in order:
 6. Put session-earned facts in the hop's findings (they reach skill
    chapters at hop close) — never in a file every session reads at boot.
 6a. Reconcile every work-order surface your boot protocol points at.
+6b. Walk the cache's one-line decision index, every wrap: retire the lines a
+   later decision replaced whole or whose one-time work is merged, offer the
+   operator the ones an ADR or spec now covers, keep the rest — reading the
+   full registry entry, never the one-liner alone.
 7. Commit, explicit paths.
 8. End with the USER's next moves, copy-paste-ready with absolute paths.
 

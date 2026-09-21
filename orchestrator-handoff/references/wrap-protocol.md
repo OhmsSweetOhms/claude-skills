@@ -94,6 +94,28 @@ open**, and put the successors in its place marked drafted-and-unfired.
 This is the step most easily skipped, because the cache edit feels like
 the job is done.
 
+**6b. Walk the cache's one-line decision index — every wrap, not once.**
+The index is read at every boot and gains a line with every ruling, so it
+is the one boot surface that only ever grows unless a wrap prunes it. For
+each line, read the FULL registry entry (the one-liner is not enough — a
+"delivered" headline often hides a standing rule in its body), then sort
+it:
+
+- **Retire it yourself** when a later decision superseded it WHOLE, or it
+  was a one-time order or a method for a finished investigation, its work
+  is merged (name the commit), and nothing in its body constrains future
+  work. Remove the cache line and add a dated note to the registry entry
+  saying it left the index and why. The registry keeps every entry.
+- **Bring it to the operator, one line each,** when its content now lives
+  in an ADR, a spec or a design document that a future change would be
+  checked against ("graduated"): name the document and clause. It leaves
+  the index only on the operator's word, with the same registry note.
+- **Keep it** when it still binds work that has no other durable home, or
+  when a launch prompt cites it by number.
+
+Say in the closing message how many lines went, how many were offered and
+how many remain. Zero is a fine answer; skipping the walk is not.
+
 **7. Commit, explicit paths, before doing anything else.**
 A perfect wrap in the working tree is a wrap that doesn't exist. Run the
 project's scans/checks; commit the boot surface + narrative together.
