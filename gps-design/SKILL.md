@@ -37,9 +37,11 @@ single coherent pipeline. The receiver is intentionally split by
 See `gps_receiver/CLAUDE.md`, `shared-interfaces.json`, and
 `blocks_map.json` for the authoritative current block inventory.
 
-See the project's `CLAUDE.md` for the big-picture architecture. This
-skill is the technical reference for how to do work on specific
-chapters of the pipeline.
+See `references/program-and-spec-stack.md` for the big-picture
+architecture (the receiver, the seven pipeline layers); the project's
+`CLAUDE.md` holds the hard requirements and points here. This skill is
+the technical reference for how to do work on specific chapters of the
+pipeline.
 
 ---
 
