@@ -88,6 +88,12 @@ profiles. See `receiver-block-profiles.json`.
 See `.research/ps-b8-to-ps-b7-integration-robustness.md` for the
 decision constraint and gap questions.
 
+**Stale in both tables' PL.B1 row, kept as written so the move loses nothing:**
+"12→4 bit" (and "12->4 bit" in the first table and the architecture sketch at the top
+of this chapter). PL.B1's width is ADR-PL-B1-004 (accepted): an
+8-bit default, B configurable in {2, 4, 6, 8} on the ZCU102; the 4-bit default it
+supersedes was ADR-PL-B1-002 (`docs/architecture/zynq-pl/pl-b1-bit-select/decisions.md`).
+
 ## Tracking State Machine
 
 ```

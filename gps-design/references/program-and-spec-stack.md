@@ -32,6 +32,13 @@ Architecture Decisions warns that an all-bare-metal partition is not a current
 benchmark. "The substrate bullets below" in the first paragraph are ADR-001 and
 ADR-007 in `docs/decision-log.md` and `references/fpga-pl-bringup.md`.)
 
+**Stale in the moved text, kept verbatim so the move loses nothing:** "reduces 12-bit
+samples to 4-bit". PL.B1's width is ADR-PL-B1-004 (accepted): an 8-bit default, B
+configurable in {2, 4, 6, 8} on the ZCU102; the 4-bit default it supersedes was
+ADR-PL-B1-002 (`docs/architecture/zynq-pl/pl-b1-bit-select/decisions.md`). What the
+correlator consumes is a separate question from what PL.B1 emits — read the block's
+decisions before quoting a width.
+
 ## The development strategy — seven structural layers
 
 The pipeline has seven structural layers. **Phase status, test counts,
