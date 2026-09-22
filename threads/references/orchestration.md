@@ -205,8 +205,14 @@ Verbatim, moved from the same file on 2026-09-20 (thread
   the record stays `queued` with an empty supervisor log (bitten three times by
   2026-09-15: Iridium plan-25, shard 5, shard 7).** The remedy is a host launch
   of the same contract (the orchestrator's, on the worker's `q-NN`, or the
-  operator relaunching the worker unsandboxed); the launcher-refuses-in-sandbox
-  fix is routed to the threads skill and has not landed.
+  operator relaunching the worker unsandboxed). **Fixed at the root on
+  2026-09-22 (option A, operator-ruled after a fourth bite, plan-39 and plan-07):
+  `launch_codex_worker.py` now launches every worker with
+  `--sandbox danger-full-access`; the approval policy is unchanged. A worker
+  fired before that date still has the trap: the remedy for its already-queued
+  record is to run the launcher's `--supervise <request.json>` from the host.
+  If it bites again, add option B: `launch_codex_mailbox_job.py` probes the
+  systemd user bus and refuses inside a sandbox instead of reporting `queued`.**
 - **An emitter trap (2026-09-19):** the threads emitter resolves a MERGED worktree
   when the thread's active `codex_worktrees[]` entry has no `path`: pass
   `--worktree-path` on every emit until the skill is fixed.

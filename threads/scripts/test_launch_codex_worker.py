@@ -180,6 +180,10 @@ raise SystemExit(int(os.environ.get("FAKE_EXIT", "0")))
         self.assertIn(str(self.turn1.resolve()), argv[-1])
         self.assertNotIn("SECRET-TURN-ONE-BODY", " ".join(argv))
         self.assertEqual(argv[:2], ["--model", "gpt-test"])
+        # Option A (2026-09-22): every worker launches unsandboxed so its detached
+        # mailbox jobs survive and reach the systemd user bus.
+        self.assertIn("--sandbox", argv)
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "danger-full-access")
 
     def test_missing_or_empty_turn1_is_refused_before_any_state_is_written(self) -> None:
         for prepare in (self.turn1.unlink, lambda: self.turn1.write_text("  \n", encoding="utf-8")):

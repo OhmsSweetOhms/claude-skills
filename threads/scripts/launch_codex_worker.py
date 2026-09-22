@@ -320,6 +320,14 @@ def launch(args: argparse.Namespace) -> int:
         "--model", args.model,
         "-c", f'model_reasoning_effort="{args.reasoning_effort}"',
         "-c", f"model_auto_compact_token_limit={args.auto_compact_token_limit}",
+        # Workers run UNSANDBOXED (operator ruling 2026-09-22, option A): the
+        # default workspace-write sandbox kills a detached mailbox-job supervisor
+        # with the command that spawned it and hides the systemd user bus, so the
+        # job record sits `queued` forever (bitten four times by 2026-09-22). The
+        # approval policy is unchanged; the packet's fences are the plan text and
+        # the orchestrator's verification, not the sandbox. If this bites again,
+        # add option B: launch_codex_mailbox_job.py refuses inside a sandbox.
+        "--sandbox", "danger-full-access",
         turn1_prompt(turn1_file),
     ]
     child: subprocess.Popen | None = None
