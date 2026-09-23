@@ -2,7 +2,7 @@
 """Generate the auto-generated portion of a thread status review.
 
 Reads threads/threads.json + per-thread thread.json manifests and emits
-the auto-regenerable sections of a `threads/review-<YYYY-MM-DD>.md` file.
+the auto-regenerable sections of a `threads/reviews/review-<YYYY-MM-DD>.md` file.
 
 The file has an auto / manual split enforced by AUTO-BEGIN / AUTO-END
 markers. Sections 1-4 (status counts, by-subsystem, active threads,
@@ -12,7 +12,7 @@ notes, recommendations, journal) live below AUTO-END and are preserved
 across runs — they're hand-curated.
 
 Usage:
-    python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path> --output <review-file>
+    python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path>   # writes <threads-path>/reviews/review-<today>.md
     python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path> --output <review-file> --stale-active-days 5 --stale-blocked-days 7
     python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path> --output <review-file> --today 2026-04-27   # for testing
 """
@@ -988,7 +988,7 @@ def regenerate_existing_review(existing_text: str, new_auto_block: str) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("threads_path", help="path to threads/ dir (containing threads.json)")
-    ap.add_argument("--output", help="path to review-<YYYY-MM-DD>.md (default: threads/review-<today>.md)")
+    ap.add_argument("--output", help="path to review-<YYYY-MM-DD>.md (default: threads/reviews/review-<today>.md)")
     ap.add_argument("--stale-active-days", type=int, default=5)
     ap.add_argument("--stale-blocked-days", type=int, default=7)
     ap.add_argument("--today", default=None, help="override 'today' date (YYYY-MM-DD) for testing")
@@ -1002,7 +1002,14 @@ def main():
     today = parse_date(args.today) if args.today else datetime.date.today()
     today_str = today.isoformat()
 
-    output_path = Path(args.output) if args.output else (threads_path / f"review-{today_str}.md")
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        # Reviews live in reviews/, never at the top of the threads dir: the
+        # record-discipline guard refuses a name there that the project's
+        # `top_level_allow` list does not admit.
+        output_path = threads_path / "reviews" / f"review-{today_str}.md"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
     index = load_index(threads_path)
     threads = index["threads"]

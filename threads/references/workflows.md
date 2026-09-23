@@ -702,7 +702,7 @@ first" so nothing durable is lost.
    grep -rn "<thread-id>" --include="*.md" --include="*.py" \
                           --include="*.json" --include="*.vhd" \
        <code-paths> .threads/ 2>/dev/null \
-       | grep -v "/<slug>/" | grep -v ".threads/review-"
+       | grep -v "/<slug>/" | grep -v ".threads/reviews/"
    grep -rn "](.*<slug-tail>" .threads/ --include="*.md" 2>/dev/null
    ```
    The first surfaces all cites; the second is specifically for
@@ -844,10 +844,10 @@ Phrases include "thread status," "thread review," "what's blocked,"
    broken registry will mislead.
 
 2. Run the script to emit / regenerate the auto-block of
-   `threads/review-<YYYY-MM-DD>.md`:
+   `threads/reviews/review-<YYYY-MM-DD>.md`:
 
    ```bash
-   python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path> --output <threads-path>/review-<YYYY-MM-DD>.md
+   python3 ~/.claude/skills/threads/scripts/status_review.py <threads-path> --output <threads-path>/reviews/review-<YYYY-MM-DD>.md
    ```
 
    Optional flags:

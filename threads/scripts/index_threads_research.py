@@ -669,10 +669,11 @@ def _collect_goal_targets() -> list[str]:
 
 
 def _latest_review_path() -> Path | None:
-    """Return the most-recent .threads/review-YYYY-MM-DD.md file, or None."""
-    if not THREADS_DIR.is_dir():
+    """Return the most-recent .threads/reviews/review-YYYY-MM-DD.md file, or None."""
+    reviews_dir = THREADS_DIR / "reviews"
+    if not reviews_dir.is_dir():
         return None
-    candidates = sorted(THREADS_DIR.glob("review-*.md"), reverse=True)
+    candidates = sorted(reviews_dir.glob("review-*.md"), reverse=True)
     return candidates[0] if candidates else None
 
 
