@@ -676,6 +676,50 @@ def _latest_review_path() -> Path | None:
     return candidates[0] if candidates else None
 
 
+def _top_level_strays() -> list[str] | None:
+    """Names directly under .threads/ that the project's `top_level_allow` list does not
+    admit, or None when the project keeps no list.
+
+    The pre-commit guard refuses such a name at commit time, but a clean `git merge`
+    never runs pre-commit, so a sibling branch can land one on main unrefused. This is
+    the line that catches it: every session that boots sees it here (operator ruling
+    2026-09-23, "session-start line"). A `dir/` entry admits only a directory, a file
+    entry only a file — the guard's rule, `check_record_discipline.check_top_level`.
+    """
+    import fnmatch
+    cfg_path = THREADS_DIR / "record-discipline.json"
+    try:
+        allow = json.loads(cfg_path.read_text(encoding="utf-8")).get("top_level_allow")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(allow, list):
+        return None
+    names = [e.get("name") if isinstance(e, dict) else e for e in allow]
+    names = [n for n in names if isinstance(n, str) and n]
+    # Tracked names only: a merged stray is always tracked, and a git-ignored local
+    # directory (`.threads/.claude/`, a settings dir) is not a stray.
+    import subprocess
+    try:
+        rel = THREADS_DIR.relative_to(REPO_ROOT)
+        out = subprocess.run(["git", "ls-files", "--", str(rel)], cwd=REPO_ROOT,
+                             capture_output=True, text=True, check=True).stdout
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        return None
+    tops: dict[str, bool] = {}
+    for path in out.split("\n"):
+        if not path:
+            continue
+        first, sep, _ = path[len(str(rel)) + 1:].partition("/")
+        tops[first] = tops.get(first, False) or bool(sep)
+    strays: list[str] = []
+    for name, is_dir in sorted(tops.items()):
+        ok = any((n.endswith("/") == is_dir) and fnmatch.fnmatchcase(name, n.rstrip("/"))
+                 for n in names)
+        if not ok:
+            strays.append(name + ("/" if is_dir else ""))
+    return strays
+
+
 def render_summary(thread_payload: dict[str, Any]) -> str:
     """Emit a short human-readable status block for SessionStart hooks.
 
@@ -694,6 +738,17 @@ def render_summary(thread_payload: dict[str, Any]) -> str:
         lines.append(f"Latest review: {review.relative_to(REPO_ROOT)}")
     else:
         lines.append("Latest review: (none found)")
+
+    # Top-level strays: names under .threads/ the project's allowlist does not admit.
+    # A clean merge runs no pre-commit hook, so this line is what catches a stray a
+    # sibling branch merged in. Silent when the project keeps no list.
+    strays = _top_level_strays()
+    if strays:
+        shown = ", ".join(strays[:5]) + (f", … {len(strays) - 5} more" if len(strays) > 5 else "")
+        lines.append(f"Top-level strays in .threads/ ({len(strays)}, not on top_level_allow — "
+                     f"move each where the guard's refusal says): {shown}")
+    elif strays is not None:
+        lines.append("Top-level strays in .threads/: none")
 
     # Current metrics (Phase 6 will populate; gracefully absent until then)
     cm = _read_on_disk_current_metrics()
