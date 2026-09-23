@@ -538,6 +538,110 @@ class Merges(RepoCase):
         self.assertRefused("Current truth is BOUNDED")
 
 
+# --- the top level ---------------------------------------------------------------------
+
+class TopLevel(RepoCase):
+    """plan-03 Step 1 of the context-diet thread: what may sit directly under .threads/."""
+
+    ALLOW = (
+        '{"size_bounds": [], "top_level_allow": ['
+        '"CLAUDE.md", "ORCHESTRATOR-CACHE-*.md", "sub/", "narratives/",'
+        ' {"name": "kept-by-name.md", "until": "the lane\'s rework"}]}\n'
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.write(BOUNDS_FILE, self.ALLOW)
+        self.commit("the allowlist")
+
+    def test_a_stray_file_refused_and_told_where_it_goes(self):
+        self.write(".threads/playbook_20260101.md", "# A day's record\n")
+        self.stage(".threads/playbook_20260101.md")
+        out = self.assertRefused("top level admits only the names in")
+        self.assertIn("in the thread it serves", out)
+
+    def test_an_exact_name_allowed(self):
+        self.write(".threads/CLAUDE.md", "# Rules\n")
+        self.stage(".threads/CLAUDE.md")
+        self.assertAllowed()
+
+    def test_a_pattern_allowed(self):
+        self.write(".threads/ORCHESTRATOR-CACHE-NEW-LANE.md", "# Cache\n")
+        self.stage(".threads/ORCHESTRATOR-CACHE-NEW-LANE.md")
+        self.assertAllowed()
+
+    def test_a_temporary_named_entry_allowed(self):
+        self.write(".threads/kept-by-name.md", "# Kept\n")
+        self.stage(".threads/kept-by-name.md")
+        self.assertAllowed()
+
+    def test_a_new_directory_refused(self):
+        self.write(".threads/newsub/20260101-y/plan-01.md", "# Plan\n")
+        self.stage(".threads/newsub/20260101-y/plan-01.md")
+        self.assertRefused("`newsub/` is not one of them")
+
+    def test_a_file_inside_an_allowed_directory_allowed(self):
+        self.write(f"{T}/plan-01.md", "# Plan\n")
+        self.stage(f"{T}/plan-01.md")
+        self.assertAllowed()
+
+    def test_a_directory_entry_does_not_admit_a_file_of_that_name(self):
+        self.write(".threads/narratives", "not a directory\n")
+        self.stage(".threads/narratives")
+        self.assertRefused("`narratives` is not one of them")
+
+    def test_editing_an_existing_stray_allowed(self):
+        self.write(".threads/old-stray.md", "# Old\n")
+        self.commit("a stray from before the list (fixture has no hooks)")
+        self.write(".threads/old-stray.md", "# Old\n\nStill here.\n")
+        self.stage(".threads/old-stray.md")
+        self.assertAllowed()
+
+    def test_no_list_means_no_check(self):
+        self.write(BOUNDS_FILE, '{"size_bounds": []}\n')
+        self.commit("the list is gone")
+        self.write(".threads/anything.md", "# Anything\n")
+        self.stage(".threads/anything.md")
+        self.assertAllowed()
+
+    def test_an_unreadable_list_refused(self):
+        self.write(BOUNDS_FILE, '{"size_bounds": [], "top_level_allow": [5]}\n')
+        self.stage(BOUNDS_FILE)
+        self.assertRefused("`top_level_allow` not readable")
+
+    # The proof plan-03 asked for: a pure `git mv` arrives as status R with its new path,
+    # so a bannerless narrative moves into narratives/ without the new-narrative banner
+    # check firing, and the top-level check sees the destination, not the source.
+    def test_git_mv_of_a_bannerless_narrative_into_narratives_arrives_as_R_and_passes(self):
+        self.write(NARRATIVE, "# Session\n\nWhat happened, no banner.\n")
+        self.commit("an old narrative without the banner (fixture has no hooks)")
+        (self.repo / ".threads/narratives").mkdir()      # git mv needs the directory first
+        self.git("mv", NARRATIVE, ".threads/narratives/" + NARRATIVE.rsplit("/", 1)[1])
+        status = self.git("diff", "--cached", "--name-status").stdout
+        self.assertTrue(status.startswith("R100\t"), f"expected a detected rename:\n{status}")
+        self.assertAllowed()
+
+    def test_git_mv_onto_the_top_level_refused(self):
+        self.write(f"{T}/note.md", "# Note\n")
+        self.commit("a note inside a thread")
+        self.git("mv", f"{T}/note.md", ".threads/note.md")
+        self.assertRefused("`note.md` is not one of them")
+
+    def test_conflicted_merge_stands_down(self):
+        self.git("checkout", "-q", "-b", "side")
+        self.write(".threads/stray.md", "side's stray\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "side adds a stray")
+        self.git("checkout", "-q", "main")
+        self.write(".threads/stray.md", "main's stray\n")
+        self.commit("main adds the same name")
+        r = self.git("merge", "side", check=False)
+        self.assertNotEqual(r.returncode, 0, "fixture expected an add/add conflict")
+        self.write(".threads/stray.md", "side's stray\n")
+        self.stage(".threads/stray.md")
+        self.assertAllowed()
+
+
 # --- the dry run -----------------------------------------------------------------------
 
 class DryRun(RepoCase):

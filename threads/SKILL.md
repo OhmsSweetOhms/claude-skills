@@ -336,8 +336,10 @@ seed the union of the non-derived blocks (`closure_log`,
   touch a handoff whose block is already over without shrinking it — even
   a Session-log-only commit), add a `START HERE`-class
   marker to an orchestrator cache, grow a boot file the project lists in
-  `.threads/record-discipline.json` past its bound, or edit a `SESSION-HANDOFF` narrative /
-  create one without its pinned banner (template §Enforcement has the
+  `.threads/record-discipline.json` past its bound, edit a `SESSION-HANDOFF` narrative /
+  create one without its pinned banner, or add a name directly under `.threads/`
+  that the project's `top_level_allow` list in the same file does not admit — by
+  a plain add or by a rename (template §Enforcement has the
   exact rules). Don't bypass it with `--no-verify` without a
   reason — it is catching exactly the back-edit that poisons threads.
 

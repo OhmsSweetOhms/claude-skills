@@ -117,10 +117,16 @@ three classes across *all* committers (Claude, Codex, you).
 - edits a `SESSION-HANDOFF-*.md` narrative after creation (except adding the pinned
   banner), or creates one without the pinned banner in its first ten lines, exactly:
   `> Immutable session narrative — history, not a boot surface.`
+- adds a file or directory directly under `.threads/` whose name is not on the
+  project's `top_level_allow` list in `.threads/record-discipline.json` — by a plain
+  add or by the new path of a rename. Entries are exact names, globs, `dir/` entries,
+  or `{"name", "until"}` objects for a temporary admission. No list, no check; a stray
+  already there is untouched until it moves. The refusal says where each kind of file
+  goes (`narratives/`, `reviews/`, the thread it serves).
 
 It no-ops on commits with no `.threads/` artifacts and no listed file. A clean `git merge` never runs the
 hook; on the one commit that concludes a conflicted merge (`MERGE_HEAD` present) the
-Current-truth, size-bound, cache and narrative checks are switched off — you are importing the other
+Current-truth, size-bound, cache, narrative and top-level checks are switched off — you are importing the other
 branch's pages as they are — while the findings and Session-log checks stay on, because
 a healthy merge only adds pages and they catch a resolution that tore some out.
 `git merge --squash` sets no `MERGE_HEAD`, so every check runs: squash-merging

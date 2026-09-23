@@ -35,15 +35,22 @@ Enforces, over the STAGED diff, the edit-classes from CONVENTIONS
                                               adding the pinned banner line. A NEW
                                               one must carry the pinned banner in its
                                               first ten lines.
+  TOP-LEVEL   directly under .threads/     -> a file or directory may be ADDED there
+                                              (status A, or the new path of a rename
+                                              or copy) only if its name is on the
+                                              project's `top_level_allow` list in
+                                              .threads/record-discipline.json. No list,
+                                              no check. Existing strays are untouched
+                                              until they move.
 
 Merges: a clean `git merge` never runs pre-commit. A conflicted merge concluded
 with `git commit` does, with MERGE_HEAD present: on that one commit the BOUNDED,
-SIZE-BOUND, NO PREPEND and narrative checks are switched off (operator ruling 2026-09-20,
+SIZE-BOUND, NO PREPEND, narrative and TOP-LEVEL checks are switched off (operator ruling 2026-09-20,
 "Keep them ON"); the findings and Session-log checks run as they always have. `git merge --squash` sets no MERGE_HEAD, so every check runs
 and an over-bound result is refused — squash-merging .threads/ is not supported.
 
-Scope: paths under a `.threads/` tree, plus any path the project's size-bound list names. Renames, copies and deletions are out of
-scope. Out of scope (documented, not yet guarded): thread.json closed-hop
+Scope: paths under a `.threads/` tree, plus any path the project's size-bound list names. Renames and copies
+reach only the TOP-LEVEL check, by their NEW path; deletions reach nothing. Out of scope (documented, not yet guarded): thread.json closed-hop
 `outcome` and external-review verbatim sections.
 
 Exit 0 = clean. Exit 1 = violation (commit aborted). A deliberate override is
@@ -55,6 +62,7 @@ Dry run over history (reports, never refuses; exits 0):
     python3 ~/.claude/skills/threads/scripts/check_record_discipline.py --range HEAD~30..HEAD
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -85,6 +93,8 @@ NARRATIVE_BANNER = "> Immutable session narrative — history, not a boot surfac
 NARRATIVE_BANNER_WINDOW = 10                           # the banner must sit in the first N lines
 SIZE_BOUNDS_FILE = ".threads/record-discipline.json"   # the project's explicit list
 ENTRY_LINE_RE = re.compile(r"^\d+\. \*\*")             # one numbered, bold-led line per entry
+TOP_LEVEL_KEY = "top_level_allow"                       # in the same file; the tree it guards
+THREADS_ROOT = SIZE_BOUNDS_FILE.rsplit("/", 1)[0]       # is the one the file sits in
 
 
 def _git(args):
@@ -358,6 +368,62 @@ def size_bounds(src, violations):
         return {}
 
 
+def top_level_allow(src, violations):
+    """The project's `top_level_allow` list as this change leaves it, or None (no check).
+
+    Each entry is a name or a glob for a FILE directly under the threads root, or, with a
+    trailing '/', for a DIRECTORY there. An entry may be an object {"name": …, "until": …}
+    so a temporary admission says when it leaves. The list is the project's, like the
+    size bounds: plan-03 of the context-diet thread (2026-09-21) put it there so that a
+    session that writes a playbook, a brainstorm or a review prompt is told where it goes
+    instead of dropping it at the top.
+    """
+    raw = src.new_blob(SIZE_BOUNDS_FILE)
+    if raw is None:
+        return None
+    try:
+        allow = json.loads(raw).get(TOP_LEVEL_KEY)
+    except (ValueError, AttributeError):
+        return None                                    # size_bounds() reported the file
+    if allow is None:
+        return None
+    try:
+        names = [e["name"] if isinstance(e, dict) else e for e in allow]
+        if not all(isinstance(n, str) and n for n in names):
+            raise TypeError("every entry is a name or {\"name\": …}")
+    except (KeyError, TypeError) as exc:
+        violations.append(f"{SIZE_BOUNDS_FILE}: `{TOP_LEVEL_KEY}` not readable as a list of "
+                          f"names, globs, 'dir/' entries or {{\"name\", \"until\"}} objects — {exc!r}")
+        return None
+    return names
+
+
+def check_top_level(path, allow, violations):
+    """A new name directly under the threads root must be on the allowlist.
+
+    Runs on status A and on the NEW path of a rename or copy, so a stray cannot arrive by
+    `git mv` either. A directory entry admits only a directory; a file entry only a file.
+    """
+    if not path.startswith(THREADS_ROOT + "/"):
+        return
+    first, sep, _ = path[len(THREADS_ROOT) + 1:].partition("/")
+    is_dir = bool(sep)
+    for entry in allow:
+        if entry.endswith("/"):
+            if is_dir and fnmatch.fnmatchcase(first, entry[:-1]):
+                return
+        elif not is_dir and fnmatch.fnmatchcase(first, entry):
+            return
+    shown = first + ("/" if is_dir else "")
+    violations.append(
+        f"{path}: the `{THREADS_ROOT}/` top level admits only the names in {SIZE_BOUNDS_FILE} "
+        f"`{TOP_LEVEL_KEY}` — `{shown}` is not one of them. A session narrative goes in "
+        f"`narratives/`, a status review in `reviews/`, a dated one-off (playbook, brainstorm, "
+        f"proposal, review prompt) in the thread it serves; a new subsystem directory goes on "
+        f"the list first, in the same commit."
+    )
+
+
 def split_section(text, heading_prefix):
     """(text without the '## ' section that starts with heading_prefix, that section)."""
     m = re.search(r"^" + re.escape(heading_prefix) + r".*$", text or "", re.M)
@@ -422,13 +488,18 @@ def check(src, merging=False):
     """Every violation in one change. `merging` = a conflicted merge is being concluded."""
     violations = []
     bounds = {} if merging else size_bounds(src, violations)
+    allow = None if merging else top_level_allow(src, violations)
     for status, path in parse_name_status(src.name_status()):
         if path in bounds and status[:1] in ("A", "M"):   # listed by the project; any tree
             check_size_bound(src, path, status[:1], bounds[path], violations)
         if not in_threads_tree(path):
             continue
         kind = status[:1]
-        if kind not in ("A", "M"):                 # rename/copy/delete — out of scope here
+        # TOP-LEVEL runs BEFORE the rename skip: a rename arrives as 'R100' with its new
+        # path, and that path is exactly what the allowlist is about.
+        if allow is not None and kind in ("A", "R", "C"):
+            check_top_level(path, allow, violations)
+        if kind not in ("A", "M"):                 # rename/copy/delete — out of scope below
             continue
         base = os.path.basename(path)
 
