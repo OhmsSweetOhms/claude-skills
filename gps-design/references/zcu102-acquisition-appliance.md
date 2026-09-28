@@ -764,6 +764,41 @@ the bullet here adds the 2026-09-13 re-find.
   — a stale 2026-09-13 file sits there; strip the fresh ELF yourself and check
   its segment sizes. The R5 object rule does not track flags, so a `-D` variant
   build silently relinks the previous objects.
+- **R5_1 firmware ships as two ELFs from one source (2026-09-28; gps_design
+  arm thread plan-22, decision 258).** `GPS_FW_DIAGNOSTIC` is set by the
+  Makefile only. `=0` builds the functional `r5_1_tracking_rproc.elf`: the
+  daemon's default name, what the board runs, with no capture code linked
+  (`gps_dump_capture.c` `#error`s if compiled in). `=1` builds the diagnostic
+  `r5_1_tracking_rproc_diag.elf`, which keeps the dump capture. A leg that pulls
+  a capture must load the diagnostic ELF through `engine.tracking.firmware_name`.
+  Each flavor builds into its own directories, which side-steps the
+  unflagged-object trap above.
+  - **On the functional ELF the capture header at `0x7900_0000` is zeroed at
+    boot and never written.** The pull refuses it, and the window rule's
+    "capture header's firmware word equals the ELF under test" cannot be read.
+    The ELF's identity is in the GIB1 block at boot page `+0x100` (`0xFFFE4100`,
+    magic `0x47494231`, build word `FUNC` `0x46554E43` / `DIAG` `0x44494147`,
+    git words), read by `tools/leg_report.py identity-busy-report`. Boot slots
+    `05..07` (the capture steps) stay clear on the functional ELF by design, and
+    slot `0x0A` still reads `0x54330A01`.
+  - **The busy counters count CPU cycles only because `main` undoes the BSP.**
+    `cortexr5/gcc/cpu_init.S` sets PMCR `0xd` before `main`, which divides the
+    cycle counter by 64. `main` records what it found (`pmcr_found`) and clears
+    the divider. A busy pass is the `target_tick_handler` body only: interrupt
+    entry, the VFP save and GIC dispatch (~900–1,150 cycles, an estimate) are
+    outside it. The words publish under a `publish_seq` seqlock, so a reader
+    retries on an odd or changed sequence.
+  - **The compiler does not keep declaration order inside one `.bss.tcm`.** The
+    leg-read BTCM symbols (`g_epoch_irq` at `0x201d8`, `g_dump_capture` at
+    `0x20040`) are pinned by linker input sections, and every link re-reads them
+    (PINNED SYMBOLS CHECK). A slot overflow fails the link instead of moving a
+    symbol. An unreferenced overflow probe is garbage-collected and proves
+    nothing; keep it.
+  - **The host equivalence gate is what catches a flavor divergence.** Both
+    flavors' fake-bus traces are byte-identical over every correlator write and
+    published record; plain reads are excluded. A one-bit NCO mutant in
+    diagnostic-only code passes both flavors' own suites and fails only this
+    gate.
 - **THE RECEIVER CANNOT MEASURE ITS OWN ANTENNA FROM THE DECLARE STREAM, and a
   board leg that tries produces a confident wrong answer (measured 2026-09-20,
   appliance-ops hops 14 and 15).** Hop 14 concluded "no channel completes
