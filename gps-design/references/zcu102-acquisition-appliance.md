@@ -799,6 +799,20 @@ the bullet here adds the 2026-09-13 re-find.
     published record; plain reads are excluded. A one-bit NCO mutant in
     diagnostic-only code passes both flavors' own suites and fails only this
     gate.
+  - **`-ffreestanding` makes single VFP instructions into library calls (plan-21,
+    2026-09-28).** The firmware's `RPROC_CFLAGS` carry `-ffreestanding`, which
+    implies `-fno-builtin`, so `sqrt`, `fabs`, `floor` and `copysign` on the
+    per-record path call newlib's Thumb libm through interworking veneers instead
+    of one `vsqrt.f64`/`vabs.f64` each. newlib's `floor` is ~100 lines of integer
+    code. Inlining them changes no value: it is an exact rewrite.
+  - **A "functional build unchanged" gate compares the objects AND the linked
+    ELF, with `SOURCE_DATE_EPOCH` pinned (plan-21, 2026-09-28).** Under `-g3`,
+    one extra header in a functional object added a `.debug_macro` COMDAT group.
+    That renumbered the input sections, and ld names its ARM veneer stubs by
+    input-section id, so the veneers moved. Every object's `objdump -d` still
+    matched; only the ELF diff showed it. `gps_identity_busy.o`'s commit words
+    are the one expected difference (the identity header is regenerated on every
+    `make`).
 - **THE RECEIVER CANNOT MEASURE ITS OWN ANTENNA FROM THE DECLARE STREAM, and a
   board leg that tries produces a confident wrong answer (measured 2026-09-20,
   appliance-ops hops 14 and 15).** Hop 14 concluded "no channel completes
