@@ -813,6 +813,33 @@ the bullet here adds the 2026-09-13 re-find.
     matched; only the ELF diff showed it. `gps_identity_busy.o`'s commit words
     are the one expected difference (the identity header is regenerated on every
     `make`).
+  - **What one tracked record costs R5_1, measured (2026-09-29, gps_design
+    appliance-ops hop 22 / arm plan-21).** On the ×16 golden L1 cut with seven
+    PRNs LOCKED:
+    - the functional ELF spends **≈12,500 cycles per record** (25 µs at 500 MHz),
+      including its share of the per-tick work, and is busy ≈17.5 % of the time;
+    - the work the correlator engine keeps is **≈8,760 cycles per record**, and
+      **PS.B9 (C/N0 and lock) alone is ≈6,480 of it**;
+    - the stand-in correlator's 25-read AXI-Lite drain is ≈3,790 per record,
+      and goes away with the engine.
+    Against decision 257's budget (busy ≤ 50 % over every 20 ms window), the
+    36-signal mix allows 11,792 cycles per record. The diagnostic build's stage
+    rows over-state cost by ≈5.7 % against the functional total (the stamps and
+    observers inside rows), so rank with the rows and quote the functional
+    busy meter as the absolute.
+  - **The 27–48 ms once-per-capture-window pass is gone on silicon (2026-09-29).**
+    It was the capture freeze's full-region `Xil_DCacheFlushRange` with the data
+    cache off. Plan-22 deleted it, and the worst pass since boot is now 210 µs
+    (functional) and 320 µs (diagnostic, whose capture froze in-run). The
+    remoteproc boot shim leaves ACTLR at `0x0e000020`, which means branch
+    prediction is on and normal: not a lever.
+  - **`gps-live-ctl replay-stop` leaves `/run/gps-live/loopback.json` behind
+    whenever its park fails (2026-09-29).** It fails on every run on the
+    TEST-GPS image (no L5 floor ring). `cmd_replay_stop` returns before
+    `_restore_live_sky()`, the only unlink of the file on that path, so a plain
+    daemon unit start afterwards comes up in LOOPBACK. Close a leg with a
+    reboot (`/run` is tmpfs), or remove the file before the unit start, until
+    the ctl is fixed.
 - **THE RECEIVER CANNOT MEASURE ITS OWN ANTENNA FROM THE DECLARE STREAM, and a
   board leg that tries produces a confident wrong answer (measured 2026-09-20,
   appliance-ops hops 14 and 15).** Hop 14 concluded "no channel completes
