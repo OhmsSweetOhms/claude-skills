@@ -48,6 +48,7 @@ the pre-edit state already committed so the cited SHA exists.
 changed decision — reuse the existing ADR's number and amend its body. (Existing
 superseded records stay as history; the retirement is forward-looking.) This
 replaces the prior "decision change → new superseding ADR" split.
+(One recorded exception: gps_design retired ADR-033, ADR-012 and ADR-034 to one-line pointers at a new ADR-035 on 2026-10-02, operator's ruling, tracking decision 311 — "There is too much poison/drift" to amend four drifted records in place. An exception needs the operator's word; it is not a precedent for routine changes.)
 
 ## ADR number namespace
 
