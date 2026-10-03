@@ -759,6 +759,54 @@ in `hil_project.py`). If your AXI wrapper uses VHDL 2008 features (e.g.,
 **Affected modules from migration:** spi (`process(all)` in spi_master.vhd),
 sdlc (VHDL 2008 aggregate assignments).
 
+### Vivado synthesis evaluates no VHDL assertion unless `-assert` is given
+
+By default, `synth_design` ignores every VHDL `assert` statement.
+
+- **Non-project mode:** pass `-assert`.
+- **Project mode:** the equivalent is the synth run's
+  `STEPS.SYNTH_DESIGN.ARGS.ASSERT` property. That property name is UNVERIFIED;
+  it has not been probed.
+
+Without the flag, an entity whose elaboration assertion should fail
+(`severity failure`) synthesizes silently and ends `synth_design completed
+successfully`. With the flag, Vivado stops with:
+
+```
+ERROR: [Synth 8-63] RTL assertion: "<message>"
+ERROR: [Synth 8-285] failed synthesizing module ...
+```
+
+A `severity note` assertion is silent without `-assert` too. With it, the
+message prints as `INFO: [Synth 8-63] RTL assertion: ...`.
+
+**Consequence:** elaboration-time sanity checks are inert in every flow that
+omits the flag, even though they fire in xsim and pass review. That covers
+generic range checks, "this mode is not built" refusals and derived-constant
+cross-checks.
+
+**Provenance:** gps_design correlator thread, plan-07, 2026-10-03; probed on
+Vivado 2022.2.
+
+### xsim drops assertions inside constant-initializer functions; use concurrent assertions
+
+In xsim, an assertion inside a FUNCTION that is called to initialize a constant
+is silently dropped and never reported. CONCURRENT assertions in the
+architecture body are evaluated, and are reported at simulation time 0, after
+`xelab` finishes, not inside it.
+
+**Rule:**
+
+- Write elaboration checks as concurrent assertions.
+- Expect them to fire at time 0 of `xsim`, not as an `xelab` error. A flow that
+  only runs `xelab` never sees them.
+- `xsim` exits 0 after a time-0 failure, so judge such refusal tests by the
+  error text. See "Gate-driver traps" under "Hard-won facts from the gps_design
+  program".
+
+**Provenance:** gps_design correlator thread, plan-07, 2026-10-03; probed on
+xsim 2022.2.
+
 ---
 
 ## Auto-Generating Trigger Plans from VCD
