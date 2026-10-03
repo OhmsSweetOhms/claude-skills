@@ -200,7 +200,25 @@ uint32_t mod_wait_rx(const mod_driver_t *dev)
 }
 ```
 
-**Interrupt-driven:** Enable IRQ sources via IRQ_EN register, handle in ISR, clear status in ISR.
+### Polling first; interrupt service routines by exception
+
+Prefer a polled main loop. A producer that bumps one free-running counter after its write completes, read by a loop that never sleeps, has no service routine to budget and no nesting to reason about. Use an interrupt only when the hardware state is perishable: it is overwritten before a poll can reach it.
+
+When an interrupt service routine (ISR) is kept, it obeys these rules. Each exists because its absence was measured as missed ticks on a real board.
+
+1. **Acknowledge first.** The first bus operation clears the pending or level condition, before any conditional logic. A spurious entry then costs one transaction, and a late entry does not compound.
+2. **No nested interrupts.** An ISR runs to completion with interrupts masked. So its duration gates the next acknowledge: **an ISR longer than the tick period is a missed tick.** Any change that lengthens an ISR is a timing change and is reviewed as one.
+3. **Bounded work only.** Every loop on an ISR path has a compile-time or configured bound, stated where the loop is written. An unbounded drain makes lateness feed itself: a late entry finds more queued, takes longer, and lands later still.
+4. **A stated time budget, at one unit of load and at full load.** The design carries the ISR's worst-case transaction count and duration at both. **A budget measured at partial load is not a budget.**
+5. **Nothing on the tick path is fetched from DDR.** With the MPU and caches off, every constant, table, vtable and buffer touched is a bus transaction. Code, constants and hot state on the tick path live in tightly coupled memory. Where an ISR must reach DDR it writes and never reads back.
+6. **Instrumentation observes the loop; it is never inside it.** A capture, log, counter or checksum is never the destination of operational data and never on the operational path. Correctness and timing must not depend on whether instrumentation is armed.
+7. **Never read back what the core just wrote.** Compute checksums and derived values from the register or local copy, not by re-reading the destination.
+8. **No library or transcendental math on the tick path,** unless its tables are in tightly coupled memory and its cost is inside rule 4's budget.
+9. **No assertion, logging or debug machinery on the tick path.** No `xil_printf`, no UART, no `Xil_Assert*`. An assertion an ISR cannot recover from is pure cost; a fault path that halts is the recovery.
+10. **Every ISR is measurable from the host.** It publishes an occupancy or duration statistic the host can read. What cannot be measured cannot be budgeted, and rule 4 is unenforceable without it.
+11. **The default shape is latch-and-defer.** In the ISR: the acknowledge, and moving perishable hardware state into memory before it is overwritten. Outside it: filters, math, checksums and publishing. A deviation is recorded with its rule-4 budget and its rule-10 measurement.
+
+**Review checklist for an ISR in a handback:** the acknowledge is the first bus operation; every loop names its bound; the budget is stated at full load; nothing on the path lives in DDR; no print or assert; a host-readable duration statistic exists.
 
 ---
 
