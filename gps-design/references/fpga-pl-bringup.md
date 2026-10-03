@@ -223,6 +223,17 @@ records, never codes (the generator ruling stands). The stand-in keeps its
 polled aperture for the proof leg; the board leg measures the real
 per-transaction cost beside the desk's 348.
 
+### The stand-in C/A correlator's contract as MEASURED on silicon (hop 17, 2026-09-24)
+
+Read from 65,848 dump records of the banked capture and `pl_b3_correlator_axi.vhd` (appliance-ops `codex-handback-plan-ca-tracking-proof-leg-hop17/desk-layout/layout-check.md`, re-runnable `layout_check.py`):
+
+- Dump word 9 (`code_cycle`) is the EPOCH — filled from the same counter as word 3 (`:1918` vs `:1910`); word 9 == word 3 in every record; `monitor-signals.json:270-273` says so. The record carries NO chip index; word 6 is bits 31..0 of the 42-bit code phase, the fraction only (`:1915-1916`).
+- `CTRL_PHASE_LOAD` is GLOBAL (`:1805-1818`): every channel reloads code and carrier phase from ITS seed registers and every accumulator clears. A per-channel `load_phase` in software is a fiction; refresh every enabled channel's registers first, or the load knocks the others 3–7 chips off.
+- NCO words apply ONE EPOCH LATER than the Python golden applies them (65,685 of 65,798 writes checked).
+- Any configure, load, enable or deassign on any channel reverts EVERY channel's NCO words to their assign-time values for one epoch (113 of 113; `:1107-1114`).
+- The fabric mixes with e^(−jθ), the same as `pl_b3_correlator.py:547`; the accumulator order and signedness match `gps_dump_record_t`; the 24-word aperture reads in order.
+- The vector gate (bit-exact, `max_abs_lsb = 0`) checks the epoch and the six accumulators only; none of the four behaviours above is asserted anywhere but the board comparator. The band-agnostic engine makes the load per channel by design; the stand-in stays as measured (charter hard constraint).
+
 ## Hard-won facts
 
 Verbatim, moved from gps_design's project `CLAUDE.md` §Durable facts on 2026-09-20

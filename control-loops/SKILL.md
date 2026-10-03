@@ -135,6 +135,9 @@ only when the controller explicitly returns a frequency increment.
 
 ---
 
+
+**Latency parity (measured 2026-09-24):** the fabric applied a written NCO word one epoch later than the Python model applied it (65,685 of 65,798 writes). A port that mirrors the model's update instant is one epoch early on hardware; at 50 Hz bandwidth and 1 ms epochs it holds, but it is a parity gap to model in the host fake, not to discover on the board.
+
 ## 3. Discretization
 
 ### Bilinear-z (Tustin)
@@ -359,6 +362,9 @@ LI >= 0.6, PLI >= 0.85, N=100 (100 ms).
 
 ---
 
+
+**Reading a PLI of (I²−Q²)/(I²+Q²) — measured 2026-09-24 on a GPS C/A tracker.** −1 means the prompt power sits in Q, a phase parked at 90°; +1 is a phase at 0. But during an FLL-only pull-in the phase is not controlled at all, so the indicator spans −0.85..+0.96 with a median near zero: a negative PLI BEFORE the PLL takes over is noise, not an I/Q swap or a sign error. The test for a swap is the phase step at the hand-over (it should be +atan(Q/I) applied to the carrier phase); a loop that then parks at 90° has the swap.
+
 ## 8. Fixed-Point Bridge
 
 When translating a floating-point Python model to fixed-point for
@@ -458,3 +464,5 @@ When a tracking loop diverges or oscillates:
    accumulates spurious errors at each transition. Solutions: use
    1st-order (proportional-only) FLL during pull-in, or limit FLL
    duration, or reset integrators at handoff.
+
+**Hardware pulls in like the model and dies at a state switch (measured 2026-09-24).** Before touching a bandwidth, check the LOAD contract at the switch: (1) what the hand-over changes in the model — a well-formed FLL→PLL switch changes only the carrier phase; a port that reloads the code anchor there has one more thing to get wrong; (2) which word of the correlator's record carries the chip index versus the fraction versus the epoch (a GPS C/A port loaded the epoch as the chip index: `epoch mod 1024` chips of jump); (3) whether the hardware's phase load is per channel or global (a global load reloads every channel from stale seed registers and clears every accumulator: refresh all channels first, or the others lose 3–7 chips); (4) NCO latency — the hardware applied the word one epoch later than the model; (5) command side effects — one channel's configure/load/enable reverted every channel's NCO for one epoch. **The harness blind spot:** a host fake written to the firmware's assumptions passes everything; parity on synthetic doubles proves the port equals the model on the model's inputs and nothing about the hardware's record. Assert the hardware's contract in the fake from the hardware's own vector-gate records, and keep a real capture decodable at all times — the recorded loop state (reported carrier, C/N0, PLI) cannot show a wrong anchor; only the accumulators can.

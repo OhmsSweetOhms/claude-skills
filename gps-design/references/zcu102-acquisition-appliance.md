@@ -903,6 +903,17 @@ the bullet here adds the 2026-09-13 re-find.
   until the key is verified**, and note the servo proves nothing either way: a
   least-squares fit runs through noise declares as readily as through satellites.
 
+### Hop 17's daemon and board facts (2026-09-24; appliance-ops `codex-handback-plan-ca-tracking-proof-leg-hop17/`)
+
+- **The channel-status drain runs only at the acquisition scheduler's service points** (`driver.service()`: `wait_idle`, `clear_busy_latch`, every `_poll_done` tick, the round boundaries; `service_status` rate-limited to 0.05 s) and starves behind witness captures: the cost is not the 64 KiB IQ copy (~31 ms) but `WitnessStore.capture` rewriting and fsyncing the whole manifest on every capture, 0.037 s + 1.21 ms per entry (`b2_acq_sweepd.py:2515-2516`, `:2413-2421`); 130 of 130 gaps over 0.2 s coincided with a capture, none with a job's register path. `EventSender`'s blocking connect to a down viewer (`connect_timeout=3.0`) stalls ~3.1 s at every round boundary. The 64-slot ring laps after 6.4/N s at N assigned channels. Decision 219 is the fix (append-only manifest, no per-capture fsync, the store on `/mnt/nvme`, a non-blocking connect). A 0.11 s median gap is NOT starvation: every channel heartbeats on the same epoch.
+- **A hold, an IDLE acknowledgement and a reconcile behave on silicon exactly as the desk tests said** (70/70/0 on hop 17); the witness store is per run (`run-<started_at>-pid<pid>/`), so an empty store is no longer a precondition of any start — archive a FINISHED run's directory after its daemon stopped.
+- **After a failed `replay-stop` park on TEST-GPS the ctl's `status.json` stays `serving-replaying` with `replay.active` true**; clear it before any later `replay-start`. The manual live-sky restore (hop 3's block 38) takes 1.6–67.6 s to a pid-matched live-sky daemon.
+- **`read()` on `/dev/mem` for the R5_1 capture carve returns EFAULT; `mmap` works** (117,440,512 B from `CAPTURE_PHYS 0x79000000`). The pull's `load_phase` refusal (`code-phase high word … outside 0..1022`) was the firmware writing the epoch there (decision 220), not a pull defect.
+- **The board clock runs ~65 s behind host UTC (no RTC battery); the loopback witness IQ is 2.5–5.4 dB below the tape at the same samples; the loopback adds no frequency offset (median −0.05 Hz).**
+- **Hold and reconcile deassigns carry `DEASSIGN_REASON_SUSTAINED_LOSS`** because no other code exists (a hop-16 finding read "reason 1" on a hold deassign for this reason); `acq.json`'s `messages.deassign` publishes `lifecycle.reacquires`; the ACQUIRING record at an assign carries the previous tenant's carrier frequency. All three are open follow-ons.
+- **The comparator subtracts `measured_common_offset_hz` from a Doppler delta whose terms are both absolute** (`r5_ca_dump_compare.py:1234-1235`; the self-test passes a zero there): a correctly tracking board fails its ±50 Hz tolerance by ~33.5 kHz. Fixed in arm plan-20.
+- **A `/btw` typed in a worker agent's window stops that worker, and a stopped worker cannot be resumed; a new one continues from the inbox.** Ask the orchestrator for status instead.
+
 ## Host live display — the SDRangel spectrum transport (moved 2026-09-20)
 
 Verbatim, moved from the project `CLAUDE.md` §Key Architecture Decisions → "Host live
