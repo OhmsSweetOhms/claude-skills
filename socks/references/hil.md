@@ -807,6 +807,56 @@ architecture body are evaluated, and are reported at simulation time 0, after
 **Provenance:** gps_design correlator thread, plan-07, 2026-10-03; probed on
 xsim 2022.2.
 
+### Vivado block-RAM ROM mapping can fail silently; judge it from the routed netlist
+
+Two ways the result of `rom_style "block"` goes wrong without a message:
+
+- **Read registers shared across generate blocks.** When the ROMs' read
+  registers are elements of one vector shared across generate blocks, Vivado
+  ignores `rom_style "block"` and builds the ROMs from LUTs. In the observed
+  case, 16384x1 ROMs came out at 8,048 LUT against 958 with block RAM.
+  Declaring the read registers LOCAL to each generate block fixed it. (The
+  `distributed` counterpart is a separate trap: see the
+  `rom_style="distributed"` bullet under "Hard-won facts from the gps_design
+  program".)
+- **The synthesis ROM mapping report is not a stable witness.** It drops rows
+  from run to run. Three routed rows built from equivalent sources listed 35,
+  34 and 36 of the 36 ROM reads, while the routed netlist held all 18 ROMs as
+  block RAM each time.
+
+**Rule:**
+
+- Judge block-RAM mapping from the routed netlist's block-RAM cells, never
+  from the report's row count. A gate that counts report rows is flaky.
+- A two-minute synthesis-only probe at one lookup shows the shared-vector
+  failure before a routed row is run. Read it by its block-RAM cells and LUT
+  count, not by the report.
+
+**Provenance:** gps_design correlator thread, plan-10 (the shared-vector
+trigger, 2026-10-03) and plan-11 (the report drift, 2026-10-04); Vivado 2022.2.
+
+### xsim 2022.2 mis-copies a record field typed through a package subtype
+
+Vivado Simulator can return a wrong value for a plain copy of a record field.
+
+- **Trigger:** a record declared in an architecture, whose field type is a
+  package subtype name (for example `word_t`), passed as a function parameter.
+  A plain copy of the field came out as 0, or with its low bits unwritten: 139
+  was recorded as 136.
+- **Not affected:** a field declared with an explicit range copies correctly,
+  and so does `to_integer(unsigned(...))` of the same field.
+- It reproduces at `-O0` and `-O2`. A standalone probe printed
+  `progshape w=0 d=0 direct=139` against `explicit w=139 d=32768 direct=139`.
+
+**Rule:**
+
+- Declare such record fields with an explicit range, or read them through
+  `to_integer(unsigned(...))`.
+- Only a bit-exact bench shows it.
+
+**Provenance:** gps_design correlator thread, plan-11, 2026-10-04; probed on
+xsim 2022.2.
+
 ---
 
 ## Auto-Generating Trigger Plans from VCD
