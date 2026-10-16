@@ -120,7 +120,7 @@ For CE102 iterative tuning, use the two-step bench loop:
 
 - `get ready` / `init`: use the repo CLI instead of hand-curating campaign
   JSON whenever possible:
-  `.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> [--profile lf-clipped-100k] --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
+  `.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> [--profile lf-clipped-100k] --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
   This creates the next run folder, `run.json`, planned scan command, scan
   plan, optional ping precheck, and rolling-manifest ready entry. Report the
   generated run ID/settings and do not acquire. Ask which kind the operator
@@ -135,7 +135,7 @@ For RE102 UUT vault engineering scans with the RSA, use the matching staged
 campaign loop rather than one-off `re102 scan` commands:
 
 - `get ready` / `init`: use
-  `.venv/bin/python tools/emi_control.py re102 init-run --kind tailored --profile vault-full --uut <uut_id> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> --ping`
+  `.venv/bin/python tools/emi_control.py re102 init-run --kind tailored --profile vault-full --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> --ping`
   (or `--kind engineering --profile vault-low-30-100` / `--f-start-hz --f-stop-hz`
   for a debug slice; `init-engineering-run` is the deprecated alias).
   The `vault-full` profile is 30-45 MHz at 300 Hz RBW/VBW, then 45-1730 MHz
@@ -171,7 +171,13 @@ CLI:
 
 This is a relative insertion-loss workflow, not a VNA S-parameter calibration;
 do not reuse external signal-generator-derived cable-loss data unless the
-source output has been independently verified.
+source output has been independently verified. The full operator procedure
+(thru/stack step table, three reconnect repeats, the pass bar) is the repo's
+`docs/runbook-cable-calibration-and-ambient.md`. For an interactive page of
+the repeats, use the repo tool
+`.venv/bin/python tools/cable_loss_plot_html.py data/characterization/cable_loss/<date>`
+(reads files only). It writes `<cable_id>_traces.html` into that folder and
+checks the pass bar (repo `ORCHESTRATOR-CACHE.md` decision 18).
 
 For calibration or measurement-system checks, stage artifacts under
 `data/<test>/calibration/<run_id>/` and record injection plane, losses, source
@@ -219,6 +225,7 @@ unless the user has defined a separate engineering criterion.
 | Instruments and analyzer substitution | `references/instruments.md` | RSA vs FPH behavior, SDG/SMA generator checks, safe trace export paths |
 | Data layout | `references/data-layout.md` | Organizing `data/uuts/`, `data/characterization/`, calibration runs, manifests |
 | Calibration workflows | `docs/calibration_workflows.md` | RSA tracking-generator cable loss, CE102 calibration runs, system-check artifact layout |
+| Cable calibration and ambient runbook (repo) | `docs/runbook-cable-calibration-and-ambient.md` | Operator step tables for the cable-stack calibration and RE102 ambients, the pass bar, and the offline plot tools `tools/cable_loss_plot_html.py` / `tools/ambient_plot_html.py` |
 | CLI cookbook (repo) | `docs/cli-cookbook.md` | Any "which verb / which flags" question — read before restating a command from memory |
 | Program playbook (repo) | `docs/program-playbook.md` | Gates, phases, who decides, what counts as evidence |
 
@@ -229,12 +236,15 @@ creates the campaign tree (`data/uuts/<uut_id>/<date>/<method>/` with
 `runs/`, `calibration/`, `plots/`, manifests) without touching hardware:
 
 ```bash
-.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --date <YYYY-MM-DD> --site <site> --role <ambient|noise_floor|hot_config> [--config <N>] [--profile <id>]
-.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N> [--profile <id>]
+.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --role <ambient|noise_floor|hot_config> [--config <N>] [--profile <id>]
+.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --config <N> [--profile <id>]
 .venv/bin/python tools/emi_control.py rsa tg-cable-loss-init <run_id> --date <YYYY-MM-DD>
 ```
 
-Use `--data-root data/characterization/<dataset_id>` for non-UUT subjects.
+For non-UUT subjects use `--data-root data/characterization --uut <dataset_id>`
+(the CLI files runs under `<data-root>/<uut>/<date>/<method>/`). `--serial` is
+required on both `init-run` verbs; pass `--serial no_uut` when no unit is
+present.
 Provisional UUT IDs are allocated by hand (`uut_NNN`, next unused) until the
 CLI grows that helper (repo `docs/emi_tracker.json`).
 

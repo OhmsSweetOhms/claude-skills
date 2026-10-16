@@ -114,15 +114,19 @@ Use the repo CLI to scaffold a new test group without touching hardware; it
 creates the campaign directories, run folders, and manifests itself:
 
 ```bash
-.venv/bin/python tools/emi_control.py re102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --role <role> --config <N>
-.venv/bin/python tools/emi_control.py ce102 init-run --uut <uut_id> --date <YYYY-MM-DD> --site <site> --config <N>
+.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --role <role> --config <N>
+.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --config <N>
 ```
 
 For a known UUT pass its ID; for a provisional UUT allocate the next unused
-`uut_NNN` under `data/uuts/` (`ls data/uuts`) and pass that. For non-UUT
-subjects (bench validation, smoke checks, ambient references) pass
-`--data-root data/characterization/<dataset_id>` so nothing lands under
-`data/uuts`; `rsa tg-cable-loss-init` already defaults to
+`uut_NNN` under `data/uuts/` (`ls data/uuts`) and pass that. `--serial` is
+required on both verbs and is stored as `serial_number`; when no unit is
+present (a room ambient) pass `--serial no_uut`. For non-UUT subjects (bench
+validation, smoke checks, ambient references) pass
+`--data-root data/characterization --uut <dataset_id>`. The CLI files a run
+under `<data-root>/<uut>/<date>/<method>/`, so nothing lands under
+`data/uuts`. For example, the 2026-10-16 RM255 ambient used
+`--data-root data/characterization --uut rm255_ambient_lab --serial no_uut`; `rsa tg-cable-loss-init` already defaults to
 `data/characterization/cable_loss`.
 
 After initialization, add calibration/system-check artifacts under
