@@ -120,7 +120,7 @@ For CE102 iterative tuning, use the two-step bench loop:
 
 - `get ready` / `init`: use the repo CLI instead of hand-curating campaign
   JSON whenever possible:
-  `.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> [--profile lf-clipped-100k] --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
+  `.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> [--profile lf-clipped-100k] --uut <uut_id> --serial <serial> --uut-state <preset> --date <YYYY-MM-DD> --site <site> --config <N> --ping`.
   This creates the next run folder, `run.json`, planned scan command, scan
   plan, optional ping precheck, and rolling-manifest ready entry. Report the
   generated run ID/settings and do not acquire. Ask which kind the operator
@@ -135,7 +135,7 @@ For RE102 UUT vault engineering scans with the RSA, use the matching staged
 campaign loop rather than one-off `re102 scan` commands:
 
 - `get ready` / `init`: use
-  `.venv/bin/python tools/emi_control.py re102 init-run --kind tailored --profile vault-full --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> --ping`
+  `.venv/bin/python tools/emi_control.py re102 init-run --kind tailored --profile vault-full --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site vault --role <ambient|hot_config> --config <N> [--uut-state <preset>, required for hot_config] --ping`
   (or `--kind engineering --profile vault-low-30-100` / `--f-start-hz --f-stop-hz`
   for a debug slice; `init-engineering-run` is the deprecated alias).
   The `vault-full` profile is 30-45 MHz at 300 Hz RBW/VBW, then 45-1730 MHz
@@ -236,15 +236,18 @@ creates the campaign tree (`data/uuts/<uut_id>/<date>/<method>/` with
 `runs/`, `calibration/`, `plots/`, manifests) without touching hardware:
 
 ```bash
-.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --role <ambient|noise_floor|hot_config> [--config <N>] [--profile <id>]
-.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --config <N> [--profile <id>]
+.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --role <ambient|noise_floor|hot_config> [--config <N>] [--uut-state <preset>] [--profile <id>]
+.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --uut-state <preset> --date <YYYY-MM-DD> --site <site> --config <N> [--profile <id>]
 .venv/bin/python tools/emi_control.py rsa tg-cable-loss-init <run_id> --date <YYYY-MM-DD>
 ```
 
 For non-UUT subjects use `--data-root data/characterization --uut <dataset_id>`
 (the CLI files runs under `<data-root>/<uut>/<date>/<method>/`). `--serial` is
 required on both `init-run` verbs; pass `--serial no_uut` when no unit is
-present.
+present. `--uut-state <preset>` is required for UUT-on runs. The presets are
+`full-system`, the six single changes and `uut-off`, and ambient defaults to
+`uut-off`. The details are in `references/re102.md` "Run kinds" and the repo's
+`docs/cli-cookbook.md` section 5.2.
 Provisional UUT IDs are allocated by hand (`uut_NNN`, next unused) until the
 CLI grows that helper (repo `docs/emi_tracker.json`).
 

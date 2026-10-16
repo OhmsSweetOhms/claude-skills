@@ -114,8 +114,8 @@ Use the repo CLI to scaffold a new test group without touching hardware; it
 creates the campaign directories, run folders, and manifests itself:
 
 ```bash
-.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --role <role> --config <N>
-.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --config <N>
+.venv/bin/python tools/emi_control.py re102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --date <YYYY-MM-DD> --site <site> --role <role> --config <N> [--uut-state <preset>]
+.venv/bin/python tools/emi_control.py ce102 init-run --kind <record|tailored|engineering> --uut <uut_id> --serial <serial> --uut-state <preset> --date <YYYY-MM-DD> --site <site> --config <N>
 ```
 
 For a known UUT pass its ID; for a provisional UUT allocate the next unused
