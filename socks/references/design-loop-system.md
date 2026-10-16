@@ -90,7 +90,14 @@ add_files -fileset constrs_1 [glob constraints/*.xdc]
 # Generate block design output products
 generate_target all [get_files system.bd]
 
-# Synthesis
+# Synthesis: every synthesis run, synth_1 and each out-of-context IP run,
+# evaluates the RTL's VHDL assertions. Vivado 2022.2 evaluates none without
+# this run property (gps_design decision 370); the socks drift test
+# (ADI/projects/gps_streaming/check_synthesis_asserts.py) fails a
+# launch_runs of a synthesis run that is not preceded by it.
+foreach synth_run [get_runs -filter {IS_SYNTHESIS == 1}] {
+  set_property STEPS.SYNTH_DESIGN.ARGS.ASSERT true $synth_run
+}
 launch_runs synth_1 -jobs 4
 wait_on_run synth_1
 

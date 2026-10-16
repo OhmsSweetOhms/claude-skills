@@ -55,7 +55,7 @@ def generate_synth_check_tcl(out_dir, src_files, top, part):
         lines.append(f'add_files [file join $proj_dir {rel}]')
         lines.append(f'set_property file_type {{VHDL 2008}} [get_files {fname}]')
     lines.extend([
-        f'synth_design -top {top} -part {part}',
+        f'synth_design -top {top} -part {part} -assert',   # decision 370: assertions evaluated
         f'report_utilization -file [file join $proj_dir {top}_utilization.txt]',
         f'report_timing_summary -file [file join $proj_dir {top}_timing.txt]',
         f'report_drc -file [file join $proj_dir {top}_drc.txt]',
@@ -83,7 +83,7 @@ def generate_synth_timing_tcl(out_dir, src_files, top, part,
         lines.append(f'add_files [file join $proj_dir {rel}]')
         lines.append(f'set_property file_type {{VHDL 2008}} [get_files {fname}]')
     lines.extend([
-        f'synth_design -top {top} -part {part}',
+        f'synth_design -top {top} -part {part} -assert',   # decision 370: assertions evaluated
         f'create_clock -period {clock_period} -name sys_clk [get_ports clk]',
     ])
 

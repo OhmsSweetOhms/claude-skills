@@ -92,6 +92,13 @@ committed patched state bit-exact.
 - Results are pinned per-artifact by `*.build-manifest.json`
   (`build-manifest.schema.json`), whose `::recipe` points back at the
   recipe.
+- The baseline an artifact is compared against is chosen, not accumulated:
+  `stages.hdl_no_os.baseline` in the recipe names the run-label under the
+  profile's `hdl/` whose manifests are the comparator; the profile's other
+  banked bundles are history. A pinned label with no manifest for a produced
+  name is a first build of record (`no_baseline`, said so in the ledger).
+  Without the pin, a profile that banks a bundle per respin fails
+  `baseline_ambiguous` on every build (decision 547 in gps_design).
 
 ## Related / status
 

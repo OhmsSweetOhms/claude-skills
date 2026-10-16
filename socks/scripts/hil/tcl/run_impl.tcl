@@ -27,7 +27,13 @@ foreach run [get_runs -filter {IS_SYNTHESIS && NAME != synth_1}] {
 reset_run synth_1
 catch {reset_run impl_1}
 
-# Synthesise
+# Synthesise. Every synthesis run, the top's and each module reference's,
+# evaluates the RTL's VHDL assertions (gps_design decision 370): the run
+# property is STEPS.SYNTH_DESIGN.ARGS.ASSERT (report_property on a 2022.2
+# synth_1 run).
+foreach run [get_runs -filter {IS_SYNTHESIS}] {
+    set_property STEPS.SYNTH_DESIGN.ARGS.ASSERT true $run
+}
 launch_runs synth_1 -jobs 4
 wait_on_run synth_1
 if {[get_property STATUS [get_runs synth_1]] ne "synth_design Complete!"} {

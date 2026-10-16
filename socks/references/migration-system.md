@@ -128,6 +128,9 @@ mkdir -p build/synth build/vivado_project constraints sw docs
 
 **`build/synth/build_bitstream.tcl`** should contain:
 - `open_project`
+- `set_property STEPS.SYNTH_DESIGN.ARGS.ASSERT true` on every synthesis run
+  (`get_runs -filter {IS_SYNTHESIS == 1}`), before `launch_runs synth_1`, so
+  synthesis evaluates the RTL's VHDL assertions (gps_design decision 370)
 - `launch_runs synth_1`
 - `launch_runs impl_1 -to_step write_bitstream`
 - Report generation (`report_utilization`, `report_timing_summary`)

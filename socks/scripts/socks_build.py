@@ -671,7 +671,11 @@ def normalized_sha256(path, policy):
 
 # ----------------------------------------------------- baseline comparison
 
-def baseline_index(root, prefer_dir=None):
+def _under(entry, directory):
+    return bool(directory) and entry["source"].startswith(directory.rstrip("/") + "/")
+
+
+def baseline_index(root, prefer_dir=None, pinned_dir=None):
     """artifact filename -> {sha256, source, mode} over every tracked
     *.build-manifest.json. A produced artifact with no entry is a FIRST
     BUILD, not a failure (dashboard spec section 5).
@@ -679,7 +683,15 @@ def baseline_index(root, prefer_dir=None):
     Artifact names are NOT globally unique -- two profiles may each home a
     `system_top.bit`. On a collision, a manifest under prefer_dir (the
     building profile's own home) wins; otherwise the entry is marked
-    ambiguous and the caller refuses to guess."""
+    ambiguous and the caller refuses to guess.
+
+    A profile that banks one bundle per respin under its own home makes
+    every later build ambiguous by construction. The recipe may therefore
+    PIN the baseline (`stages.hdl_no_os.baseline`, a run-label; pinned_dir
+    is that run-label's directory under the profile): manifests under the
+    profile but outside pinned_dir are history, not candidates. A name the
+    profile has banked but the pin has not is marked `unpinned` -- a first
+    build of record under the pin -- so the caller can say so."""
     by_name = {}
     for path in sorted(glob.glob(os.path.join(root, "platforms", "**", "*.build-manifest.json"),
                                  recursive=True)):
@@ -694,17 +706,24 @@ def baseline_index(root, prefer_dir=None):
             continue
     index = {}
     for name, entries in by_name.items():
+        if pinned_dir:
+            in_profile = [e for e in entries if _under(e, prefer_dir)]
+            pinned = [e for e in in_profile if _under(e, pinned_dir)]
+            if in_profile and not pinned:
+                index[name] = {"unpinned": [e["source"] for e in in_profile]}
+                continue
+            entries = [e for e in entries if e not in in_profile] + pinned
         if len(entries) == 1:
             index[name] = entries[0]
             continue
-        preferred = [e for e in entries
-                     if prefer_dir and e["source"].startswith(prefer_dir.rstrip("/") + "/")]
+        preferred = [e for e in entries if _under(e, pinned_dir or prefer_dir)]
         index[name] = (preferred[0] if len(preferred) == 1
                        else {"ambiguous": [e["source"] for e in entries]})
     return index
 
 
-def compare_baselines(ledger, produced, root, prefer_dir=None, deploy_dir=None):
+def compare_baselines(ledger, produced, root, prefer_dir=None, deploy_dir=None,
+                      pinned_dir=None):
     """Emit one baseline event per produced artifact. Returns the comparison
     rows for the bundle manifest.
 
@@ -723,16 +742,29 @@ def compare_baselines(ledger, produced, root, prefer_dir=None, deploy_dir=None):
     The middle row is what plan-03 Step 6 adds. Before it, every
     load-equivalent artifact returned load_equivalent unconditionally -- the
     verdict said "not comparable by raw hash" and was read as "fine"."""
-    index = baseline_index(root, prefer_dir)
+    index = baseline_index(root, prefer_dir, pinned_dir)
+    pin = os.path.basename(pinned_dir.rstrip("/")) if pinned_dir else None
     rows = []
     for entry in produced:
         b = index.get(entry["file"])
         recorded = source = normalized = None
         if b is None:
             verdict = "no_baseline"
+        elif "unpinned" in b:
+            # The recipe pins a run-label that has banked no manifest for
+            # this name: a first build of record under the pin. The profile's
+            # other manifests are history; the ledger says which were passed over.
+            verdict = "no_baseline"
+            ledger.emit("progress", stage="gates",
+                        detail=(f"{entry['file']}: first build under baseline pin "
+                                f"{pin}; {len(b['unpinned'])} banked manifests are "
+                                f"history: {', '.join(b['unpinned'])}")[:400])
+            print(f"  baseline {entry['file']:28s} no_baseline  (first build under "
+                  f"pin {pin}; {len(b['unpinned'])} banked manifests are history)")
         elif "ambiguous" in b:
-            # Two manifests claim this artifact name and none is under the
-            # building profile. Refuse to guess, and say so loudly.
+            # Two manifests claim this artifact name, and neither the pin nor
+            # the building profile's home singles one out. Refuse to guess,
+            # and say so loudly.
             verdict = "no_baseline"
             ledger.gate("baseline_ambiguous", "fail",
                         evidence=f"{entry['file']} is claimed by "
@@ -758,7 +790,7 @@ def compare_baselines(ledger, produced, root, prefer_dir=None, deploy_dir=None):
         if normalized:
             row["normalized_sha256"] = normalized
         rows.append(row)
-        if b is None or "ambiguous" not in b:
+        if b is None or ("ambiguous" not in b and "unpinned" not in b):
             note = "" if b is None else f"  ({b['mode']})"
             print(f"  baseline {entry['file']:28s} {verdict}{note}")
     return rows
@@ -1848,8 +1880,17 @@ def main():
 
     ledger.emit("stage_start", stage="gates")
     prefer_dir = os.path.dirname(os.path.relpath(recipe_abs, root))
+    # The recipe may pin the baseline to one banked run-label (q-03 of the
+    # L1C image packet, 2026-08-08): without it, a profile that banks a bundle
+    # per respin under hdl/ fails baseline_ambiguous on every build.
+    pin = recipe["stages"]["hdl_no_os"].get("baseline")
+    pinned_dir = os.path.join(prefer_dir, "hdl", pin) if pin else None
+    if pin:
+        banked = os.path.isdir(os.path.join(root, pinned_dir))
+        print(f"  baseline pin: {pin} "
+              f"({'banked' if banked else 'no banked manifests: first build of record'})")
     baseline_rows = compare_baselines(ledger, produced, root, prefer_dir,
-                                      deploy_dir=ctx["deploy"])
+                                      deploy_dir=ctx["deploy"], pinned_dir=pinned_dir)
     summary = ledger.summary()
     # Two vocabularies, deliberately kept apart: stages and runs are ok|fail,
     # gate/bundle verdicts are pass|fail.

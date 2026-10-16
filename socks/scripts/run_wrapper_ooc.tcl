@@ -148,13 +148,16 @@ if {$generics_csv ne ""} {
     lappend generic_args -generic $kv
   }
 }
+# -assert: Vivado 2022.2 evaluates no VHDL assertion without it (gps_design
+# decision 370; references/hil.md "Vivado synthesis evaluates no VHDL assertion
+# unless -assert is given").
 if {[llength $generic_args] > 0} {
   puts "run_wrapper_ooc: synth_design generics: $generic_args"
   synth_design -top $top_entity \
-    -part xczu9eg-ffvb1156-2-e -mode out_of_context {*}$generic_args
+    -part xczu9eg-ffvb1156-2-e -mode out_of_context -assert {*}$generic_args
 } else {
   synth_design -top $top_entity \
-    -part xczu9eg-ffvb1156-2-e -mode out_of_context
+    -part xczu9eg-ffvb1156-2-e -mode out_of_context -assert
 }
 
 # ---------------------------------------------------------------------------
