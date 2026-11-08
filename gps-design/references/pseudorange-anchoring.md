@@ -46,10 +46,22 @@ PS.B13 Observables
     ▼
 emit_pseudoranges(strobe_t_rx_s)
     │  linear-interpolates tow_s at the common strobe from the
-    │  newest two labeled packets; returns (strobe − tow_s) × c.
+    │  newest two labeled packets; returns (rx_time − tow_s) × c.
+    │  rx_time is the receiver's own clock: seeded at the first
+    │  usable strobe to the LARGEST interpolated TOW (GNSS-SDR's
+    │  rule: the nearest SV's range ≈ 0, every range ≥ 0), advanced
+    │  by the sample count, steered after each converged fix by the
+    │  solved bias rounded to 1 ms.
     ▼
 PS.B12 PVT solver
+    │  PVTFix.rx_time_s = receive clock at the strobe;
+    │  PVTFix.gps_time_s = rx_time_s − clock_bias_s.
 ```
+
+No scenario or truth time enters the receiver: no start time, no
+week. The week comes from the decoded subframe 1, carried as one
+continuous receive epoch (receiver `_receive_epoch_s`); `reference_wn`
+is a build constant used only to resolve the 10-bit WN rollover.
 
 The architectural predecessor (fixed-block correlator discarding
 per-PRN acquired fractional chip phase) is documented with closure
@@ -207,3 +219,36 @@ Before making changes:
 
 Closed threads retain their findings; read them as signed
 investigation history, not as current-state docs.
+
+---
+
+## 7. Hard-won facts
+
+From gps_design thread `cross-cutting/20261101-board-nav-layer`, plan-01
+(2026-11-08), when the receive clock moved from simulation truth to the
+receiver's own decoded TOW.
+
+- **The receive-time origin is unobservable to position.** Moving the
+  origin from truth to decoded TOW changed positions by at most
+  0.118 mm (C/A, 44 fixes) and 0.244 mm (L1C scenario, 120 fixes); the
+  clock bias absorbed it (first bias about −68 ms, then ≤ 0.5 ms after
+  1 ms steering). A position shift after an origin change is a bug,
+  not physics.
+- **Never join a strobe's modulo receive time to a cached ephemeris
+  week.** A retained pre-rollover subframe 1 still carries the old week
+  while the receive clock crosses Sunday, so full receive time jumps
+  back 604,799 s between strobes 1 s apart. Keep one continuous receive
+  epoch, anchored once from a decoded week and TOW and advanced by
+  samples and steering; a newly decoded week must not increment it
+  twice.
+- **Compare TOWs in one week before taking a max across channels.**
+  Interpolated TOWs from channels whose label windows straddle the
+  rollover sit in different week neighbourhoods (604800.035 against
+  0.036); a raw max picks the earlier one and gives the other a
+  negative initial range of about −299,792 m.
+- **Modulo-clock unit tests do not catch either rollover defect;**
+  receiver-level tests across the rollover do.
+- **A DOP fixture with every SV at one elevation is singular,** not
+  merely weak: the local Down column is constant and collinear with the
+  clock column, so `H.T@H` has no inverse. Vary the elevations to test
+  a vertical-weak geometry.
