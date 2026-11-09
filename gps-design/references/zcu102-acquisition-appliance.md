@@ -914,6 +914,14 @@ the bullet here adds the 2026-09-13 re-find.
 - **The comparator subtracts `measured_common_offset_hz` from a Doppler delta whose terms are both absolute** (`r5_ca_dump_compare.py:1234-1235`; the self-test passes a zero there): a correctly tracking board fails its ±50 Hz tolerance by ~33.5 kHz. Fixed in arm plan-20.
 - **A `/btw` typed in a worker agent's window stops that worker, and a stopped worker cannot be resumed; a new one continues from the inbox.** Ask the orchestrator for status instead.
 
+### R5_1's nav-symbol export (2026-11-09; gps_design thread `cross-cutting/20261101-board-nav-layer`, plan-02)
+
+- **A section name under `.text*` does not leave ATCM.** The R5_1 link script pulls `*gps_channel.o(.text .text.*)` into ATCM and `-ffunction-sections` names every function `.text.<fn>`, so `section(".text.cold")` stays in TCM. Cold code (boot, assign, start, capture start and freeze) moved to DDR under `section(".cold_code")`; the per-record functions stayed in ATCM. After plan-02: functional ATCM/BTCM free 8,000/13,456 B, diagnostic 1,376/128 B. Diagnostic BTCM is the next wall.
+- **C/A bit sync advances its phase once per call, not from the dump's epoch** (`gps_bit_sync.c`). A skipped dump record (a lapped dump ring, a malformed record) would therefore shift every later bit edge by 1 ms with no visible gap. Since decision 768 the channel compares each record's 64-bit epoch with the last one: a gap drops every 20 ms window it touches, advances `symbol_index` across them, re-phases bit sync by the missing count without invented prompts or lock-qualifying epochs, and keeps lock. After a re-phase, the phase no longer equals `epoch_count % bins`.
+- **The symbol former's edge is the golden's pre-update predicate** (`locked && phase == edge_phase`, read before `gps_bit_sync_update`). `gps_bit_sync_update` returns "transitions to locked", not an edge; a post-update edge would open the window one symbol early on about one lock in twenty. The record is written after PS.B9, so its `cn0_dbhz` includes the window's last dump. PS.B9 itself takes the POST-update `epochs_until_next_edge`, so a replay of R5_1 keeps the two apart.
+- **An ELF that sets a new status-flag bit deploys only with a daemon that knows it.** The daemon fails closed on an unknown bit (`seed_mailbox.py`, `STATUS_FLAGS_KNOWN`), so the plan-02 ELF (bit 5, `BIT_SYNC_LOCKED`) under an older daemon stops tracking at the first C/A bit lock. The known-flags set is generated; regenerate, never hand-add.
+- **The firmware Makefile's `DUMP_CAPTURE_INCLUDE` default resolves to a socks path that does not exist; always pass it.** The R5 cross compiler is `armr5-none-eabi-gcc` (the Makefile's `RPROC_CC`), not `arm-none-eabi-gcc`; pass `PYTHON` as an absolute path to `make -C`.
+
 ## Host live display — the SDRangel spectrum transport (moved 2026-09-20)
 
 Verbatim, moved from the project `CLAUDE.md` §Key Architecture Decisions → "Host live

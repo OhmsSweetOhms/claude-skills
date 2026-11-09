@@ -252,3 +252,29 @@ receiver's own decoded TOW.
   merely weak: the local Down column is constant and collinear with the
   clock column, so `H.T@H` has no inverse. Vary the elevations to test
   a vertical-weak geometry.
+
+From the same thread's plan-02 (2026-11-09), when the golden's PS.TLM
+moved onto R5_1's one-record-per-symbol nav record.
+
+- **Every dump carries one stamp, its END** (`PromptMsObservation.sample_idx`
+  is the dump-end sample index). A subframe's old "start" stamp was the
+  first dump's end, 1 ms after the window opened; since decision 767 it
+  is the previous symbol record's end, the true boundary, taken only
+  when that record's `symbol_index` is exactly one less, else `None`
+  and counted (`subframe_start_unstamped`). Positions do not move;
+  `anchor_events` and the tape sidecar do, by about one dump.
+- **The golden tracker requires its sample stamp** (decision 769): a
+  record built from a dump without `dump_end_sample_idx` fails by name,
+  and every caller (tests, leg analysis, the R5 dump comparator's
+  replay) passes its true cumulative index. An epoch times nominal
+  samples is not a rail stamp.
+- **Rounded contract words cost little but not nothing.** On non-fixed
+  runs the former rounds `code_freq_word` to 2^-32 of a chip per
+  sample; the residual `(P mod W)/W` then carries up to about 0.14 mm
+  per SV at 4.096 MS/s and 0.70 mm at 20.48 MS/s (worst-case code
+  phase). Measured on plan-02's runs: position changes of 8e-9 m (C/A),
+  4e-6 m (L1C scenario) and 3e-8 m (tape).
+- **The golden emits no C/A symbols at coherent integration N = 2, 4, 5
+  or 10:** under extended integration every dump is flagged an edge, so
+  the window is dropped at every second dump. N = 1 and N = 20 emit.
+  Preserved as is; a fix is its own hop.
