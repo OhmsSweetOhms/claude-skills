@@ -740,7 +740,14 @@ the bullet here adds the 2026-09-13 re-find.
     bus transaction.** The golden runs the same algorithm on a cached host and
     never notices. Parity with the golden is a statement about VALUES, never
     about where they live or how often they are recomputed (the pairwise-sum
-    lesson again). Arm plan-17 decides it by an exact running count.
+    lesson again). Arm plan-17 decides it by an exact running count. Its one
+    residue, an exact even-window tie (N/2 values above the threshold), still
+    ran the DDR quickselect until arm plan-29 (2026-11-09, decision 198): a tie
+    is now one read-only pass, `a = max(v ≤ T)`, `b = min(v > T)`,
+    `(a + b) / 2.0 > T`, the same value the median gave; `median_of` and its
+    DDR scratch are gone. A test that claims tie coverage must tie on the real
+    window length, not only on a two-sample one (plan-17's equivalence run
+    tied only on window 2 until plan-29).
   - It is self-sustaining: lost dumps keep a channel in pull-in, pull-in costs
     the median, the median saturates the ISR. And a declare that never locks
     held its slot forever — ADR-033 had no edge out (decision 193).
